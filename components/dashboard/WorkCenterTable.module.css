@@ -1,0 +1,87 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    padding: 1rem;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    height: 100%;
+    overflow: hidden;
+}
+
+.title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: var(--text-light);
+}
+
+.tableWrapper {
+    overflow-x: auto;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.table th {
+    text-align: left;
+    padding: 0.5rem;
+    color: var(--text-light);
+    font-weight: 500;
+    border-bottom: 1px solid var(--border);
+}
+
+.table td {
+    padding: 0.75rem 0.5rem;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.alignRight {
+    text-align: right;
+}
+
+.dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 5px;
+}
+
+.dotGreen {
+    background-color: var(--success);
+}
+
+.dotYellow {
+    background-color: var(--accent);
+}
+
+.dotRed {
+    background-color: var(--secondary);
+}
+
+.dotGrey {
+    background-color: #e0e0e0;
+}
+
+.goodBar {
+    display: inline-block;
+    height: 8px;
+    background-color: var(--success);
+    /* Or Red in screenshot for some reason? ShopVue uses Red for totals sometimes */
+    background-color: #ff5722;
+    /* Matching screenshot orange/red bars */
+    margin-right: 8px;
+}
+
+.scrapBadge {
+    background-color: var(--secondary);
+    color: white;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: bold;
+}

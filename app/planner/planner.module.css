@@ -1,0 +1,695 @@
+/* ========================================
+   PROFESSIONAL MES PRODUCTION PLANNER
+   ======================================== */
+
+.productionPlanner {
+  background: #0f1419;
+  min-height: 100vh;
+  padding: 2rem;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: linear-gradient(135deg, #1a2332 0%, #2a3f5f 100%);
+  padding: 1.5rem;
+  border-radius: 1rem;
+  border-left: 4px solid #00d4ff;
+  margin-bottom: 2rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.headerTitle {
+  font-size: 2rem;
+  font-weight: 600;
+  color: #ffffff;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.headerIcon {
+  font-size: 2.2rem;
+}
+
+.headerActions {
+  display: flex;
+  gap: 1rem;
+}
+
+.headerButton {
+  background: #00d4ff;
+  color: #0f1419;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.95rem;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.headerButton:hover {
+  background: #00ffff;
+  box-shadow: 0 4px 12px rgba(0, 212, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+.headerButton.secondary {
+  background: transparent;
+  color: #00d4ff;
+  border: 2px solid #00d4ff;
+}
+
+.headerButton.secondary:hover {
+  background: rgba(0, 212, 255, 0.1);
+}
+
+/* ========================================
+   WORK ORDER FORM SECTION
+   ======================================== */
+
+.formSection {
+  background: linear-gradient(135deg, #1a2332 0%, #2a3f5f 100%);
+  border: 1px solid #3a4f5f;
+  border-left: 4px solid #00d4ff;
+  border-radius: 1rem;
+  padding: 2rem;
+  margin-bottom: 2rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.sectionTitle {
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: #ffffff;
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sectionIcon {
+  font-size: 1.5rem;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.formLabel {
+  font-size: 0.9rem;
+  color: #7a8fa1;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 500;
+}
+
+.formInput,
+.formSelect,
+.formTextarea {
+  background: #0f1419;
+  border: 2px solid #3a4f5f;
+  color: #ffffff;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 1rem;
+  font-family: inherit;
+  transition: all 0.3s ease;
+}
+
+.formInput::placeholder,
+.formSelect::placeholder,
+.formTextarea::placeholder {
+  color: #7a8fa1;
+}
+
+.formInput:focus,
+.formSelect:focus,
+.formTextarea:focus {
+  outline: none;
+  border-color: #00d4ff;
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.2);
+  background: rgba(0, 212, 255, 0.05);
+}
+
+.formSelect {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2300d4ff' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  padding-right: 2rem;
+}
+
+.formTextarea {
+  resize: vertical;
+  min-height: 100px;
+  font-family: inherit;
+}
+
+.formButtons {
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-end;
+}
+
+.submitButton,
+.resetButton {
+  padding: 0.85rem 2rem;
+  border: none;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.submitButton {
+  background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
+  color: #0f1419;
+}
+
+.submitButton:hover {
+  box-shadow: 0 6px 16px rgba(0, 212, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+.submitButton:active {
+  transform: translateY(0);
+}
+
+.resetButton {
+  background: transparent;
+  color: #7a8fa1;
+  border: 2px solid #3a4f5f;
+}
+
+.resetButton:hover {
+  border-color: #00d4ff;
+  color: #00d4ff;
+}
+
+/* ========================================
+   ORDERS TABLE SECTION
+   ======================================== */
+
+.tableSection {
+  background: linear-gradient(135deg, #1a2332 0%, #2a3f5f 100%);
+  border: 1px solid #3a4f5f;
+  border-radius: 1rem;
+  padding: 2rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.tableTitleRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.tableControls {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.filterSelect {
+  background: #0f1419;
+  border: 1px solid #3a4f5f;
+  color: #ffffff;
+  padding: 0.6rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.filterSelect:hover,
+.filterSelect:focus {
+  border-color: #00d4ff;
+  outline: none;
+}
+
+.tableWrapper {
+  overflow-x: auto;
+}
+
+.ordersTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tableHeader {
+  background: linear-gradient(90deg, #0f1419 0%, #1a2332 100%);
+  border-bottom: 2px solid #00d4ff;
+}
+
+.tableHeader th {
+  padding: 1.25rem;
+  text-align: left;
+  font-size: 0.9rem;
+  color: #00d4ff;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.tableBody tr {
+  border-bottom: 1px solid #3a4f5f;
+  transition: all 0.3s ease;
+}
+
+.tableBody tr:hover {
+  background: rgba(0, 212, 255, 0.05);
+  border-bottom-color: #00d4ff;
+}
+
+.tableBody td {
+  padding: 1.25rem;
+  color: #ffffff;
+  font-size: 0.95rem;
+}
+
+.orderNumber {
+  color: #00d4ff;
+  font-weight: 600;
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.8rem;
+  border-radius: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.statusBadge.active {
+  background: rgba(0, 255, 136, 0.2);
+  color: #00ff88;
+  border: 1px solid #00ff88;
+}
+
+.statusBadge.completed {
+  background: rgba(0, 212, 255, 0.2);
+  color: #00d4ff;
+  border: 1px solid #00d4ff;
+}
+
+.statusBadge.qc {
+  background: rgba(255, 215, 0, 0.2);
+  color: #ffd700;
+  border: 1px solid #ffd700;
+}
+
+.statusBadge.cancelled {
+  background: rgba(255, 51, 51, 0.2);
+  color: #ff3333;
+  border: 1px solid #ff3333;
+}
+
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.statusBadge.active .statusDot {
+  background: #00ff88;
+  animation: pulse 2s infinite;
+}
+
+.statusBadge.completed .statusDot {
+  background: #00d4ff;
+}
+
+.statusBadge.qc .statusDot {
+  background: #ffd700;
+}
+
+.statusBadge.cancelled .statusDot {
+  background: #ff3333;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.tableActions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.actionIcon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: #7a8fa1;
+  font-size: 1.1rem;
+  border: 1px solid transparent;
+}
+
+.actionIcon:hover {
+  color: #00d4ff;
+  border-color: #00d4ff;
+  background: rgba(0, 212, 255, 0.1);
+}
+
+/* ========================================
+   PAGINATION
+   ======================================== */
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 2rem;
+  flex-wrap: wrap;
+}
+
+.pageButton {
+  background: #0f1419;
+  border: 1px solid #3a4f5f;
+  color: #7a8fa1;
+  padding: 0.6rem 0.9rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+}
+
+.pageButton:hover {
+  border-color: #00d4ff;
+  color: #00d4ff;
+}
+
+.pageButton.active {
+  background: #00d4ff;
+  color: #0f1419;
+  border-color: #00d4ff;
+}
+
+.pageInfo {
+  color: #7a8fa1;
+  font-size: 0.9rem;
+  margin: 0 1rem;
+}
+
+/* ========================================
+   RESPONSIVE DESIGN
+   ======================================== */
+
+@media (max-width: 1440px) {
+  .productionPlanner {
+    padding: 1.5rem;
+  }
+
+  .formGrid {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+}
+
+@media (max-width: 1024px) {
+  .productionPlanner {
+    padding: 1rem;
+  }
+
+  .header {
+    flex-direction: column;
+    text-align: center;
+    gap: 1rem;
+  }
+
+  .headerActions {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .tableTitleRow {
+    flex-direction: column;
+    gap: 1rem;
+    align-items: flex-start;
+  }
+
+  .tableControls {
+    width: 100%;
+  }
+
+  .tableWrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tableBody td {
+    padding: 1rem;
+    font-size: 0.9rem;
+  }
+
+  .tableHeader th {
+    padding: 1rem;
+    font-size: 0.85rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .productionPlanner {
+    padding: 1rem;
+  }
+
+  .headerTitle {
+    font-size: 1.5rem;
+  }
+
+  .formSection,
+  .tableSection {
+    padding: 1.5rem;
+  }
+
+  .sectionTitle {
+    font-size: 1.1rem;
+  }
+
+  .formButtons {
+    flex-direction: column-reverse;
+  }
+
+  .submitButton,
+  .resetButton {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .tableWrapper {
+    overflow-x: auto;
+  }
+
+  .ordersTable {
+    min-width: 600px;
+  }
+
+  .tableBody td {
+    padding: 0.75rem;
+    font-size: 0.85rem;
+  }
+
+  .tableHeader th {
+    padding: 0.75rem;
+    font-size: 0.8rem;
+  }
+
+  .statusBadge {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.8rem;
+  }
+
+  .tableControls {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .filterSelect {
+    flex: 1;
+    min-width: 150px;
+  }
+}
+
+@media (max-width: 480px) {
+  .productionPlanner {
+    padding: 0.75rem;
+  }
+
+  .header {
+    padding: 1rem;
+  }
+
+  .headerTitle {
+    font-size: 1.2rem;
+  }
+
+  .headerActions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .headerButton {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .formSection,
+  .tableSection {
+    padding: 1rem;
+  }
+
+  .formGrid {
+    gap: 1rem;
+  }
+
+  .formInput,
+  .formSelect,
+  .formTextarea {
+    padding: 0.6rem 0.8rem;
+    font-size: 16px; /* Prevents zoom on iOS */
+  }
+
+  .submitButton,
+  .resetButton {
+    padding: 0.7rem 1rem;
+    font-size: 0.9rem;
+  }
+
+  .tableWrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .ordersTable {
+    min-width: 500px;
+    font-size: 0.8rem;
+  }
+
+  .tableBody td,
+  .tableHeader th {
+    padding: 0.5rem;
+  }
+
+  .actionIcon {
+    width: 28px;
+    height: 28px;
+    font-size: 0.95rem;
+  }
+
+  .pagination {
+    gap: 0.25rem;
+  }
+
+  .pageButton {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+  }
+}
+
+/* ========================================
+   TOUCH OPTIMIZATION
+   ======================================== */
+
+@media (hover: none) and (pointer: coarse) {
+  .submitButton,
+  .resetButton,
+  .headerButton {
+    min-height: 48px;
+    padding: 0.9rem 1.5rem;
+  }
+
+  .filterSelect {
+    min-height: 44px;
+  }
+
+  .pageButton {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .actionIcon {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* ========================================
+   DARK MODE VARIABLES
+   ======================================== */
+
+:root {
+  --primary-dark: #0f1419;
+  --primary-accent: #00d4ff;
+  --secondary-accent: #ff6b35;
+  --success: #00ff88;
+  --warning: #ffd700;
+  --error: #ff3333;
+  --card-bg: #1a2332;
+  --border-color: #3a4f5f;
+  --text-primary: #ffffff;
+  --text-secondary: #7a8fa1;
+}
+
+/* ========================================
+   SCROLLBAR STYLING
+   ======================================== */
+
+.tableWrapper::-webkit-scrollbar {
+  height: 8px;
+}
+
+.tableWrapper::-webkit-scrollbar-track {
+  background: #1a2332;
+}
+
+.tableWrapper::-webkit-scrollbar-thumb {
+  background: #3a4f5f;
+  border-radius: 4px;
+}
+
+.tableWrapper::-webkit-scrollbar-thumb:hover {
+  background: #00d4ff;
+}

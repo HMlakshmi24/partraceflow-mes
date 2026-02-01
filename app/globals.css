@@ -1,0 +1,91 @@
+:root {
+  /* NGSH-10316 Enterprise Standard Palette */
+  --primary: #1a3a52;
+  /* Deep Navy - Authority, Trust */
+  --secondary: #2196F3;
+  /* Professional Blue - Action */
+  --accent: #ff9800;
+  /* Manufacturing Orange - Alerts */
+  --success: #4caf50;
+  /* Industrial Green - Good Status */
+  --warning: #ffc107;
+  /* Safety Yellow - Caution */
+  --danger: #f44336;
+  /* Urgent Red - Critical Status */
+  --neutral-light: #f5f5f5;
+  /* Light Gray - Backgrounds */
+  --neutral-dark: #333;
+  /* Dark Gray - Text */
+
+  --background: #f8f9fa;
+  --foreground: #1a3a52;
+
+  --card-bg: #ffffff;
+  --card-border: #e0e0e0;
+}
+
+body {
+  color: var(--neutral-dark);
+  background: var(--background);
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+  margin: 0;
+  padding: 0;
+}
+
+/* Button & Card Utilities */
+.btn-primary-large {
+  min-width: 140px;
+  min-height: 56px;
+  font-size: 18px;
+  border-radius: 8px;
+  padding: 12px 24px;
+  background-color: var(--secondary);
+  color: white;
+  border: none;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+}
+
+.btn-primary-large:active {
+  transform: scale(0.98);
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.status-badge {
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: bold;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-badge.success {
+  background-color: #e8f5e9;
+  color: var(--success);
+}
+
+.status-badge.warning {
+  background-color: #fff8e1;
+  color: var(--warning);
+}
+
+.status-badge.danger {
+  background-color: #ffebee;
+  color: var(--danger);
+}

@@ -1,0 +1,114 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --------------------------------------------------------
+// 1. MASTER DATA (Definitions)
+// --------------------------------------------------------
+
+model Product {
+  id          String   @id @default(uuid())
+  sku         String   @unique // e.g., "PART-101"
+  name        String
+  description String?
+  
+  workOrders  WorkOrder[]
+}
+
+model Machine {
+  id          String   @id @default(uuid())
+  code        String   @unique // e.g., "W21"
+  name        String
+  status      String   @default("IDLE") // IDLE, RUNNING, DOWN, MAINTENANCE
+  oee         Float    @default(0)
+  tasks       WorkflowTask[]
+}
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  role      String   // OPERATOR, SUPERVISOR, ADMIN
+  tasks     WorkflowTask[]
+  events    SystemEvent[]
+}
+
+// --------------------------------------------------------
+// 2. PRODUCTION PLANNING
+// --------------------------------------------------------
+
+model WorkOrder {
+  id             String   @id @default(uuid())
+  orderNumber    String   @unique // e.g., "WO-2024-001"
+  quantity       Int
+  priority       Int      @default(1)
+  status         String   @default("PLANNED") 
+  dueDate        DateTime
+  productId      String
+  product        Product  @relation(fields: [productId], references: [id])
+  workflowInstances WorkflowInstance[]
+  createdAt      DateTime @default(now())
+}
+
+// --------------------------------------------------------
+// 3. EXECUTION ENGINE
+// --------------------------------------------------------
+
+model WorkflowStepDef {
+  id          String @id @default(uuid())
+  name        String
+  sequence    Int
+  tasks       WorkflowTask[]
+}
+
+model WorkflowInstance {
+  id            String   @id @default(uuid())
+  serialNumber  String?
+  status        String   @default("ACTIVE")
+  workOrderId   String
+  workOrder     WorkOrder @relation(fields: [workOrderId], references: [id])
+  tasks         WorkflowTask[]
+}
+
+model WorkflowTask {
+  id             String   @id @default(uuid())
+  status         String   @default("PENDING") 
+  instanceId     String
+  instance       WorkflowInstance @relation(fields: [instanceId], references: [id])
+  stepDefId      String
+  stepDef        WorkflowStepDef @relation(fields: [stepDefId], references: [id])
+  machineId      String?
+  machine        Machine? @relation(fields: [machineId], references: [id])
+  operatorId     String?
+  operator       User?    @relation(fields: [operatorId], references: [id])
+  startTime      DateTime?
+  endTime        DateTime?
+  qualityChecks  QualityCheck[]
+}
+
+// --------------------------------------------------------
+// 4. QUALITY & TRACEABILITY
+// --------------------------------------------------------
+
+model QualityCheck {
+  id          String   @id @default(uuid())
+  parameter   String
+  expected    String
+  actual      String
+  result      String
+  taskId      String
+  task        WorkflowTask @relation(fields: [taskId], references: [id])
+}
+
+model SystemEvent {
+  id        String   @id @default(uuid())
+  timestamp DateTime @default(now())
+  eventType String
+  details   String
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+}
