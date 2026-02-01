@@ -21,6 +21,8 @@ export function middleware(request: NextRequest) {
             const user = JSON.parse(session.value);
 
             // Operators cannot access Planning or Analytics (strict mode)
+            /* 
+            // RESTRICTION DISABLED BY USER REQUEST
             if (user.role === 'OPERATOR') {
                 if (pathname.startsWith('/planner')) {
                     return NextResponse.redirect(new URL('/operator', request.url));
@@ -31,6 +33,7 @@ export function middleware(request: NextRequest) {
                     return NextResponse.redirect(new URL('/operator', request.url));
                 }
             }
+            */
         } catch {
             // Invalid cookie
             return NextResponse.redirect(new URL('/login', request.url));

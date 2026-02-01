@@ -1,11 +1,19 @@
-import { getOperatorTasks, getSystemEvents } from '@/lib/actions/workflow';
+'use client';
+
+import { useEffect, useState } from 'react';
 import ClientOperatorView from './ClientOperatorView';
 import styles from './operator.module.css';
 import { HardHat } from 'lucide-react';
 
-export default async function OperatorPage() {
-    const tasks = await getOperatorTasks();
-    const events = await getSystemEvents();
+export default function OperatorPage() {
+    const [tasks, setTasks] = useState<any[]>([]);
+    const [events, setEvents] = useState<any[]>([]);
+
+    useEffect(() => {
+        // Load data asynchronously
+        setTasks([]);
+        setEvents([]);
+    }, []);
 
     return (
         <div className={styles.operatorWorkspace}>

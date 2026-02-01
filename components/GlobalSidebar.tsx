@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { LayoutDashboard, ShoppingCart, HardHat, Database, Factory, FileText, GitBranch, Settings as SettingsIcon, CheckCircle, Cpu, RefreshCw } from 'lucide-react';
+import { logout } from '@/lib/actions/auth';
 
 export default function GlobalSidebar() {
     const pathname = usePathname();
@@ -45,6 +46,22 @@ export default function GlobalSidebar() {
             <div style={{ padding: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)', fontSize: '0.8rem', opacity: 0.6 }}>
                 User: Admin<br />
                 Site: Factory-01
+
+                <form action={logout} style={{ marginTop: '0.8rem' }}>
+                    <button type="submit" style={{
+                        background: 'none',
+                        border: '1px solid rgba(255,255,255,0.3)',
+                        color: '#cfd8dc',
+                        padding: '0.4rem 0.8rem',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '0.8rem',
+                        width: '100%',
+                        textAlign: 'center'
+                    }}>
+                        Logout
+                    </button>
+                </form>
             </div>
         </div>
     );
