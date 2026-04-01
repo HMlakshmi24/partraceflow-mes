@@ -2,19 +2,28 @@
   "name": "mes-app",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:smoke": "ts-node scripts/smoke_test.ts",
+    "test:e2e": "ts-node scripts/end_to_end_test.ts",
+    "test:all": "npm run test:smoke && npm run test:e2e",
+    "demo": "npx ts-node --project tsconfig.json scripts/simulateFactory.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "@types/uuid": "^10.0.0",
+    "@vercel/blob": "^2.3.2",
     "clsx": "^2.1.1",
     "js-cookie": "^3.0.5",
     "lucide-react": "^0.562.0",
+    "mqtt": "^5.15.0",
     "next": "16.1.4",
+    "next-themes": "^0.4.6",
+    "node-fetch": "^2.7.0",
     "prisma": "^5.22.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -24,11 +33,13 @@
   },
   "devDependencies": {
     "@types/node": "^20",
+    "@types/node-fetch": "^2.6.13",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "better-sqlite3": "^12.6.2",
     "eslint": "^9",
     "eslint-config-next": "16.1.4",
+    "puppeteer": "^24.37.5",
     "ts-node": "^10.9.2",
     "typescript": "^5"
   },

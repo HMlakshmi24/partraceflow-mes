@@ -1,0 +1,74 @@
+{
+  "signals": [
+    {
+      "name": "temperature",
+      "unit": "°C",
+      "protocol": "MQTT",
+      "normalRange": { "min": 40, "max": 75 },
+      "warningThreshold": 80,
+      "criticalThreshold": 95,
+      "simulationProfile": "gradual_rise_with_cooling"
+    },
+    {
+      "name": "vibration",
+      "unit": "mm/s",
+      "protocol": "OPCUA",
+      "normalRange": { "min": 0.5, "max": 4.5 },
+      "warningThreshold": 7.1,
+      "criticalThreshold": 11.2,
+      "simulationProfile": "random_with_occasional_spike"
+    },
+    {
+      "name": "spindle_speed",
+      "unit": "RPM",
+      "protocol": "OPCUA",
+      "normalRange": { "min": 800, "max": 2400 },
+      "warningThreshold": 100,
+      "criticalThreshold": 50,
+      "simulationProfile": "setpoint_following"
+    },
+    {
+      "name": "cycle_count",
+      "unit": "pcs",
+      "protocol": "MQTT",
+      "simulationProfile": "monotonic_increment"
+    },
+    {
+      "name": "power_kw",
+      "unit": "kW",
+      "protocol": "MODBUS",
+      "normalRange": { "min": 8, "max": 22 },
+      "warningThreshold": 28,
+      "criticalThreshold": 35,
+      "simulationProfile": "load_correlated"
+    }
+  ],
+  "eventRules": [
+    {
+      "name": "High Temperature Alert",
+      "conditionType": "TELEMETRY_THRESHOLD",
+      "signal": "temperature",
+      "operator": ">",
+      "value": 85,
+      "action": "SEND_NOTIFICATION",
+      "severity": "WARNING"
+    },
+    {
+      "name": "Critical Vibration",
+      "conditionType": "TELEMETRY_THRESHOLD",
+      "signal": "vibration",
+      "operator": ">",
+      "value": 7.1,
+      "action": "CREATE_DOWNTIME",
+      "severity": "CRITICAL"
+    },
+    {
+      "name": "Extended Downtime",
+      "conditionType": "DOWNTIME_DURATION",
+      "operator": ">",
+      "value": 15,
+      "action": "SEND_NOTIFICATION",
+      "severity": "WARNING"
+    }
+  ]
+}

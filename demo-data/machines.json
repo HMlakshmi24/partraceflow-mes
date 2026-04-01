@@ -1,0 +1,38 @@
+{
+  "enterprise": {
+    "code": "ACME",
+    "name": "ACME Manufacturing Corp",
+    "country": "USA",
+    "timezone": "America/New_York"
+  },
+  "plant": {
+    "code": "PLT-001",
+    "name": "Main Production Facility",
+    "location": "Detroit, MI"
+  },
+  "machines": [
+    { "code": "CNC-01", "name": "CNC Machining Center 1", "status": "RUNNING" },
+    { "code": "CNC-02", "name": "CNC Machining Center 2", "status": "RUNNING" },
+    { "code": "CNC-03", "name": "CNC Machining Center 3", "status": "IDLE" },
+    { "code": "WLD-01", "name": "Welding Station A", "status": "RUNNING" },
+    { "code": "WLD-02", "name": "Welding Station B", "status": "DOWN" },
+    { "code": "ASM-01", "name": "Assembly Line 1", "status": "RUNNING" },
+    { "code": "ASM-02", "name": "Assembly Line 2", "status": "RUNNING" },
+    { "code": "INS-01", "name": "CMM Inspection Station", "status": "IDLE" },
+    { "code": "LAT-01", "name": "CNC Lathe 1", "status": "RUNNING" },
+    { "code": "LAT-02", "name": "CNC Lathe 2", "status": "MAINTENANCE" }
+  ],
+  "products": [
+    { "sku": "SHAFT-001", "name": "Drive Shaft Assembly", "description": "Transmission component" },
+    { "sku": "BRKT-101", "name": "Mounting Bracket Type A", "description": "Structural bracket" },
+    { "sku": "GEAR-202", "name": "Helical Gear Set", "description": "Transmission gear" },
+    { "sku": "VALVE-303", "name": "Control Valve Body", "description": "Hydraulic valve" },
+    { "sku": "PUMP-404", "name": "Hydraulic Pump Housing", "description": "Cast aluminum housing" }
+  ],
+  "operators": [
+    { "username": "john.smith", "role": "OPERATOR", "employeeId": "EMP-001" },
+    { "username": "sarah.jones", "role": "OPERATOR", "employeeId": "EMP-002" },
+    { "username": "mike.chen", "role": "SUPERVISOR", "employeeId": "EMP-003" },
+    { "username": "admin", "role": "ADMIN", "employeeId": "EMP-000" }
+  ]
+}

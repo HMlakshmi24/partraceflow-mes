@@ -1,0 +1,182 @@
+.page {
+  padding: 2.5rem;
+}
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 2rem;
+  margin-bottom: 2rem;
+}
+
+.title {
+  font-size: 2.1rem;
+  font-weight: 700;
+  color: var(--primary);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.subtitle {
+  color: var(--ink-600);
+  margin-top: 0.4rem;
+  max-width: 640px;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.summaryCard {
+  background: var(--surface);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 1rem 1.25rem;
+  box-shadow: var(--shadow-soft);
+}
+
+.summaryLabel {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-500);
+}
+
+.summaryValue {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-top: 0.35rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--card-border);
+  border-radius: 18px;
+  padding: 1.5rem;
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 1.25rem;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.connectorMeta {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.iconWrap {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: rgba(30, 134, 255, 0.12);
+  display: grid;
+  place-items: center;
+  color: var(--primary);
+}
+
+.connectorName {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.connectorType {
+  font-size: 0.85rem;
+  color: var(--ink-500);
+}
+
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.statusConnected {
+  background: rgba(16, 185, 129, 0.12);
+  color: #0f766e;
+}
+
+.statusPending {
+  background: rgba(148, 163, 184, 0.2);
+  color: #475569;
+}
+
+.statusDisconnected {
+  background: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+.details {
+  display: grid;
+  gap: 0.5rem;
+  color: var(--ink-600);
+}
+
+.detailRow {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+}
+
+.latency {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, monospace;
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.secondaryButton {
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 0.5rem 0.9rem;
+  background: var(--card-bg);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.secondaryButton:hover {
+  border-color: rgba(30, 134, 255, 0.4);
+}
+
+@media (max-width: 1100px) {
+  .summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "workOrders": [
+    {
+      "orderNumber": "WO-2026-001",
+      "sku": "SHAFT-001",
+      "quantity": 100,
+      "priority": 5,
+      "status": "IN_PROGRESS",
+      "dueDate": "+3days"
+    },
+    {
+      "orderNumber": "WO-2026-002",
+      "sku": "BRKT-101",
+      "quantity": 250,
+      "priority": 3,
+      "status": "RELEASED",
+      "dueDate": "+5days"
+    },
+    {
+      "orderNumber": "WO-2026-003",
+      "sku": "GEAR-202",
+      "quantity": 50,
+      "priority": 4,
+      "status": "PLANNED",
+      "dueDate": "+7days"
+    },
+    {
+      "orderNumber": "WO-2026-004",
+      "sku": "VALVE-303",
+      "quantity": 30,
+      "priority": 5,
+      "status": "RELEASED",
+      "dueDate": "+2days"
+    }
+  ],
+  "shifts": [
+    { "code": "A", "name": "Morning", "start": "06:00", "end": "14:00", "hours": 8 },
+    { "code": "B", "name": "Afternoon", "start": "14:00", "end": "22:00", "hours": 8 },
+    { "code": "C", "name": "Night", "start": "22:00", "end": "06:00", "hours": 8 }
+  ],
+  "downtimeCategories": [
+    { "code": "MECH", "name": "Mechanical Failure", "type": "UNPLANNED" },
+    { "code": "ELEC", "name": "Electrical Fault", "type": "UNPLANNED" },
+    { "code": "PM", "name": "Planned Maintenance", "type": "PLANNED" },
+    { "code": "SETUP", "name": "Changeover / Setup", "type": "PLANNED" },
+    { "code": "MATERIAL", "name": "Material Shortage", "type": "UNPLANNED" },
+    { "code": "OPERATOR", "name": "Operator Absence", "type": "UNPLANNED" }
+  ],
+  "qualityParameters": [
+    { "name": "diameter", "unit": "mm", "nominal": 25.0, "usl": 25.05, "lsl": 24.95 },
+    { "name": "surface_finish", "unit": "Ra", "nominal": 1.6, "usl": 2.0, "lsl": 0.8 },
+    { "name": "torque", "unit": "Nm", "nominal": 45.0, "usl": 47.0, "lsl": 43.0 },
+    { "name": "weight", "unit": "g", "nominal": 512.0, "usl": 515.0, "lsl": 509.0 }
+  ]
+}

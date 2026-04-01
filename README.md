@@ -1,154 +1,296 @@
-# 🏭 ParTraceFlow MES - Manufacturing Execution System
+# ParTraceflow MES
 
-**Status**: 83% Complete | Production Ready for 4/5 Pages ✅  
-**Build**: ✅ Success | **Server**: ✅ Running | **Pages**: 4/5 Working
+**Manufacturing Execution System** for industrial pipe spool fabrication, shop floor operations, quality control, and traceability — built with Next.js 16, React 19, Prisma ORM, and SQLite.
 
 ---
 
-## 🚀 QUICK START
+## What Is This?
 
-### Prerequisites
-- Node.js 18+
-- npm or yarn
-- PostgreSQL (for production)
+ParTraceflow MES is a full-stack web application that digitises and manages everything that happens on a manufacturing shop floor — from work orders and machine monitoring to pipe spool welding, NDE inspection, pressure testing, and final sign-off approvals.
 
-### Development Setup
+It was built for a **pipe fabrication facility** but the core MES modules (production, quality, traceability, OEE) are general-purpose.
+
+---
+
+## Modules
+
+| Module | What It Does |
+|---|---|
+| **Supervisor Dashboard** | Live OEE, active stops, alerts, production KPIs |
+| **Shop Floor Operator** | Operator terminal — job queue, start/stop operations, log downtime |
+| **Pipe Spool System** | Full spool lifecycle: fabrication to welding to NDE to pressure test to handover |
+| **Quality & Process** | Inspection records, SPC charts, quality gates, NCR management |
+| **ERP Planner** | Work orders, scheduling, routing |
+| **Shift Management** | Shift handover, shift reports, attendance |
+| **Factory Map** | Live machine layout with status indicators |
+| **Workflows** | Configurable approval workflows with BPMN-style routing |
+| **Traceability** | Full lot/batch/serial number genealogy |
+| **RFID Integration** | Hardware-agnostic tag ingestion, reader health monitoring |
+| **Andon** | Live alert board — escalations, downtime triggers |
+| **MES Copilot** | AI assistant for shop floor queries |
+
+---
+
+## Pipe Spool System — State Flow
+
+Every spool moves through a strict state machine enforced at the API level:
+
+```
+FABRICATING -> RECEIVED -> IN_STORAGE -> ISSUED -> FIT_UP
+    -> WELDED -> NDE_PENDING -> NDE_CLEAR -> PRESSURE_TESTED -> COMPLETE
+```
+
+Key features:
+- **Weld records** — welder ID, WPS reference, repair count
+- **NDE records** — RT, UT, MT, PT with ACCEPT / REJECT / HOLD logic
+- **Pressure test records** — test certificates, witness sign-off
+- **NCR (Non-Conformance Report)** — auto-generated NCR numbers, severity levels, corrective actions
+- **Spool Passport** — full history page per spool: joints, welds, inspections, NCRs, approvals, documents
+- **ITP (Inspection & Test Plan)** — checklist templates linked to spool inspections
+- **Revision Guard** — blocks work on SUPERSEDED drawings; warns on IFR drawings
+- **Action-Level RBAC** — role-based permission per API action
+- **Document Upload** — multipart file upload linked to spool / joint / NCR / NDE records
+- **RFID Gateway** — any reader pushes `POST /api/rfid/ingest`; system deduplicates and auto-advances spool status by reader location
+
+---
+
+## Role-Based Access Control (RBAC)
+
+| Role | What They Can Do |
+|---|---|
+| `OPERATOR` | Create welds, update joint status, upload documents |
+| `QC` | Create NDE, inspections, raise NCR, create pressure tests |
+| `QUALITY` | Approve/reject NDE, close NCR, approve spools, release HOLD |
+| `SUPERVISOR` | Everything above + override HOLD, override SUPERSEDED revision |
+| `ADMIN` | Full access including delete and bulk import |
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Framework | Next.js 16 (App Router, Turbopack) |
+| UI | React 19, Tailwind CSS, Recharts, Lucide Icons |
+| Database | SQLite (dev) via Prisma ORM — swap to PostgreSQL for production |
+| Validation | Zod (all API routes validated) |
+| Auth | Cookie-based session tokens (no external auth service needed) |
+| RFID | HTTP ingestion endpoint — hardware-agnostic |
+| Charts | Recharts (OEE trend, Pareto, SPC) |
+
+---
+
+## Prerequisites
+
+- **Node.js** v18 or later — [nodejs.org](https://nodejs.org)
+- **npm** v9 or later (comes with Node.js)
+- No Docker, no external database, no cloud account needed for development
+
+Check your versions:
+
 ```bash
-# Install dependencies
-npm install
+node --version   # should be 18+
+npm --version    # should be 9+
+```
 
-# Start development server
+---
+
+## Getting Started
+
+### 1. Clone or Download
+
+```bash
+git clone https://github.com/your-org/partraceflow-mes.git
+cd partraceflow-mes/mes-app
+```
+
+Or if you already have the folder, open a terminal inside `mes-app/`.
+
+### 2. Install Dependencies
+
+```bash
+npm install
+```
+
+### 3. Set Up Environment
+
+Create a `.env` file in the `mes-app/` folder:
+
+```env
+DATABASE_URL="file:./prisma/dev.db"
+SESSION_SECRET="replace-this-with-a-64-char-random-string"
+```
+
+Generate a secure secret:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+### 4. Set Up the Database
+
+```bash
+npx prisma migrate dev --name init
+```
+
+This creates `prisma/dev.db` (SQLite file) and applies all schema migrations.
+
+### 5. Seed Demo Data
+
+```bash
+node seed-db.js
+```
+
+This creates demo users, machines, work orders, pipe spools, and sample records so you can explore the system immediately.
+
+### 6. Start the Development Server
+
+```bash
 npm run dev
 ```
 
-**Server runs on**: http://localhost:3000
-
-### Access Pages
-- **Dashboard**: http://localhost:3000/dashboard
-- **Production Planner**: http://localhost:3000/planner
-- **Operator Interface**: http://localhost:3000/operator
-- **Quality Control**: http://localhost:3000/quality
-- **Workflow Designer**: http://localhost:3000/workflows/designer *(in development)*
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## 📋 ESSENTIAL DOCUMENTATION
+## Default Login Credentials
 
-1. **[RUN_GUIDE.md](RUN_GUIDE.md)** - How to run and deploy
-2. **[DB_SETUP_GUIDE.md](DB_SETUP_GUIDE.md)** - Database configuration
-3. **[NEXT_STEPS_TO_100_PERCENT.md](NEXT_STEPS_TO_100_PERCENT.md)** - ⭐ **READ THIS** for what needs to be done to reach 100%
+After seeding, use any of these accounts:
 
----
-
-## ✅ WHAT'S WORKING
-
-- ✅ Dashboard with KPI cards and charts
-- ✅ Production Planner with form and database integration
-- ✅ Operator Interface with task management
-- ✅ Quality Control page with measurements
-- ✅ Complete design system (colors, typography, spacing)
-- ✅ Responsive design (mobile, tablet, desktop)
-- ✅ Database integration with Prisma ORM
-- ✅ Server-side rendering with Next.js
-- ✅ Professional dark theme with cyan accents
+| Username | Password | Role |
+|---|---|---|
+| `admin` | `admin123` | Administrator |
+| `supervisor` | `super123` | Supervisor |
+| `quality` | `quality123` | Quality Manager |
+| `operator` | `op123` | Operator |
 
 ---
 
-## ⚠️ KNOWN ISSUES TO FIX
-
-1. **Dashboard charts** - Dimension sizing issue (see NEXT_STEPS_TO_100_PERCENT.md)
-2. **Workflow Designer** - Page not yet created (template provided)
-3. **Minor styling** - Some components need polish
-
----
-
-## 🏗️ PROJECT STRUCTURE
+## Project Structure
 
 ```
 mes-app/
-├── app/                      # Next.js pages & layouts
-│   ├── dashboard/           # Dashboard page ✅
-│   ├── planner/            # Production Planner page ✅
-│   ├── operator/           # Operator Interface page ✅
-│   ├── quality/            # Quality Control page ✅
-│   ├── workflows/          # Workflow Designer (partial)
-│   ├── api/                # API routes
-│   └── layout.tsx          # Main layout
-├── components/             # React components
-├── lib/                    # Utilities & services
-│   ├── actions/            # Server actions
-│   └── services/           # Database & services
-├── prisma/                 # Database schema
-│   └── schema.prisma       # Data models
-└── public/                 # Static assets
+├── app/                        # Next.js App Router pages and API routes
+│   ├── api/                    # REST API endpoints
+│   │   ├── pipe-spool/         # Spool, joints, welds, NDE, NCR, approvals
+│   │   ├── rfid/               # RFID ingestion and reader health
+│   │   ├── dashboard/          # Live KPIs and OEE
+│   │   └── ...
+│   ├── dashboard/              # Supervisor dashboard page
+│   ├── operator/               # Shop floor operator terminal
+│   ├── pipe-spool/             # Pipe spool management pages
+│   │   └── spools/[id]/        # Spool Passport (full history per spool)
+│   ├── quality/                # Quality and SPC pages
+│   └── ...
+├── lib/                        # Shared business logic
+│   ├── spoolFlow.ts            # State machine — enforces spool transitions
+│   ├── spoolTransitions.ts     # Allowed state transition map
+│   ├── spoolRBAC.ts            # Action-level RBAC permission matrix
+│   ├── revisionGuard.ts        # Drawing revision control
+│   ├── validation.ts           # Zod schemas for all API inputs
+│   ├── auth.ts                 # Session token creation and verification
+│   └── services/               # AuditService, OEEService, ShiftService, etc.
+├── prisma/
+│   ├── schema.prisma           # 92-model database schema
+│   └── dev.db                  # SQLite database (created on first migrate)
+├── components/                 # Shared React components
+└── public/
+    └── uploads/spool-docs/     # Uploaded spool documents (gitignored)
 ```
 
 ---
 
-## 🎯 NEXT STEPS
+## Available Scripts
 
-**To reach 100% completion (16-20 hours):**
-
-1. ✅ Read: [NEXT_STEPS_TO_100_PERCENT.md](NEXT_STEPS_TO_100_PERCENT.md)
-2. ⏳ Fix dashboard chart sizing (30 min)
-3. ⏳ Create Workflow Designer page (2 hours)
-4. ⏳ Complete component styling (6-8 hours)
-5. ⏳ Test all features (2-3 hours)
+```bash
+npm run dev        # Start development server with hot reload
+npm run build      # Build for production
+npm run start      # Start production server (run build first)
+npm run lint       # Run ESLint
+npm run demo       # Run factory simulation (generates live dummy data)
+```
 
 ---
 
-## 🔧 BUILD & DEPLOYMENT
+## RFID Integration
 
-### Development
+Any RFID reader or gateway can push tag reads to the MES over HTTP — no vendor lock-in:
+
 ```bash
+POST /api/rfid/ingest
+Content-Type: application/json
+
+{
+  "tagId": "E200001234567890",
+  "readerId": "GATE_RECV",
+  "readerName": "Yard Entrance Gate",
+  "location": "Yard Entrance",
+  "rssi": -62
+}
+```
+
+The system:
+1. Deduplicates reads (same reader + tag within 3 seconds is ignored)
+2. Resolves the tag to a spool or joint in the database
+3. Auto-advances spool status based on reader location (e.g. "Yard Entrance" moves spool to `RECEIVED`)
+4. Returns the resolved asset to the caller for immediate display on handhelds
+
+Check reader health:
+
+```bash
+GET /api/rfid/readers
+```
+
+---
+
+## Switching to PostgreSQL for Production
+
+Update `.env`:
+
+```env
+DATABASE_URL="postgresql://user:password@localhost:5432/mes_db?schema=public"
+```
+
+Run migrations:
+
+```bash
+npx prisma migrate deploy
+```
+
+---
+
+## Common Issues
+
+**Port 3000 already in use**
+
+```bash
+# Windows — kill all Node processes
+powershell -Command "Get-Process node | Stop-Process -Force"
+
+# Delete stale lock file
+rm -rf .next/dev/lock
+
 npm run dev
 ```
 
-### Production Build
+**Build error: "Reading source code for parsing failed" / invalid UTF-8**
+
+Turbopack cached a corrupted file. Clear the build cache:
+
 ```bash
-npm run build
-npm start
+rm -rf .next
+npm run dev
 ```
 
-### Environment Variables
-See [DB_SETUP_GUIDE.md](DB_SETUP_GUIDE.md) for required `.env` file
+**Prisma client out of sync after schema change**
+
+```bash
+npx prisma generate
+npx prisma migrate dev
+```
 
 ---
 
-## 📚 Technology Stack
+## License
 
-- **Frontend**: Next.js 16, React, TypeScript
-- **Styling**: CSS Modules, Responsive Design
-- **Database**: PostgreSQL, Prisma ORM
-- **UI Components**: Lucide React Icons
-- **Charts**: Recharts
-
----
-
-## 📖 DOCUMENTATION FILES
-
-- `README.md` - This file (overview)
-- `RUN_GUIDE.md` - Running and deployment instructions
-- `DB_SETUP_GUIDE.md` - Database setup and configuration
-- `NEXT_STEPS_TO_100_PERCENT.md` - Complete roadmap to 100% ⭐ **START HERE**
-
----
-
-## 🎓 QUICK REFERENCE
-
-| Task | Command |
-|------|---------|
-| Start dev server | `npm run dev` |
-| Build production | `npm run build` |
-| Run production | `npm start` |
-| Check types | `npx tsc --noEmit` |
-
----
-
-**For detailed information on completing the remaining 17%**, see: [NEXT_STEPS_TO_100_PERCENT.md](NEXT_STEPS_TO_100_PERCENT.md) ⭐
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Internal use only. Not for redistribution.

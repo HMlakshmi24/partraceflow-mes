@@ -9,7 +9,7 @@
 
   /* Primary Colors - Cyber Blue */
   --primary-dark: #0f1419;
-  --primary-light: #ffffff;
+  --primary-light: var(--card-bg);
   --primary-accent: #00d4ff;
   --primary-accent-bright: #00ffff;
   --primary-accent-dark: #0099cc;
@@ -46,7 +46,7 @@
   --border-accent: #00d4ff;
 
   /* Text Colors */
-  --text-primary: #ffffff;
+  --text-primary: var(--card-bg);
   --text-secondary: #7a8fa1;
   --text-tertiary: #5a7089;
   --text-muted: #4a6079;

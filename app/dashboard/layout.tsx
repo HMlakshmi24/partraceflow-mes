@@ -13,9 +13,9 @@ export default function DashboardLayout({
         <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
             {/* Main Header */}
             <header style={{
-                backgroundColor: 'var(--primary)',
+                background: 'linear-gradient(135deg, rgba(19, 35, 58, 0.95), rgba(30, 134, 255, 0.92))',
                 color: 'white',
-                padding: '0.5rem 1rem',
+                padding: '0.75rem 1rem',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between'
@@ -23,7 +23,7 @@ export default function DashboardLayout({
                 <div style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>ParTraceflow MES</div>
                 <nav style={{ display: 'flex', gap: '1rem', fontSize: '0.9rem' }}>
                     <Link href="/dashboard" style={{ opacity: 0.8, color: 'white', textDecoration: 'none' }}>Dashboard</Link>
-                    <Link href="/operator" style={{ opacity: 1, color: '#fbc02d', fontWeight: 'bold', textDecoration: 'none' }}>Operator Terminal</Link>
+                    <Link href="/operator" style={{ opacity: 1, color: '#67e8f9', fontWeight: 'bold', textDecoration: 'none' }}>Operator Terminal</Link>
                 </nav>
                 <div>
                     {/* User Profile / Settings placeholder */}
@@ -42,9 +42,9 @@ export default function DashboardLayout({
        */}
             {/* Filter Bar (Only show if in dashboard strictly, but for simplicity leaving as is for this file) */}
             <div style={{
-                backgroundColor: 'white',
-                borderBottom: '1px solid #ddd',
-                padding: '0.5rem 1rem',
+                backgroundColor: 'var(--card-bg)',
+                borderBottom: '1px solid rgba(15, 23, 42, 0.08)',
+                padding: '0.65rem 1rem',
                 display: 'flex',
                 gap: '0.5rem',
                 alignItems: 'center'
@@ -56,9 +56,9 @@ export default function DashboardLayout({
                 </Suspense>
                 <div style={{ flex: 1 }}></div>
                 <Link href="/operator" style={{
-                    backgroundColor: '#0f2a4a', color: 'white', padding: '0.25rem 0.75rem', borderRadius: '4px', textDecoration: 'none', fontSize: '0.9rem'
+                    backgroundColor: '#0f172a', color: 'white', padding: '0.35rem 0.9rem', borderRadius: '8px', textDecoration: 'none', fontSize: '0.9rem'
                 }}>
-                    Go to Shop Floor ➜
+                    Go to Shop Floor
                 </Link>
             </div>
 
@@ -89,7 +89,7 @@ function FilterButton({ label, value, active }: { label: string; value: string; 
             href={`/dashboard?period=${value}`}
             style={{
                 padding: '0.25rem 0.75rem',
-                backgroundColor: active ? 'white' : 'transparent',
+                backgroundColor: active ? 'var(--card-bg)' : 'transparent',
                 border: '1px solid',
                 borderColor: active ? '#ccc' : 'transparent',
                 borderRadius: '4px',
@@ -105,3 +105,4 @@ function FilterButton({ label, value, active }: { label: string; value: string; 
         </Link>
     );
 }
+

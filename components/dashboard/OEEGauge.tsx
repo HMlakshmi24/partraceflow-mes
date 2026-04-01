@@ -40,7 +40,7 @@ export default function OEEGauge({ value, label, color }: OEEGaugeProps) {
                         </Pie>
                     </PieChart>
                 </ResponsiveContainer>
-                <div className={styles.labelValue}>{value}%</div>
+                <div className={styles.labelValue}>{Number(value).toFixed(1)}%</div>
             </div>
             <div className={styles.labelText}>{label}</div>
         </div>

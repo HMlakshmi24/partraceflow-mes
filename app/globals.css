@@ -1,91 +1,205 @@
 :root {
-  /* NGSH-10316 Enterprise Standard Palette */
-  --primary: #1a3a52;
-  /* Deep Navy - Authority, Trust */
-  --secondary: #2196F3;
-  /* Professional Blue - Action */
-  --accent: #ff9800;
-  /* Manufacturing Orange - Alerts */
-  --success: #4caf50;
-  /* Industrial Green - Good Status */
-  --warning: #ffc107;
-  /* Safety Yellow - Caution */
-  --danger: #f44336;
-  /* Urgent Red - Critical Status */
-  --neutral-light: #f5f5f5;
-  /* Light Gray - Backgrounds */
-  --neutral-dark: #333;
-  /* Dark Gray - Text */
+  --ink-900: #0f172a;
+  --ink-800: #1f2937;
+  --ink-600: var(--muted-foreground);
+  --ink-500: var(--muted-foreground);
+  --ink-300: #d1d5db;
+  --ink-200: var(--card-border);
+  --ink-100: #f3f4f6;
 
-  --background: #f8f9fa;
-  --foreground: #1a3a52;
+  --navy-900: #0b1220;
+  --navy-800: #0f1a2e;
+  --navy-700: #14233c;
+  --navy-600: #1b2f52;
+  --cyan-500: #22d3ee;
+  --cyan-400: #67e8f9;
+  --emerald-500: #10b981;
+  --amber-500: #f59e0b;
+  --rose-500: #ef4444;
 
+  --primary: #13233a;
+  --secondary: #1e86ff;
+  --accent: #f4a42b;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+
+  --background: #f6f7fb;
+  --foreground: #0f172a;
+  --muted-foreground: #64748b;
+
+  --surface: #ffffff;
+  --surface-muted: #f1f4f9;
   --card-bg: #ffffff;
-  --card-border: #e0e0e0;
+  --card-border: rgba(15, 23, 42, 0.12);
+  --border: rgba(15, 23, 42, 0.1);
+
+  --shadow-soft: 0 8px 30px rgba(15, 23, 42, 0.08);
+  --shadow-card: 0 12px 30px rgba(15, 23, 42, 0.12);
+
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+}
+
+.dark {
+  --background: #080d16;
+  --foreground: #e2e8f0;
+  --muted-foreground: #94a3b8;
+
+  --surface: #0f172a;
+  --surface-muted: #1e293b;
+  --card-bg: #0f172a;
+  --card-border: rgba(255, 255, 255, 0.1);
+  --border: rgba(255, 255, 255, 0.1);
+
+  --shadow-soft: 0 8px 30px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 12px 30px rgba(0, 0, 0, 0.6);
+
+  --primary: #67e8f9;
 }
 
 body {
-  color: var(--neutral-dark);
-  background: var(--background);
-  font-family: 'Inter', 'Segoe UI', sans-serif;
+  color: var(--foreground);
+  background: radial-gradient(1200px 600px at 80% -20%, rgba(34, 211, 238, 0.14), transparent 60%),
+    radial-gradient(900px 400px at -10% 10%, rgba(244, 164, 43, 0.18), transparent 55%),
+    var(--background);
+  font-family: var(--font-sans), 'Segoe UI', sans-serif;
   margin: 0;
   padding: 0;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 /* Button & Card Utilities */
 .btn-primary-large {
   min-width: 140px;
-  min-height: 56px;
-  font-size: 18px;
-  border-radius: 8px;
-  padding: 12px 24px;
-  background-color: var(--secondary);
-  color: white;
-  border: none;
+  min-height: 52px;
+  font-size: 16px;
+  border-radius: 12px;
+  padding: 10px 22px;
+  background: linear-gradient(135deg, #1e86ff 0%, #5dd6ff 100%);
+  color: var(--card-bg);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   font-weight: 600;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-soft);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  transition: all 0.2s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.btn-primary-large:active {
-  transform: scale(0.98);
+.btn-primary-large:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card), 0 0 15px rgba(30, 134, 255, 0.4);
+  filter: brightness(1.1);
+}
+
+.btn-primary-large:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn-primary-large:focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: 2px;
+}
+
+.btn-primary-large:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .card {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 1.5rem;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-soft);
 }
 
 .status-badge {
   padding: 4px 12px;
-  border-radius: 16px;
+  border-radius: 999px;
   font-size: 12px;
-  font-weight: bold;
+  font-weight: 700;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
 .status-badge.success {
-  background-color: #e8f5e9;
-  color: var(--success);
+  background-color: rgba(16, 185, 129, 0.12);
+  color: #0f766e;
 }
 
 .status-badge.warning {
-  background-color: #fff8e1;
-  color: var(--warning);
+  background-color: rgba(245, 158, 11, 0.15);
+  color: #b45309;
 }
 
 .status-badge.danger {
-  background-color: #ffebee;
-  color: var(--danger);
+  background-color: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+.input,
+input[type='text'],
+input[type='number'],
+input[type='email'],
+input[type='password'],
+select,
+textarea {
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  padding: 0.65rem 0.8rem;
+  font-size: 0.95rem;
+  color: var(--foreground);
+  transition: border 0.2s ease, box-shadow 0.2s ease;
+  outline: none;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: rgba(30, 134, 255, 0.6);
+  box-shadow: 0 0 0 3px rgba(30, 134, 255, 0.15);
+}
+
+table {
+  width: 100%;
+}
+
+th,
+td {
+  font-size: 0.92rem;
+  color: var(--foreground);
+}
+
+/* Dark mode status badge overrides */
+.dark .status-badge.success {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+}
+
+.dark .status-badge.warning {
+  background-color: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+}
+
+.dark .status-badge.danger {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+
+/* Ensure heading elements use foreground color */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--foreground);
 }

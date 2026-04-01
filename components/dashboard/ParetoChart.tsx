@@ -13,7 +13,7 @@ export default function ParetoChart({ title, data }: ParetoChartProps) {
     return (
         <div className={styles.container}>
             <h3 className={styles.title}>{title}</h3>
-            <div className={styles.chartWrapper} style={{ width: '100%', height: '300px' }}>
+            <div className={styles.chartWrapper}>
                 <ResponsiveContainer width="100%" height="100%">
                     <BarChart
                         layout="vertical"

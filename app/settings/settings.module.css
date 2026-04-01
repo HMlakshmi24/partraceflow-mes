@@ -1,0 +1,164 @@
+.page {
+  padding: 2.5rem;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2rem;
+}
+
+.title {
+  font-size: 2rem;
+  color: var(--primary);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.subtitle {
+  color: var(--ink-600);
+  margin-top: 0.35rem;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 2rem;
+}
+
+.sidebar {
+  display: grid;
+  gap: 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--card-border);
+  border-radius: 18px;
+  padding: 1rem;
+  box-shadow: var(--shadow-soft);
+}
+
+.tab {
+  padding: 0.9rem 1rem;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-weight: 600;
+  color: var(--ink-600);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tabActive {
+  color: var(--primary);
+  background: rgba(30, 134, 255, 0.1);
+  border-color: rgba(30, 134, 255, 0.2);
+}
+
+.contentCard {
+  background: var(--surface);
+  border-radius: 24px;
+  border: 1px solid var(--card-border);
+  padding: 2rem;
+  box-shadow: var(--shadow-card);
+  min-height: 540px;
+}
+
+.sectionTitle {
+  font-size: 1.2rem;
+  margin-bottom: 1.25rem;
+  color: var(--primary);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+
+.formGroup {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.label {
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.helper {
+  font-size: 0.85rem;
+  color: var(--ink-500);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.saved {
+  font-size: 0.9rem;
+  color: var(--emerald-500);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th {
+  text-align: left;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-500);
+  border-bottom: 1px solid var(--ink-200);
+  padding-bottom: 0.6rem;
+}
+
+.table td {
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--ink-100);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: rgba(30, 134, 255, 0.12);
+  color: var(--primary);
+}
+
+.statusCard {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  border-radius: 16px;
+  padding: 1rem 1.25rem;
+  text-align: center;
+  width: 180px;
+}
+
+.statusValue {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #0f766e;
+}
+
+@media (max-width: 1024px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+}
