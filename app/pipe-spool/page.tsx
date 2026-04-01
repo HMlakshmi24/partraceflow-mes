@@ -105,15 +105,15 @@ export default function PipeSpoolDashboard() {
   useEffect(() => { load(); }, []);
 
   const modules = [
-    { href: '/pipe-spool/tracker', icon: Activity, label: 'Workflow Tracker', desc: 'Interactive spool pipeline execution', color: '#ec4899' },
-    { href: '/pipe-spool/line-list', icon: Layers, label: 'Line List', desc: 'P&ID lines, isometric drawings', color: '#3b82f6' },
-    { href: '/pipe-spool/spools', icon: Package, label: 'Spool Register', desc: 'Spool tracking, RFID, storage', color: '#8b5cf6' },
-    { href: '/pipe-spool/joints', icon: GitBranch, label: 'Joints & Welds', desc: 'Weld records, WPS, welder IDs', color: '#f59e0b' },
-    { href: '/pipe-spool/inspections', icon: FileSearch, label: 'Inspection (ITP)', desc: 'Inspection test plans, HOLD/WITNESS', color: '#06b6d4' },
-    { href: '/pipe-spool/nde', icon: Circle, label: 'NDE / RT', desc: 'Radiography, UT, MT, PT records', color: '#10b981' },
-    { href: '/pipe-spool/ncr', icon: ShieldAlert, label: 'NCR System', desc: 'Non-conformance reports', color: '#ef4444' },
-    { href: '/pipe-spool/yard', icon: MapPin, label: 'Yard Management', desc: 'Storage zones, rack positions', color: '#f97316' },
-    { href: '/pipe-spool/reports', icon: BarChart3, label: 'Reports', desc: 'Weld summary, NDE status, traceability', color: '#22c55e' },
+    { href: '/pipe-spool/line-list',    icon: Layers,      label: 'Pipe Lines',              desc: 'View all pipe lines and their engineering drawings', color: '#3b82f6' },
+    { href: '/pipe-spool/spools',       icon: Package,     label: 'Spool Tracker',           desc: 'Track every spool — location, status, RFID tag', color: '#8b5cf6' },
+    { href: '/pipe-spool/joints',       icon: GitBranch,   label: 'Joints & Welds',          desc: 'Record weld completions and welder details', color: '#f59e0b' },
+    { href: '/pipe-spool/inspections',  icon: FileSearch,  label: 'Inspections',             desc: 'Run inspection checklists and record results', color: '#06b6d4' },
+    { href: '/pipe-spool/nde',          icon: Circle,      label: 'Weld Testing (NDE)',      desc: 'X-ray and ultrasonic test results for welds', color: '#10b981' },
+    { href: '/pipe-spool/ncr',          icon: ShieldAlert, label: 'Issues & Defects',        desc: 'Log and track any quality issues found', color: '#ef4444' },
+    { href: '/pipe-spool/pressure-tests', icon: Activity,  label: 'Pressure Tests',          desc: 'Record hydrostatic and pneumatic test results', color: '#ec4899' },
+    { href: '/pipe-spool/yard',         icon: MapPin,      label: 'Storage Yard',            desc: 'Find where each spool is stored in the yard', color: '#f97316' },
+    { href: '/pipe-spool/reports',      icon: BarChart3,   label: 'Reports',                 desc: 'View progress reports and export for handover', color: '#22c55e' },
   ];
 
   return (
@@ -122,10 +122,10 @@ export default function PipeSpoolDashboard() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 32 }}>
         <div>
           <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, color: 'var(--foreground)' }}>
-            Pipe Spool Installation System
+            Pipe Spool System
           </h1>
           <p style={{ color: 'var(--muted-foreground)', margin: '6px 0 0', fontSize: 14 }}>
-            EPC / Oil & Gas Grade — RFID + Barcode Dual Tracking
+            Track every spool from fabrication to final handover — inspections, welds, tests and approvals in one place
           </p>
         </div>
         <button
@@ -145,16 +145,16 @@ export default function PipeSpoolDashboard() {
       {/* KPI Cards */}
       {summary && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 28 }}>
-          <KpiCard label="Total Lines" value={summary.totalLines} icon={Layers} color="#3b82f6" href="/pipe-spool/line-list" />
+          <KpiCard label="Pipe Lines" value={summary.totalLines} icon={Layers} color="#3b82f6" href="/pipe-spool/line-list" />
           <KpiCard label="Total Spools" value={summary.totalSpools} icon={Package} color="#8b5cf6" href="/pipe-spool/spools" />
-          <KpiCard label="Total Joints" value={summary.totalJoints} icon={GitBranch} color="#f59e0b" href="/pipe-spool/joints" />
-          <KpiCard label="Spool Completion" value={`${summary.completionRate}%`} icon={CheckCircle2} color="#10b981" />
-          <KpiCard label="Open NCRs" value={summary.openNCRs}
-            sub={summary.criticalNCRs > 0 ? `${summary.criticalNCRs} CRITICAL` : undefined}
+          <KpiCard label="Weld Joints" value={summary.totalJoints} icon={GitBranch} color="#f59e0b" href="/pipe-spool/joints" />
+          <KpiCard label="Spools Complete" value={`${summary.completionRate}%`} icon={CheckCircle2} color="#10b981" sub="of total spools" />
+          <KpiCard label="Open Issues (NCR)" value={summary.openNCRs}
+            sub={summary.criticalNCRs > 0 ? `${summary.criticalNCRs} Critical — action needed` : 'No critical issues'}
             icon={AlertTriangle} color="#ef4444" href="/pipe-spool/ncr" />
-          <KpiCard label="NDE Holds" value={summary.ndeHolds} icon={Circle} color="#f97316" href="/pipe-spool/nde" />
-          <KpiCard label="Pending Approvals" value={summary.pendingApprovals} icon={Clock} color="#06b6d4" />
-          <KpiCard label="Weld Completion" value={`${summary.weldCompletionRate}%`} icon={Wrench} color="#22c55e" href="/pipe-spool/joints" />
+          <KpiCard label="Welds on Hold" value={summary.ndeHolds} icon={Circle} color="#f97316" href="/pipe-spool/nde" sub="Awaiting re-inspection" />
+          <KpiCard label="Awaiting Sign-off" value={summary.pendingApprovals} icon={Clock} color="#06b6d4" sub="Approvals needed" />
+          <KpiCard label="Welds Complete" value={`${summary.weldCompletionRate}%`} icon={Wrench} color="#22c55e" href="/pipe-spool/joints" />
         </div>
       )}
 
@@ -163,7 +163,8 @@ export default function PipeSpoolDashboard() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 28 }}>
           {/* Completion Progress */}
           <div style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 14, padding: 24, boxShadow: 'var(--shadow-soft)' }}>
-            <h3 style={{ margin: '0 0 20px', fontSize: 15, fontWeight: 600 }}>Overall Progress</h3>
+            <h3 style={{ margin: '0 0 4px', fontSize: 15, fontWeight: 600 }}>Overall Progress</h3>
+            <p style={{ margin: '0 0 18px', fontSize: 12, color: 'var(--muted-foreground)' }}>How much of the project is finished</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <ProgressBar value={summary.completionRate} color="#10b981" label="Spool Installation Complete" />
               <ProgressBar value={summary.weldCompletionRate} color="#f59e0b" label="Weld Joints Complete" />
@@ -172,18 +173,28 @@ export default function PipeSpoolDashboard() {
 
           {/* Spool Status Breakdown */}
           <div style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 14, padding: 24, boxShadow: 'var(--shadow-soft)' }}>
-            <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 600 }}>Spool Status Breakdown</h3>
+            <h3 style={{ margin: '0 0 4px', fontSize: 15, fontWeight: 600 }}>Where Are the Spools?</h3>
+            <p style={{ margin: '0 0 14px', fontSize: 12, color: 'var(--muted-foreground)' }}>Count of spools at each stage right now</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {Object.entries(summary.spoolsByStatus).map(([status, count]) => (
+              {Object.entries(summary.spoolsByStatus).map(([status, count]) => {
+                const labels: Record<string, string> = {
+                  FABRICATING: 'Being Fabricated', RECEIVED: 'Received at Yard',
+                  IN_STORAGE: 'In Storage', ISSUED: 'Issued to Site',
+                  FIT_UP: 'Fit-Up in Progress', WELDED: 'Welded',
+                  NDE_PENDING: 'Weld Test Pending', NDE_CLEAR: 'Weld Test Passed',
+                  PRESSURE_TESTED: 'Pressure Tested', COMPLETE: 'Complete',
+                  HOLD: 'On Hold', REPAIR: 'Under Repair',
+                };
+                return (
                 <div key={status} style={{
-                  padding: '6px 12px', borderRadius: 99,
+                  padding: '6px 14px', borderRadius: 99,
                   background: (STATUS_COLOR[status] ?? '#64748b') + '22',
                   color: STATUS_COLOR[status] ?? '#64748b',
                   fontSize: 12, fontWeight: 600,
                 }}>
-                  {status.replace('_', ' ')}: {count}
+                  {labels[status] ?? status.replace(/_/g, ' ')}: {count}
                 </div>
-              ))}
+              )})}
               {Object.keys(summary.spoolsByStatus).length === 0 && (
                 <span style={{ color: 'var(--muted-foreground)', fontSize: 13 }}>No spool data yet</span>
               )}
@@ -194,7 +205,8 @@ export default function PipeSpoolDashboard() {
 
       {/* Module Grid */}
       <div style={{ marginBottom: 28 }}>
-        <h2 style={{ fontSize: 17, fontWeight: 600, marginBottom: 16 }}>Modules</h2>
+        <h2 style={{ fontSize: 17, fontWeight: 600, marginBottom: 4 }}>What do you want to do?</h2>
+        <p style={{ fontSize: 13, color: 'var(--muted-foreground)', marginBottom: 16, marginTop: 0 }}>Click any section below to get started</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
           {modules.map(m => (
             <Link key={m.href} href={m.href} style={{ textDecoration: 'none' }}>

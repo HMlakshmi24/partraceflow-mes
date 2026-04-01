@@ -461,39 +461,39 @@ function DashboardContent() {
                     )}
                     <div className={styles.summaryRow}>
                         <Link href="/planner" className={styles.summaryCard} style={{ textDecoration: 'none', color: 'inherit' }}>
-                            <div className={styles.summaryLabel}>Active Work Orders</div>
+                            <div className={styles.summaryLabel}>Active Jobs</div>
                             <div className={styles.summaryValue}>{data.summary.activeOrders}</div>
-                            <div className={styles.summaryMeta}>Released + In Progress ↗</div>
+                            <div className={styles.summaryMeta}>Work orders in progress ↗</div>
                         </Link>
                         <Link href="/operator" className={styles.summaryCard} style={{ textDecoration: 'none', color: 'inherit' }}>
-                            <div className={styles.summaryLabel}>Open Downtime</div>
+                            <div className={styles.summaryLabel}>Machines Stopped</div>
                             <div className={styles.summaryValue}>{data.summary.openDowntimes}</div>
-                            <div className={styles.summaryMeta}>Requires attention ↗</div>
+                            <div className={styles.summaryMeta}>Unresolved stops ↗</div>
                         </Link>
                         <Link href="/quality" className={styles.summaryCard} style={{ textDecoration: 'none', color: 'inherit' }}>
-                            <div className={styles.summaryLabel}>Failed QC</div>
+                            <div className={styles.summaryLabel}>Failed Inspections</div>
                             <div className={styles.summaryValue}>{data.summary.failedQc}</div>
-                            <div className={styles.summaryMeta}>All-time failures ↗</div>
+                            <div className={styles.summaryMeta}>Quality checks failed ↗</div>
                         </Link>
                         <Link href="/factory-map" className={styles.summaryCard} style={{ textDecoration: 'none', color: 'inherit' }}>
-                            <div className={styles.summaryLabel}>Running Machines</div>
+                            <div className={styles.summaryLabel}>Machines Running</div>
                             <div className={styles.summaryValue}>{data.summary.runningMachines}/{data.summary.totalMachines}</div>
-                            <div className={styles.summaryMeta}>Live status ↗</div>
+                            <div className={styles.summaryMeta}>Live floor status ↗</div>
                         </Link>
                     </div>
                     {/* KPI Row */}
                     <div className={styles.kpiRow}>
                         <div className={styles.kpiCard}>
-                            <OEEGauge value={data.oee.oee} label="OEE" color={oeeColor(data.oee.oee)} />
+                            <OEEGauge value={data.oee.oee} label="Overall Efficiency" color={oeeColor(data.oee.oee)} />
                         </div>
                         <div className={styles.kpiCard}>
-                            <OEEGauge value={data.oee.availability} label="Availability" color={oeeColor(data.oee.availability)} />
+                            <OEEGauge value={data.oee.availability} label="Uptime" color={oeeColor(data.oee.availability)} />
                         </div>
                         <div className={styles.kpiCard}>
-                            <OEEGauge value={data.oee.performance} label="Performance" color={oeeColor(data.oee.performance)} />
+                            <OEEGauge value={data.oee.performance} label="Speed" color={oeeColor(data.oee.performance)} />
                         </div>
                         <div className={styles.kpiCard}>
-                            <OEEGauge value={data.oee.quality} label="Quality" color={oeeColor(data.oee.quality)} />
+                            <OEEGauge value={data.oee.quality} label="Good Parts %" color={oeeColor(data.oee.quality)} />
                         </div>
                         <div className={styles.kpiCard}>
                             <StopsCounter
@@ -509,10 +509,10 @@ function DashboardContent() {
                     <div className={styles.mainGrid}>
                         <div className={styles.leftCol}>
                             <div className={styles.chartCard} style={{ flex: 1 }}>
-                                <ParetoChart title="Downtime Pareto" data={data.downtime} />
+                                <ParetoChart title="Top Reasons Machines Stopped" data={data.downtime} />
                             </div>
                             <div className={styles.chartCard} style={{ flex: 1, marginTop: '1rem' }}>
-                                <ParetoChart title="Scrap Pareto" data={data.scrap} />
+                                <ParetoChart title="Top Reasons for Scrap / Rework" data={data.scrap} />
                             </div>
                         </div>
 

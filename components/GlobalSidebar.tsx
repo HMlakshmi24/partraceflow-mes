@@ -22,7 +22,7 @@ const ROLE_LABELS: Record<string, string> = {
 // ── standalone top nav items (outside any group) ────────────────────────────────
 
 const TOP_NAV_ITEMS = [
-    { href: '/dashboard', icon: LayoutDashboard, label: 'Supervisor Dashboard' },
+    { href: '/dashboard', icon: LayoutDashboard, label: 'Home Dashboard' },
 ];
 
 // ── grouped nav items ───────────────────────────────────────────────────────────
@@ -32,48 +32,48 @@ const NAV_GROUPS = [
         id: 'production',
         label: 'Production',
         items: [
-            { href: '/planner', icon: ShoppingCart, label: 'ERP Planner' },
-            { href: '/operator', icon: HardHat, label: 'Shop Floor Operator' },
-            { href: '/shifts', icon: Clock, label: 'Shift Management' },
-            { href: '/factory-map', icon: Map, label: 'Factory Map' },
+            { href: '/planner',      icon: ShoppingCart, label: 'Work Orders' },
+            { href: '/operator',     icon: HardHat,      label: 'Operator Station' },
+            { href: '/shifts',       icon: Clock,        label: 'Shifts & Attendance' },
+            { href: '/factory-map',  icon: Map,          label: 'Live Factory Map' },
         ],
     },
     {
         id: 'quality',
-        label: 'Quality & Process',
+        label: 'Quality',
         items: [
-            { href: '/quality', icon: CheckCircle, label: 'Quality Gate' },
-            { href: '/spc', icon: TrendingUp, label: 'SPC / Process Control' },
-            { href: '/recipes', icon: BookOpen, label: 'Recipe Management' },
-            { href: '/traceability', icon: GitBranch, label: 'Traceability' },
+            { href: '/quality',       icon: CheckCircle, label: 'Quality Inspection' },
+            { href: '/spc',           icon: TrendingUp,  label: 'Process Charts (SPC)' },
+            { href: '/recipes',       icon: BookOpen,    label: 'Machine Recipes' },
+            { href: '/traceability',  icon: GitBranch,   label: 'Product History' },
         ],
     },
     {
         id: 'intelligence',
-        label: 'Intelligence',
+        label: 'Smart Tools',
         items: [
-            { href: '/copilot', icon: Bot, label: 'MES Copilot (AI)' },
-            { href: '/andon', icon: Zap, label: 'Andon Board' },
-            { href: '/maintenance', icon: Wrench, label: 'Predictive Maintenance' },
-            { href: '/workflows/designer', icon: GitBranch, label: 'Workflow Designer' },
+            { href: '/copilot',           icon: Bot,       label: 'AI Assistant' },
+            { href: '/andon',             icon: Zap,       label: 'Live Factory Alerts' },
+            { href: '/maintenance',       icon: Wrench,    label: 'Machine Health' },
+            { href: '/workflows/designer', icon: GitBranch, label: 'Approval Workflows' },
         ],
     },
     {
         id: 'pipe-spool',
         label: 'Pipe Spool',
         items: [
-            { href: '/pipe-spool',              icon: Layers,      label: 'Overview' },
-            { href: '/pipe-spool/line-list',    icon: FileText,    label: 'Line List' },
-            { href: '/pipe-spool/spools',       icon: Package,     label: 'Spool Register' },
-            { href: '/pipe-spool/joints',       icon: GitBranch,   label: 'Joints & Welds' },
-            { href: '/pipe-spool/inspections',  icon: FileSearch,  label: 'Inspection (ITP)' },
-            { href: '/pipe-spool/nde',          icon: Circle,      label: 'NDE / RT' },
-            { href: '/pipe-spool/ncr',          icon: ShieldAlert, label: 'NCR System' },
-            { href: '/pipe-spool/yard',         icon: MapPin,      label: 'Yard Management' },
-            { href: '/pipe-spool/reports',        icon: BarChart3,   label: 'Reports' },
-            { href: '/pipe-spool/scan',           icon: Tag,         label: 'Field Scanner 📱' },
+            { href: '/pipe-spool',                icon: Layers,      label: 'Dashboard' },
+            { href: '/pipe-spool/line-list',      icon: FileText,    label: 'Pipe Lines' },
+            { href: '/pipe-spool/spools',         icon: Package,     label: 'Spool Tracker' },
+            { href: '/pipe-spool/joints',         icon: GitBranch,   label: 'Joints & Welds' },
+            { href: '/pipe-spool/inspections',    icon: FileSearch,  label: 'Inspections' },
+            { href: '/pipe-spool/nde',            icon: Circle,      label: 'Weld Testing (NDE)' },
+            { href: '/pipe-spool/ncr',            icon: ShieldAlert, label: 'Issues & Defects' },
+            { href: '/pipe-spool/yard',           icon: MapPin,      label: 'Storage Yard' },
             { href: '/pipe-spool/pressure-tests', icon: Circle,      label: 'Pressure Tests' },
-            { href: '/pipe-spool/itp-builder',    icon: FileSearch,  label: 'ITP Builder' },
+            { href: '/pipe-spool/reports',        icon: BarChart3,   label: 'Reports' },
+            { href: '/pipe-spool/scan',           icon: Tag,         label: 'RFID Scanner' },
+            { href: '/pipe-spool/itp-builder',    icon: FileSearch,  label: 'Inspection Templates' },
             { href: '/pipe-spool/drawings',       icon: FileText,    label: 'Drawing Register' },
         ],
     },
@@ -81,7 +81,7 @@ const NAV_GROUPS = [
         id: 'system',
         label: 'System',
         items: [
-            { href: '/audit', icon: Shield, label: 'Audit Trail' },
+            { href: '/audit', icon: Shield, label: 'Activity Log' },
         ],
     },
 ];
@@ -364,7 +364,7 @@ export default function GlobalSidebar() {
             </div>
             {!isMobile && (
                 <div style={{ padding: '0 1.25rem 0.75rem', fontSize: '0.75rem', color: colors.taglineColor, letterSpacing: '0.02em' }}>
-                    Configurable Workflow &amp; Traceability
+                    Manufacturing Management System
                 </div>
             )}
 
