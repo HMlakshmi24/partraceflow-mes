@@ -26,10 +26,10 @@ interface RecentInspection {
   id: string;
   inspectedAt: string;
   result: string;
-  inspectorName: string;
+  inspector: string;
   spool?: { spoolId: string };
   joint?: { jointId: string };
-  itpStep?: { stepName: string };
+  itpStep?: { description: string };
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -253,8 +253,8 @@ export default function PipeSpoolDashboard() {
                   <tr key={ins.id} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '10px 12px' }}>{new Date(ins.inspectedAt).toLocaleDateString()}</td>
                     <td style={{ padding: '10px 12px' }}>{ins.spool?.spoolId ?? ins.joint?.jointId ?? '—'}</td>
-                    <td style={{ padding: '10px 12px' }}>{ins.itpStep?.stepName ?? '—'}</td>
-                    <td style={{ padding: '10px 12px' }}>{ins.inspectorName}</td>
+                    <td style={{ padding: '10px 12px' }}>{ins.itpStep?.description ?? '—'}</td>
+                    <td style={{ padding: '10px 12px' }}>{ins.inspector}</td>
                     <td style={{ padding: '10px 12px' }}>
                       <span style={{ padding: '3px 10px', borderRadius: 99, background: rc + '22', color: rc, fontSize: 11, fontWeight: 700 }}>
                         {ins.result}
