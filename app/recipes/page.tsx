@@ -128,7 +128,7 @@ export default function RecipesPage() {
             <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                     <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: 'var(--foreground)', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                        <BookOpen size={24} color="#10b981" /> Recipe Management
+                        <BookOpen size={24} color="#10b981" /> Machine Recipes
                     </h1>
                     <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: 'var(--muted-foreground)' }}>
                         Process recipes with version control, approval workflow and PLC setpoint download

@@ -179,10 +179,10 @@ export default function SPCPage() {
             <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                     <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: 'var(--foreground)', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                        <TrendingUp size={24} color="#6366f1" /> SPC / Process Control
+                        <TrendingUp size={24} color="#6366f1" /> Process Charts (SPC)
                     </h1>
                     <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: 'var(--muted-foreground)' }}>
-                        Statistical Process Control — X-bar charts, Western Electric rules, Cp/Cpk indices
+                        Statistical Process Control — track if your machines are producing within safe limits
                     </p>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>

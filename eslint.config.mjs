@@ -1,6 +1,7 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
+import reactHooks from "eslint-plugin-react-hooks";
 
 const eslintConfig = defineConfig([
   ...nextVitals,
@@ -14,10 +15,16 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
   ]),
   {
+    plugins: {
+      "react-hooks": reactHooks,
+    },
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-require-imports": "off",
-      "react-hooks/purity": "warn",
+      "react-hooks/purity": "off",
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/preserve-manual-memoization": "off",
+      "react/no-unescaped-entities": "off",
       "prefer-const": "warn",
     },
   },

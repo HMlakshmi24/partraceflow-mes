@@ -122,6 +122,7 @@ export async function GET(req: NextRequest) {
             .filter(e => e.machineId)
             .map(e => ({
                 id: e.machineId!,
+                downtimeEventId: e.id,
                 name: e.machine?.name ?? e.machine?.code ?? 'Unknown',
                 reason: e.reason?.name ?? 'No reason recorded',
                 since: e.startTime.toISOString(),

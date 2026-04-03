@@ -25,6 +25,8 @@ function specStatus(field: keyof typeof SPECS, val: string): 'ok' | 'fail' | 'no
 export default function QualityGatePage() {
     const [orders, setOrders] = useState<any[]>([]);
     const [orderId, setOrderId] = useState('');
+    const [failedChecks, setFailedChecks] = useState<any[]>([]);
+    const [showFailed, setShowFailed] = useState(false);
     const [inspector] = useState('Inspector_01');
     const [status, setStatus] = useState<'PENDING' | 'PASS' | 'FAIL' | 'REWORK'>('PENDING');
     const [notes, setNotes] = useState('');
@@ -44,6 +46,11 @@ export default function QualityGatePage() {
                 else if (data?.error) console.warn('[Quality] API error:', data.error);
             })
             .catch(err => console.error('[Quality] fetch failed:', err));
+        // Load failed QC records
+        fetch('/api/quality?result=FAIL&limit=50')
+            .then(r => r.json())
+            .then(d => setFailedChecks(d.checks ?? []))
+            .catch(() => {});
     }, []);
 
     // Load inspection history when order selected
@@ -113,6 +120,42 @@ export default function QualityGatePage() {
 
     return (
         <div className={styles.qualityControl}>
+            {/* ── Failed Inspections History ──────────────────────────────── */}
+            <div style={{ margin: '1rem 1rem 0', background: 'var(--card-bg)', border: failedChecks.length > 0 ? '1px solid rgba(239,68,68,0.3)' : '1px solid var(--card-border)', borderRadius: '12px', overflow: 'hidden' }}>
+                <button
+                    onClick={() => setShowFailed(v => !v)}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '0.85rem 1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: failedChecks.length > 0 ? '#dc2626' : 'var(--muted-foreground)', fontWeight: 700, fontSize: '0.9rem' }}
+                >
+                    <span>⚠ Failed Inspections — {failedChecks.length} records</span>
+                    <span style={{ fontSize: '0.75rem' }}>{showFailed ? '▲ Hide' : '▼ Show list'}</span>
+                </button>
+                {showFailed && (
+                    failedChecks.length === 0 ? (
+                        <div style={{ padding: '0.75rem 1.25rem', color: '#10b981', fontSize: '0.88rem', borderTop: '1px solid var(--border)' }}>No failed inspections on record.</div>
+                    ) : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                            <thead>
+                                <tr style={{ background: 'rgba(239,68,68,0.06)', borderTop: '1px solid rgba(239,68,68,0.15)' }}>
+                                    {['Parameter', 'Expected', 'Actual', 'Status'].map(h => (
+                                        <th key={h} style={{ padding: '8px 14px', textAlign: 'left', fontWeight: 700, color: '#dc2626', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {failedChecks.map((qc: any, i: number) => (
+                                    <tr key={qc.id} style={{ borderTop: '1px solid var(--border)', background: i % 2 === 0 ? 'transparent' : 'rgba(239,68,68,0.02)' }}>
+                                        <td style={{ padding: '9px 14px', color: 'var(--foreground)', fontWeight: 600 }}>{qc.parameter ?? '—'}</td>
+                                        <td style={{ padding: '9px 14px', color: 'var(--muted-foreground)' }}>{qc.expected ?? '—'}</td>
+                                        <td style={{ padding: '9px 14px', color: '#dc2626', fontWeight: 600 }}>{qc.actual ?? '—'}</td>
+                                        <td style={{ padding: '9px 14px' }}><span style={{ background: 'rgba(239,68,68,0.15)', color: '#dc2626', padding: '2px 10px', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700 }}>FAIL</span></td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )
+                )}
+            </div>
+
             <div className={styles.header}>
                 <div className={styles.headerContent}>
                     <h1><CheckCircle size={32} style={{ display: 'inline', marginRight: '10px' }} /> Quality Gate - Final Inspection</h1>

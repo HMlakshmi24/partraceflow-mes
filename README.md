@@ -160,9 +160,10 @@ After seeding, use any of these accounts:
 | Username | Password | Role |
 |---|---|---|
 | `admin` | `admin123` | Administrator |
-| `supervisor` | `super123` | Supervisor |
-| `quality` | `quality123` | Quality Manager |
-| `operator` | `op123` | Operator |
+| `SUPV-LEE` | `demo` | Supervisor |
+| `QC-SARAH` | `demo` | Quality Inspector |
+| `OP-JOHN` | `demo` | Operator |
+| `OP-MARIA` | `demo` | Operator |
 
 ---
 

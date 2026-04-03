@@ -88,9 +88,9 @@ export default function MaintenancePage() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
                 <div>
                     <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                        <Wrench size={24} color="#3b82f6" /> Predictive Maintenance
+                        <Wrench size={24} color="#3b82f6" /> Machine Health
                     </h1>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--muted-foreground)', marginTop: '0.25rem' }}>Machine health scores · Failure prediction · Maintenance recommendations</div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--muted-foreground)', marginTop: '0.25rem' }}>Health scores, failure prediction and maintenance recommendations for every machine</div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     {lastRefresh && <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>Updated {lastRefresh.toLocaleTimeString()}</span>}

@@ -9,8 +9,9 @@ async function run() {
 
     const { cookie } = await loginWithFallback(base, [
         { username: 'admin', password: 'admin123' },
-        { username: 'planner', password: 'demo' },
-        { username: 'operator', password: 'demo' },
+        { username: 'SUPV-LEE', password: 'demo' },
+        { username: 'OP-JOHN', password: 'demo' },
+        { username: 'QC-SARAH', password: 'demo' },
     ]);
     const authHeaders = { Cookie: cookie };
 

@@ -140,7 +140,7 @@ export default function AndonPage() {
     };
 
     const activeAlerts = alerts.filter(a => !a.resolvedAt);
-    const resolvedRecent = alerts.filter(a => a.resolvedAt).slice(0, 5);
+    const resolvedRecent = alerts.filter(a => a.resolvedAt).slice(0, 10);
 
     return (
         <div style={{ padding: '1.5rem', maxWidth: '100%', fontFamily: 'inherit' }}>
@@ -155,7 +155,7 @@ export default function AndonPage() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
                 <div>
                     <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                        <Zap size={24} color="#f59e0b" /> Andon Board System
+                        <Zap size={24} color="#f59e0b" /> Live Factory Alerts
                     </h1>
                     <div style={{ fontSize: '0.85rem', color: 'var(--muted-foreground)', marginTop: '0.25rem' }}>Real-time production floor alerts · {activeAlerts.length} active</div>
                 </div>
@@ -250,17 +250,27 @@ export default function AndonPage() {
                             })}
                         </div>
 
-                        {/* Resolved (recent) */}
+                        {/* Resolved history */}
                         {resolvedRecent.length > 0 && (
-                            <div style={{ background: 'var(--card-bg)', borderRadius: '1rem', border: '1px solid #e5e7eb', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-                                <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #f1f5f9', fontWeight: 700, color: 'var(--muted-foreground)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <Clock size={16} /> Recently Resolved
+                            <div style={{ background: 'var(--card-bg)', borderRadius: '1rem', border: '1px solid var(--card-border)', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                                <div style={{ padding: '0.85rem 1.25rem', borderBottom: '1px solid var(--border)', fontWeight: 700, color: 'var(--foreground)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <CheckCircle size={16} color="#10b981" /> Resolved History ({resolvedRecent.length})
                                 </div>
-                                {resolvedRecent.map(a => (
-                                    <div key={a.id} style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid #f9fafb', display: 'flex', alignItems: 'center', gap: '0.75rem', opacity: 0.65 }}>
-                                        <CheckCircle size={16} color="#10b981" />
-                                        <span style={{ fontSize: '0.85rem', flex: 1 }}>{a.message}</span>
-                                        <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>{new Date(a.resolvedAt!).toLocaleTimeString()}</span>
+                                {resolvedRecent.map((a, i) => (
+                                    <div key={a.id} style={{
+                                        padding: '0.75rem 1.25rem', borderTop: i > 0 ? '1px solid var(--border)' : 'none',
+                                        display: 'flex', alignItems: 'center', gap: '0.75rem',
+                                        background: i % 2 === 0 ? 'transparent' : 'var(--surface-muted)',
+                                    }}>
+                                        <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: a.color === 'RED' ? '#dc2626' : a.color === 'YELLOW' ? '#f59e0b' : '#3b82f6' }} />
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.message}</div>
+                                            <div style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)' }}>{a.reason ?? a.severity ?? '—'} · {a.machine?.name ?? a.machineId ?? 'Floor'}</div>
+                                        </div>
+                                        <div style={{ flexShrink: 0, textAlign: 'right' as const }}>
+                                            <div style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: 700 }}>✓ Resolved</div>
+                                            <div style={{ fontSize: '0.7rem', color: 'var(--muted-foreground)' }}>{new Date(a.resolvedAt!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                                        </div>
                                     </div>
                                 ))}
                             </div>

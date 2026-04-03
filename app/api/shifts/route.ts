@@ -6,7 +6,11 @@ export async function GET(req: NextRequest) {
     try {
         const { searchParams } = new URL(req.url);
         const action = searchParams.get('action');
-        const plantId = searchParams.get('plantId') ?? 'PLANT-01';
+        let plantId = searchParams.get('plantId') ?? 'PLANT-01';
+        if (!searchParams.get('plantId')) {
+            const firstShift = await prisma.shift.findFirst({ select: { plantId: true } });
+            if (firstShift) plantId = firstShift.plantId;
+        }
 
         if (action === 'current') {
             const current = await ShiftService.getCurrentShift(plantId);

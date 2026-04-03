@@ -76,9 +76,33 @@ export default function AuditPage() {
                         Full immutable log of all system events — workflows, tasks, quality checks, errors
                     </p>
                 </div>
-                <button onClick={load} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.65rem 1.1rem', borderRadius: '0.5rem', border: '1px solid #e5e7eb', background: 'var(--card-bg)', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
-                    <RefreshCw size={15} /> Refresh
-                </button>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button onClick={load} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.65rem 1.1rem', borderRadius: '0.5rem', border: '1px solid #e5e7eb', background: 'var(--card-bg)', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
+                        <RefreshCw size={15} /> Refresh
+                    </button>
+                    <button
+                        onClick={() => {
+                            const headers = ['Timestamp', 'Event Type', 'Details', 'User'];
+                            const rows = events.map(e => [
+                                new Date(e.timestamp).toLocaleString(),
+                                e.eventType,
+                                (e.details ?? '').replace(/,/g, ';'),
+                                e.userId ?? '—',
+                            ]);
+                            const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
+                            const blob = new Blob([csv], { type: 'text/csv' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                        }}
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.65rem 1.1rem', borderRadius: '0.5rem', border: 'none', background: '#1e86ff', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem' }}
+                    >
+                        ↓ Download CSV
+                    </button>
+                </div>
             </div>
 
             {/* Stats row */}

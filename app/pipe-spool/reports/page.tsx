@@ -42,6 +42,17 @@ function exportCSV(rows: any[], filename: string) {
   URL.revokeObjectURL(url);
 }
 
+function ProgressBar({ pct, color }: { pct: number; color: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ flex: 1, height: 10, borderRadius: 99, background: 'var(--surface-muted)' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 99, transition: 'width 0.5s' }} />
+      </div>
+      <span style={{ fontSize: 12, fontWeight: 600, color, minWidth: 36, textAlign: 'right' }}>{pct}%</span>
+    </div>
+  );
+}
+
 export default function ReportsPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [lines, setLines] = useState<any[]>([]);
@@ -124,15 +135,6 @@ export default function ReportsPage() {
     RaisedAt: n.raisedAt ? new Date(n.raisedAt).toLocaleDateString() : '',
   }));
 
-  const Bar = ({ pct, color }: { pct: number; color: string }) => (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <div style={{ flex: 1, height: 10, borderRadius: 99, background: 'var(--surface-muted)' }}>
-        <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 99, transition: 'width 0.5s' }} />
-      </div>
-      <span style={{ fontSize: 12, fontWeight: 600, color, minWidth: 36, textAlign: 'right' }}>{pct}%</span>
-    </div>
-  );
-
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted-foreground)' }}>Loading reports…</div>;
 
   return (
@@ -177,7 +179,7 @@ export default function ReportsPage() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
             <div>
               <div style={{ fontSize: 13, color: 'var(--muted-foreground)', marginBottom: 12, fontWeight: 600 }}>Spool Installation Progress</div>
-              <Bar pct={summary.completionRate} color="#10b981" />
+              <ProgressBar pct={summary.completionRate} color="#10b981" />
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
                 {Object.entries(summary.spoolsByStatus).map(([s, c]) => (
                   <div key={s} style={{ fontSize: 12, padding: '4px 10px', borderRadius: 99, background: (STATUS_COLOR[s] ?? '#64748b') + '22', color: STATUS_COLOR[s] ?? '#64748b', fontWeight: 600 }}>
@@ -188,7 +190,7 @@ export default function ReportsPage() {
             </div>
             <div>
               <div style={{ fontSize: 13, color: 'var(--muted-foreground)', marginBottom: 12, fontWeight: 600 }}>Weld Joint Completion</div>
-              <Bar pct={summary.weldCompletionRate} color="#f59e0b" />
+              <ProgressBar pct={summary.weldCompletionRate} color="#f59e0b" />
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
                 {Object.entries(summary.jointsByStatus).map(([s, c]) => (
                   <div key={s} style={{ fontSize: 12, padding: '4px 10px', borderRadius: 99, background: (STATUS_COLOR[s] ?? '#64748b') + '22', color: STATUS_COLOR[s] ?? '#64748b', fontWeight: 600 }}>

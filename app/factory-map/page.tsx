@@ -15,6 +15,9 @@ interface MachineLive {
     id: string; code: string; name: string; status: string; oee: number;
     lineName: string; areaName: string; currentJob?: string;
     telemetry: TelemetryPoint[];
+    openDowntimeId?: string;
+    openDowntimeReason?: string;
+    openDowntimeMins?: number;
 }
 
 interface FactoryTree {
@@ -191,6 +194,24 @@ async function fetchFactoryTree(): Promise<FactoryTree> {
             }
         } catch { /* telemetry optional */ }
 
+        // Fetch open downtimes
+        const openDowntimeMap: Record<string, { id: string; reason: string; mins: number }> = {};
+        try {
+            const dtRes = await fetch('/api/downtime?open=true');
+            if (dtRes.ok) {
+                const dtData = await dtRes.json();
+                for (const ev of dtData.downtimeEvents ?? []) {
+                    if (ev.machineId) {
+                        openDowntimeMap[ev.machineId] = {
+                            id: ev.id,
+                            reason: ev.reason?.name ?? 'Reason not recorded',
+                            mins: Math.round((Date.now() - new Date(ev.startTime).getTime()) / 60000),
+                        };
+                    }
+                }
+            }
+        } catch { /* downtime optional */ }
+
         const areaMap: Record<string, { name: string; lines: Record<string, { name: string; machines: MachineLive[] }> }> = {};
         const ungrouped: MachineLive[] = [];
 
@@ -208,6 +229,9 @@ async function fetchFactoryTree(): Promise<FactoryTree> {
                 lineName: m.productionLine?.name ?? '',
                 areaName: m.productionLine?.area?.name ?? '',
                 telemetry: tele,
+                openDowntimeId: openDowntimeMap[m.id]?.id,
+                openDowntimeReason: openDowntimeMap[m.id]?.reason,
+                openDowntimeMins: openDowntimeMap[m.id]?.mins,
             };
 
             const areaName = m.productionLine?.area?.name;
@@ -354,14 +378,50 @@ function AreaSection({ area, selectedId, onSelect }: {
 
 // ─── Detail panel ─────────────────────────────────────────────────────────────
 
-function DetailPanel({ machine, onClose }: { machine: MachineLive; onClose: () => void }) {
+function DetailPanel({ machine, onClose, onResolved }: { machine: MachineLive; onClose: () => void; onResolved: () => void }) {
     const cfg = STATUS_CONFIG[machine.status] ?? STATUS_CONFIG.IDLE;
     const oeeColor = machine.oee >= 85 ? '#10b981' : machine.oee >= 65 ? '#f59e0b' : machine.oee > 0 ? '#ef4444' : '#475569';
+    const isDown = machine.status === 'DOWN';
+    const [resolveNotes, setResolveNotes] = useState('');
+    const [resolving, setResolving] = useState(false);
+    const [resolveError, setResolveError] = useState('');
+    const [resolveSuccess, setResolveSuccess] = useState(false);
+
+    const handleResolve = async () => {
+        if (!machine.openDowntimeId) {
+            setResolveError('No active downtime event found for this machine.');
+            return;
+        }
+        setResolving(true);
+        setResolveError('');
+        try {
+            const res = await fetch('/api/downtime', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'end',
+                    downtimeEventId: machine.openDowntimeId,
+                    resolutionNotes: resolveNotes || 'Issue resolved by operator',
+                }),
+            });
+            if (res.ok) {
+                setResolveSuccess(true);
+                setTimeout(() => { onResolved(); onClose(); }, 1800);
+            } else {
+                const err = await res.json();
+                setResolveError(err.error ?? 'Failed to resolve. Try again.');
+            }
+        } catch {
+            setResolveError('Network error. Check connection and try again.');
+        } finally {
+            setResolving(false);
+        }
+    };
 
     return (
         <div style={{
             width: '300px', flexShrink: 0,
-            background: 'var(--card-bg)', border: '1px solid var(--card-border)',
+            background: 'var(--card-bg)', border: `1px solid ${isDown ? 'rgba(220,38,38,0.4)' : 'var(--card-border)'}`,
             borderRadius: '1rem', padding: '1.5rem', overflowY: 'auto',
         }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
@@ -407,6 +467,53 @@ function DetailPanel({ machine, onClose }: { machine: MachineLive; onClose: () =
                 </div>
             )}
 
+            {/* ── RESOLVE SECTION for DOWN machines ── */}
+            {isDown && (
+                <div style={{ marginBottom: '1.25rem', padding: '1rem', background: resolveSuccess ? 'rgba(16,185,129,0.08)' : 'rgba(220,38,38,0.06)', border: `1px solid ${resolveSuccess ? '#10b981' : 'rgba(220,38,38,0.3)'}`, borderRadius: '0.75rem' }}>
+                    {resolveSuccess ? (
+                        <div style={{ textAlign: 'center', padding: '0.5rem 0' }}>
+                            <div style={{ fontSize: '1.5rem', marginBottom: '0.3rem' }}>✅</div>
+                            <div style={{ fontWeight: 800, color: '#10b981', fontSize: '0.95rem' }}>Machine Resolved!</div>
+                            <div style={{ fontSize: '0.78rem', color: 'var(--muted-foreground)', marginTop: '4px' }}>Closing panel...</div>
+                        </div>
+                    ) : (
+                        <>
+                            <div style={{ fontSize: '0.72rem', color: '#dc2626', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.6rem', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#dc2626', display: 'inline-block', animation: 'pulse 1.5s infinite' }} />
+                                Machine Stopped
+                            </div>
+                            <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--foreground)', marginBottom: '2px' }}>
+                                {machine.openDowntimeReason ?? 'Reason not recorded'}
+                            </div>
+                            {machine.openDowntimeMins !== undefined && (
+                                <div style={{ fontSize: '0.78rem', color: 'var(--muted-foreground)', marginBottom: '0.75rem' }}>
+                                    Down for: {machine.openDowntimeMins > 60
+                                        ? `${Math.floor(machine.openDowntimeMins / 60)}h ${machine.openDowntimeMins % 60}m`
+                                        : `${machine.openDowntimeMins} min`}
+                                </div>
+                            )}
+                            <textarea
+                                value={resolveNotes}
+                                onChange={e => setResolveNotes(e.target.value)}
+                                placeholder="What was done to fix it? (optional)"
+                                rows={2}
+                                style={{ width: '100%', borderRadius: '8px', border: '1px solid var(--card-border)', background: 'var(--surface-muted)', padding: '6px 8px', fontSize: '0.82rem', color: 'var(--foreground)', resize: 'none', marginBottom: '0.6rem' }}
+                            />
+                            {resolveError && (
+                                <div style={{ color: '#dc2626', fontSize: '0.78rem', marginBottom: '0.5rem' }}>{resolveError}</div>
+                            )}
+                            <button
+                                disabled={resolving}
+                                onClick={handleResolve}
+                                style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: resolving ? '#9ca3af' : '#10b981', color: '#fff', fontWeight: 800, fontSize: '0.9rem', cursor: resolving ? 'not-allowed' : 'pointer' }}
+                            >
+                                {resolving ? 'Resolving...' : '✓ Machine Fixed — Back Online'}
+                            </button>
+                        </>
+                    )}
+                </div>
+            )}
+
             {/* Live signals */}
             {machine.telemetry.length > 0 && (
                 <div>
@@ -433,8 +540,8 @@ function DetailPanel({ machine, onClose }: { machine: MachineLive; onClose: () =
             <div style={{ marginTop: '1.25rem', padding: '0.65rem', background: 'var(--surface-muted)', borderRadius: '0.5rem' }}>
                 <div style={{ fontSize: '0.68rem', color: 'var(--muted-foreground)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>This Shift</div>
                 {[
-                    { label: 'Parts Produced', value: machine.status === 'RUNNING' ? String(Math.floor(Math.random() * 50 + 100)) : '—' },
-                    { label: 'Downtime', value: machine.status === 'DOWN' ? '14 min' : '0 min' },
+                    { label: 'Parts Produced', value: '—' },
+                    { label: 'Downtime', value: machine.openDowntimeMins ? `${machine.openDowntimeMins} min` : '0 min' },
                     { label: 'Shift OEE', value: machine.oee > 0 ? `${machine.oee}%` : '—' },
                 ].map(r => (
                     <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', marginBottom: '0.25rem' }}>
@@ -443,6 +550,8 @@ function DetailPanel({ machine, onClose }: { machine: MachineLive; onClose: () =
                     </div>
                 ))}
             </div>
+
+            <style>{`@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }`}</style>
         </div>
     );
 }
@@ -619,6 +728,7 @@ export default function FactoryMapPage() {
                     <DetailPanel
                         machine={selectedMachine}
                         onClose={() => setSelectedMachine(null)}
+                        onResolved={refresh}
                     />
                 )}
             </div>

@@ -9,7 +9,7 @@ import StopsCounter from '@/components/dashboard/StopsCounter';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Suspense, useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, Wifi, WifiOff, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { RefreshCw, Wifi, WifiOff, AlertTriangle, Activity } from 'lucide-react';
 import { MachineStatus } from '@/lib/types';
 
 interface OpenStop {
@@ -22,6 +22,7 @@ interface OpenStop {
 
 interface ActiveDown {
     id: string;
+    downtimeEventId?: string;
     name: string;
     reason: string;
     since: string;
@@ -66,21 +67,22 @@ const FALLBACK: DashboardData = {
     andon: { activeCount: 0, criticalCount: 0, alerts: [] },
 };
 
-// Demo production values per time bucket — realistic shift curve
-const DEMO_PROD = [0, 42, 178, 312, 341, 298, 356, 329, 347, 318, 301, 289];
+// Deterministic production curve — no Math.random to avoid hydration mismatch
+const DEMO_PROD = [285, 310, 298, 325, 342, 318, 305, 330, 316, 298, 322, 335, 308, 295, 318, 340];
 
 function buildProductionTimeline(hoursBack: number): { hour: string; actual: number; target: number }[] {
     const slots: { hour: string; actual: number; target: number }[] = [];
     const now = new Date();
-    const step = Math.max(1, Math.floor(hoursBack / 6));
+    const step = Math.max(1, Math.floor(hoursBack / 8));
     let idx = 0;
     for (let i = hoursBack; i >= 0; i -= step) {
         const t = new Date(now.getTime() - i * 3600000);
         const label = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const hour = t.getHours();
-        const isWork = hour >= 6 && hour < 22;
-        const actual = isWork ? (DEMO_PROD[idx % DEMO_PROD.length] ?? 0) : 0;
-        slots.push({ hour: label, actual, target: isWork ? 350 : 0 });
+        // Deterministic variation: ramp up early, plateau in mid-shift, slight dip at end
+        const base = DEMO_PROD[idx % DEMO_PROD.length] ?? 300;
+        const rampFactor = idx < 2 ? 0.6 + idx * 0.2 : 1;
+        const actual = Math.round(base * rampFactor);
+        slots.push({ hour: label, actual, target: 350 });
         idx++;
     }
     return slots;
@@ -217,6 +219,31 @@ async function fetchLiveDashboard(period: string): Promise<DashboardData> {
     return fetchLegacyDashboard(period);
 }
 
+// ── Machine status tile helpers ────────────────────────────────────────────────
+
+function getMachineStatusLabel(status: MachineStatus['status']): string {
+    if (status === 'running') return 'Machine is Running';
+    if (status === 'down') return 'Machine is DOWN';
+    if (status === 'warning') return 'Under Maintenance';
+    return 'Machine is Idle';
+}
+
+function getMachineStatusColor(status: MachineStatus['status']): string {
+    if (status === 'running') return '#10b981';
+    if (status === 'down') return '#ef4444';
+    if (status === 'warning') return '#f59e0b';
+    return '#64748b';
+}
+
+function getMachineTileClass(status: MachineStatus['status']): string {
+    if (status === 'running') return styles.machineTile + ' ' + styles['machineTile--running'];
+    if (status === 'down') return styles.machineTile + ' ' + styles['machineTile--down'];
+    if (status === 'warning') return styles.machineTile + ' ' + styles['machineTile--maintenance'];
+    return styles.machineTile + ' ' + styles['machineTile--idle'];
+}
+
+// ── Main Dashboard Component ───────────────────────────────────────────────────
+
 function DashboardContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
@@ -225,9 +252,16 @@ function DashboardContent() {
     const [data, setData] = useState<DashboardData>(FALLBACK);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
-    const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+    const [, setLastRefresh] = useState<Date | null>(null);
     const [liveConnected, setLiveConnected] = useState(false);
-    const [showStopsDamage, setShowStopsDamage] = useState(false);
+    const [showStopsPanel, setShowStopsPanel] = useState(false);
+    const [resolveTarget, setResolveTarget] = useState<ActiveDown | null>(null);
+    const [resolveNotes, setResolveNotes] = useState('');
+    const [resolving, setResolving] = useState(false);
+    const [resolveError, setResolveError] = useState('');
+    const [resolveSuccess, setResolveSuccess] = useState(false);
+    const [triggeringDemo, setTriggeringDemo] = useState(false);
+    const [currentTime, setCurrentTime] = useState(new Date());
     const eventSourceRef = useRef<EventSource | null>(null);
     const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -248,6 +282,12 @@ function DashboardContent() {
         setRefreshing(true);
         refresh();
     }, [refresh]);
+
+    // Update clock every minute
+    useEffect(() => {
+        const t = setInterval(() => setCurrentTime(new Date()), 60000);
+        return () => clearInterval(t);
+    }, []);
 
     // Initial load + periodic refresh every 15s
     useEffect(() => {
@@ -273,7 +313,6 @@ function DashboardContent() {
                     || event.type?.startsWith('andon.')
                     || event.type?.startsWith('downtime.')
                     || event.type?.startsWith('quality.')) {
-                    // Debounce: just refresh data on significant events
                     refresh();
                 }
             } catch { /* ignore malformed events */ }
@@ -283,163 +322,204 @@ function DashboardContent() {
     }, [refresh]);
 
     const setPeriod = (p: string) => router.push(`/dashboard?period=${p}`);
+    const oeeColor = (v: number) => v >= 85 ? '#10b981' : v >= 65 ? '#f59e0b' : '#ef4444';
 
-    const oeeColor = (v: number) => v >= 85 ? '#388e3c' : v >= 65 ? '#fbc02d' : '#d32f2f';
+    const runningCount = data.machines.filter(m => m.status === 'running').length;
+    const downCount = data.machines.filter(m => m.status === 'down').length;
+    const maintenanceCount = data.machines.filter(m => m.status === 'warning').length;
+    const idleCount = data.machines.filter(m => m.status === 'stopped').length;
+    const liveDownCount = data.activeDown?.length ?? 0;
 
     return (
         <div className={styles.dashboard}>
-            {/* Header bar */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', padding: '0 0.25rem' }}>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
+
+            {/* ── Page Header ──────────────────────────────────────────────────── */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+                <div>
+                    <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800, color: 'var(--foreground)', letterSpacing: '-0.02em', lineHeight: 1.2 }}>
+                        Live Factory Dashboard
+                    </h1>
+                    <p style={{ margin: '2px 0 0', fontSize: '0.85rem', color: 'var(--muted-foreground)' }}>
+                        {currentTime.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
+                        &nbsp;&nbsp;{currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                </div>
+
+                {/* Controls */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                    {/* Period buttons */}
                     {(['day', 'shift', 'week'] as const).map(p => (
                         <button key={p} onClick={() => setPeriod(p)} style={{
-                            padding: '0.4rem 1rem', borderRadius: '0.4rem', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
-                            background: period === p ? '#1e40af' : 'var(--card-border)', color: period === p ? 'var(--card-bg)' : 'var(--foreground)',
-                        }}>{p === 'day' ? 'Today' : p === 'shift' ? 'This Shift' : 'This Week'}</button>
+                            minHeight: '38px',
+                            padding: '0.4rem 1.1rem', borderRadius: '0.5rem', border: 'none', cursor: 'pointer',
+                            fontWeight: 700, fontSize: '0.85rem',
+                            background: period === p ? '#1e40af' : 'var(--card-border)',
+                            color: period === p ? '#fff' : 'var(--foreground)',
+                            transition: 'all 0.15s',
+                        }}>
+                            {p === 'day' ? 'Today' : p === 'shift' ? 'This Shift' : 'This Week'}
+                        </button>
                     ))}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', fontSize: '0.85rem', color: 'var(--muted-foreground)' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+
+                    {/* Live indicator */}
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem' }}>
                         {liveConnected
-                            ? <><Wifi size={14} color="#10b981" /> <span style={{ color: '#10b981' }}>Live</span></>
-                            : <><WifiOff size={14} color="#9ca3af" /> <span>Polling</span></>
-                        }
+                            ? <><Wifi size={13} color="#10b981" /><span style={{ color: '#10b981', fontWeight: 600 }}>Live</span></>
+                            : <><WifiOff size={13} color="#9ca3af" /><span style={{ color: '#9ca3af' }}>Polling</span></>}
                     </span>
-                    {lastRefresh && <span>Updated {lastRefresh.toLocaleTimeString()}</span>}
-                    <button
-                        onClick={handleManualRefresh}
-                        disabled={refreshing}
-                        style={{ background: refreshing ? '#eff6ff' : 'none', border: refreshing ? '1px solid #bfdbfe' : 'none', borderRadius: '0.4rem', padding: '0.3rem 0.6rem', cursor: refreshing ? 'not-allowed' : 'pointer', color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '0.3rem', fontWeight: 600, transition: 'all 0.15s' }}>
-                        <RefreshCw size={14} style={refreshing ? { animation: 'spin 0.7s linear infinite' } : {}} />
+
+                    {/* Refresh button */}
+                    <button onClick={handleManualRefresh} disabled={refreshing} style={{
+                        minHeight: '38px',
+                        background: 'none', border: '1px solid var(--card-border)', borderRadius: '0.5rem',
+                        padding: '0.35rem 0.75rem', cursor: refreshing ? 'not-allowed' : 'pointer',
+                        color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '0.3rem',
+                        fontWeight: 600, fontSize: '0.82rem',
+                    }}>
+                        <RefreshCw size={13} style={refreshing ? { animation: 'spin 0.7s linear infinite' } : {}} />
                         {refreshing ? 'Refreshing...' : 'Refresh'}
                     </button>
-                    {(() => {
-                        const liveCount = data.activeDown?.length ?? 0;
-                        const hasLive = liveCount > 0;
-                        return (
-                            <button
-                                onClick={() => setShowStopsDamage(v => !v)}
-                                style={{
-                                    background: hasLive ? 'rgba(239,68,68,0.12)' : showStopsDamage ? 'rgba(239,68,68,0.08)' : 'none',
-                                    border: hasLive ? '1px solid rgba(239,68,68,0.5)' : showStopsDamage ? '1px solid rgba(239,68,68,0.35)' : '1px solid var(--card-border)',
-                                    borderRadius: '0.4rem', padding: '0.3rem 0.7rem', cursor: 'pointer',
-                                    color: hasLive || showStopsDamage ? '#dc2626' : 'var(--foreground)',
-                                    display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600, fontSize: '0.85rem', transition: 'all 0.2s',
-                                    animation: hasLive && !showStopsDamage ? 'pulse-btn 1.4s ease-in-out infinite' : 'none',
-                                }}>
-                                <AlertTriangle size={14} />
-                                Stops & Damage
-                                {hasLive && (
-                                    <span style={{ background: '#dc2626', color: '#fff', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, padding: '0.05rem 0.45rem', minWidth: '1.2rem', textAlign: 'center' }}>
-                                        {liveCount}
-                                    </span>
-                                )}
-                                {showStopsDamage ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                            </button>
-                        );
-                    })()}
+
+                    {/* Stops & Damage — toggles inline resolve panel, or demo trigger when no downs */}
+                    {liveDownCount === 0 ? (
+                        <button
+                            onClick={async () => {
+                                setTriggeringDemo(true);
+                                try {
+                                    // Find first available machine
+                                    const firstMachine = data.machines[0];
+                                    if (firstMachine) {
+                                        await fetch('/api/downtime', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({
+                                                action: 'start',
+                                                machineId: firstMachine.id,
+                                                reason: 'Machine Breakdown',
+                                                notes: 'Demo stop — triggered for demonstration',
+                                            }),
+                                        });
+                                        await refresh();
+                                    }
+                                } catch { /* ignore */ }
+                                finally { setTriggeringDemo(false); }
+                            }}
+                            disabled={triggeringDemo}
+                            style={{
+                                minHeight: '38px',
+                                background: 'none',
+                                border: '1px solid var(--card-border)',
+                                borderRadius: '0.5rem', padding: '0.35rem 0.85rem', cursor: triggeringDemo ? 'not-allowed' : 'pointer',
+                                color: 'var(--muted-foreground)',
+                                display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+                                fontWeight: 600, fontSize: '0.82rem',
+                                opacity: triggeringDemo ? 0.7 : 1,
+                            }}
+                        >
+                            <AlertTriangle size={13} />
+                            {triggeringDemo ? 'Triggering...' : 'Demo: Trigger a Stop'}
+                        </button>
+                    ) : (
+                        <button
+                            onClick={() => setShowStopsPanel(v => !v)}
+                            style={{
+                                minHeight: '38px',
+                                background: '#dc2626',
+                                border: '2px solid #b91c1c',
+                                borderRadius: '0.5rem', padding: '0.35rem 0.85rem', cursor: 'pointer',
+                                color: '#fff',
+                                display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+                                fontWeight: 700, fontSize: '0.85rem',
+                                animation: 'pulse-banner 1.4s ease-in-out infinite',
+                            }}
+                        >
+                            <AlertTriangle size={14} />
+                            Stops &amp; Damage
+                            <span style={{ background: 'rgba(255,255,255,0.3)', color: '#fff', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, padding: '0.05rem 0.45rem', minWidth: '1.2rem', textAlign: 'center' as const }}>
+                                {liveDownCount}
+                            </span>
+                        </button>
+                    )}
                 </div>
             </div>
 
-            {/* Stops & Damage Panel */}
-            {showStopsDamage && !loading && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', background: 'var(--card-bg)', border: `1px solid ${(data.activeDown?.length ?? 0) > 0 ? 'rgba(239,68,68,0.4)' : 'rgba(239,68,68,0.15)'}`, borderRadius: '0.75rem', padding: '1rem 1.25rem' }}>
-                    {/* Stops list */}
-                    <div>
-                        {/* Live — currently stopped */}
-                        <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#dc2626', marginBottom: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#dc2626', display: 'inline-block', animation: (data.activeDown?.length ?? 0) > 0 ? 'pulse 1.5s infinite' : 'none' }} />
-                            Live — Machines Down Now
+            {/* ── Critical Alert Banner — only when machines are REALLY down ── */}
+            {!loading && liveDownCount > 0 && (
+                <div style={{
+                    background: '#dc2626', borderRadius: '10px', padding: '16px 20px',
+                    display: 'flex', alignItems: 'center', gap: '14px',
+                    animation: 'pulse-banner 1.2s ease-in-out infinite',
+                    boxShadow: '0 0 0 4px rgba(220,38,38,0.25)',
+                }}>
+                    <span style={{ width: 16, height: 16, borderRadius: '50%', background: '#fff', display: 'inline-block', animation: 'pulse 1.2s ease-in-out infinite', flexShrink: 0 }} />
+                    <div style={{ flex: 1 }}>
+                        <div style={{ color: '#fff', fontWeight: 800, fontSize: '1.05rem', letterSpacing: '-0.01em' }}>
+                            FACTORY ALERT — {liveDownCount} Machine{liveDownCount > 1 ? 's' : ''} Currently DOWN
                         </div>
-                        {(data.activeDown?.length ?? 0) === 0 ? (
-                            <div style={{ fontSize: '0.85rem', color: '#16a34a', padding: '0.4rem 0.75rem', background: 'rgba(22,163,74,0.07)', border: '1px solid rgba(22,163,74,0.2)', borderRadius: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#16a34a', display: 'inline-block' }} />
-                                All machines running
-                            </div>
-                        ) : (
-                            <div style={{ display: 'grid', gap: '0.4rem' }}>
-                                {(data.activeDown ?? []).map(m => (
-                                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: '0.5rem', padding: '0.5rem 0.75rem' }}>
-                                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#dc2626', flexShrink: 0, animation: 'pulse 1.5s infinite' }} />
-                                        <div style={{ flex: 1, minWidth: 0 }}>
-                                            <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--foreground)' }}>{m.name}</div>
-                                            <div style={{ fontSize: '0.75rem', color: '#dc2626' }}>{m.reason} · {m.durationMins}m ago</div>
-                                        </div>
-                                        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#fff', background: '#dc2626', borderRadius: '3px', padding: '0.1rem 0.45rem', flexShrink: 0 }}>DOWN</span>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-
-                        {/* Historical — closed stops this period */}
-                        {data.downtime.length > 0 && (
-                            <>
-                                <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#94a3b8', margin: '0.9rem 0 0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                    <span style={{ width: 8, height: 8, borderRadius: '2px', background: '#94a3b8', display: 'inline-block' }} />
-                                    Period History — Resolved Stops
-                                </div>
-                                <div style={{ display: 'grid', gap: '0.3rem' }}>
-                                    {data.downtime.map((item, i) => (
-                                        <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                                            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', width: '1.2rem', textAlign: 'right' as const }}>{i + 1}</span>
-                                            <span style={{ flex: 1, fontSize: '0.82rem', color: 'var(--muted-foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.label}</span>
-                                            <span style={{ fontSize: '0.78rem', color: '#94a3b8' }}>{item.value} min</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </>
-                        )}
-                    </div>
-
-                    {/* Damage / Defect list */}
-                    <div>
-                        <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#7c3aed', marginBottom: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                            <span style={{ width: 8, height: 8, borderRadius: '2px', background: '#7c3aed', display: 'inline-block' }} />
-                            Damage & Defects
-                        </div>
-                        {data.scrap.length === 0 ? (
-                            <div style={{ fontSize: '0.85rem', color: 'var(--muted-foreground)', padding: '0.5rem 0' }}>No defects recorded.</div>
-                        ) : (
-                            <div style={{ display: 'grid', gap: '0.4rem' }}>
-                                {data.scrap.map((item, i) => {
-                                    const maxVal = data.scrap[0]?.value ?? 1;
-                                    const pct = Math.round((item.value / maxVal) * 100);
-                                    return (
-                                        <div key={item.label} style={{ display: 'grid', gap: '0.2rem' }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                                                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', width: '1.2rem', textAlign: 'right' as const }}>{i + 1}</span>
-                                                <span style={{ flex: 1, fontSize: '0.85rem', color: 'var(--foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{item.label}</span>
-                                                <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#7c3aed' }}>{item.value} pcs</span>
-                                            </div>
-                                            <div style={{ marginLeft: '1.8rem', height: 4, background: 'var(--surface-muted)', borderRadius: 999, overflow: 'hidden' }}>
-                                                <div style={{ width: `${pct}%`, height: '100%', background: 'linear-gradient(90deg, #7c3aed, #a78bfa)', borderRadius: 999, transition: 'width 0.4s' }} />
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
-                        <div style={{ marginTop: '1rem', padding: '0.6rem 0.85rem', background: 'rgba(124,58,237,0.07)', border: '1px solid rgba(124,58,237,0.2)', borderRadius: '0.5rem', fontSize: '0.82rem', color: 'var(--muted-foreground)' }}>
-                            Total scrap pieces: <strong style={{ color: 'var(--foreground)' }}>{data.scrap.reduce((s, d) => s + d.value, 0)}</strong>
-                            &nbsp;·&nbsp;Failed QC inspections: <strong style={{ color: 'var(--foreground)' }}>{data.summary.failedQc}</strong>
+                        <div style={{ color: 'rgba(255,255,255,0.85)', fontWeight: 500, fontSize: '0.88rem', marginTop: '2px' }}>
+                            Select a machine below to resolve the stoppage
                         </div>
                     </div>
+                    <Link href="/factory-map" style={{ color: '#fff', fontWeight: 800, fontSize: '0.82rem', letterSpacing: '0.06em', background: 'rgba(0,0,0,0.25)', borderRadius: '8px', padding: '8px 16px', flexShrink: 0, textDecoration: 'none' }}>
+                        RESOLVE →
+                    </Link>
                 </div>
             )}
 
+            {/* ── Inline Stops Panel — lists DOWN machines with one-click resolve ── */}
+            {showStopsPanel && !loading && (
+                <div style={{ background: 'var(--card-bg)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: '12px', padding: '1rem 1.25rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--foreground)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ width: 9, height: 9, borderRadius: '50%', background: liveDownCount > 0 ? '#dc2626' : '#10b981', display: 'inline-block', animation: liveDownCount > 0 ? 'pulse 1.5s infinite' : 'none' }} />
+                            {liveDownCount > 0 ? `${liveDownCount} Machine${liveDownCount > 1 ? 's' : ''} Currently Stopped` : 'All machines running — no active stops'}
+                        </div>
+                        <button onClick={() => setShowStopsPanel(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', fontSize: '1.2rem', lineHeight: 1 }}>×</button>
+                    </div>
+                    {liveDownCount === 0 ? (
+                        <div style={{ fontSize: '0.9rem', color: '#16a34a', padding: '0.6rem 0.85rem', background: 'rgba(16,185,129,0.07)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: '8px' }}>
+                            No open stoppages right now. Dashboard will update automatically.
+                        </div>
+                    ) : (
+                        <div style={{ display: 'grid', gap: '0.6rem' }}>
+                            {(data.activeDown ?? []).map(m => (
+                                <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '10px', padding: '0.75rem 1rem' }}>
+                                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#dc2626', flexShrink: 0, animation: 'pulse 1.5s infinite' }} />
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--foreground)' }}>{m.name}</div>
+                                        <div style={{ fontSize: '0.8rem', color: '#dc2626', fontWeight: 600 }}>
+                                            {m.reason} · down {m.durationMins > 60 ? `${Math.floor(m.durationMins / 60)}h ${m.durationMins % 60}m` : `${m.durationMins} min`}
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => { setResolveTarget(m); setResolveNotes(''); setResolveError(''); setResolveSuccess(false); setShowStopsPanel(false); }}
+                                        style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 18px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer', flexShrink: 0 }}
+                                    >
+                                        Resolve ✓
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* ── Loading State ─────────────────────────────────────────────────── */}
             {loading ? (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: 'var(--muted-foreground)', fontSize: '1rem', gap: '0.75rem' }}>
-                    <RefreshCw size={20} style={{ animation: 'spin 1s linear infinite' }} /> Loading live factory data...
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: 'var(--muted-foreground)', fontSize: '1rem', gap: '0.75rem', flexDirection: 'column' }}>
+                    <RefreshCw size={28} style={{ animation: 'spin 1s linear infinite', color: '#3b82f6' }} />
+                    <span style={{ fontWeight: 600 }}>Loading live factory data...</span>
                 </div>
             ) : (
                 <>
+                    {/* ── Andon Alert Banner ──────────────────────────────────── */}
                     {data.andon.activeCount > 0 && (
                         <div className={styles.andonBanner}>
                             <div className={styles.andonHeader}>
                                 <span className={styles.andonTitle}>Andon Alerts</span>
                                 <span className={styles.andonCount}>
                                     {data.andon.activeCount} active
-                                    {data.andon.criticalCount > 0 && ` • ${data.andon.criticalCount} critical`}
+                                    {data.andon.criticalCount > 0 && ` · ${data.andon.criticalCount} critical`}
                                 </span>
                                 <a href="/andon" className={styles.andonLink}>Open Andon Board</a>
                             </div>
@@ -449,9 +529,7 @@ function DashboardContent() {
                                         <span className={styles.andonDot} data-color={a.color} />
                                         <div className={styles.andonText}>
                                             <div className={styles.andonMessage}>{a.message}</div>
-                                            <div className={styles.andonMeta}>
-                                                {a.reason} • {a.boardName}
-                                            </div>
+                                            <div className={styles.andonMeta}>{a.reason} · {a.boardName}</div>
                                         </div>
                                         <div className={styles.andonTime}>{new Date(a.timestamp).toLocaleTimeString()}</div>
                                     </div>
@@ -459,53 +537,183 @@ function DashboardContent() {
                             </div>
                         </div>
                     )}
+
+                    {/* ── KPI Summary Row ──────────────────────────────────────── */}
                     <div className={styles.summaryRow}>
-                        <Link href="/planner" className={styles.summaryCard} style={{ textDecoration: 'none', color: 'inherit' }}>
-                            <div className={styles.summaryLabel}>Active Jobs</div>
-                            <div className={styles.summaryValue}>{data.summary.activeOrders}</div>
-                            <div className={styles.summaryMeta}>Work orders in progress ↗</div>
-                        </Link>
-                        <Link href="/operator" className={styles.summaryCard} style={{ textDecoration: 'none', color: 'inherit' }}>
-                            <div className={styles.summaryLabel}>Machines Stopped</div>
-                            <div className={styles.summaryValue}>{data.summary.openDowntimes}</div>
-                            <div className={styles.summaryMeta}>Unresolved stops ↗</div>
-                        </Link>
-                        <Link href="/quality" className={styles.summaryCard} style={{ textDecoration: 'none', color: 'inherit' }}>
-                            <div className={styles.summaryLabel}>Failed Inspections</div>
-                            <div className={styles.summaryValue}>{data.summary.failedQc}</div>
-                            <div className={styles.summaryMeta}>Quality checks failed ↗</div>
-                        </Link>
-                        <Link href="/factory-map" className={styles.summaryCard} style={{ textDecoration: 'none', color: 'inherit' }}>
+                        <Link href="/factory-map" className={styles.summaryCard} style={{
+                            textDecoration: 'none', color: 'inherit',
+                            borderLeftColor: '#10b981',
+                        }}>
                             <div className={styles.summaryLabel}>Machines Running</div>
-                            <div className={styles.summaryValue}>{data.summary.runningMachines}/{data.summary.totalMachines}</div>
-                            <div className={styles.summaryMeta}>Live floor status ↗</div>
+                            <div className={styles.summaryValue} style={{ color: '#10b981' }}>
+                                {data.summary.runningMachines || runningCount}
+                                {data.summary.totalMachines > 0 && (
+                                    <span style={{ fontSize: '1.2rem', color: 'var(--muted-foreground)', fontWeight: 600 }}>
+                                        /{data.summary.totalMachines}
+                                    </span>
+                                )}
+                            </div>
+                            <div className={styles.summaryMeta}>Machines actively producing right now ↗</div>
+                        </Link>
+
+                        <Link href="/planner" className={styles.summaryCard} style={{
+                            textDecoration: 'none', color: 'inherit',
+                            borderLeftColor: '#3b82f6',
+                        }}>
+                            <div className={styles.summaryLabel}>Active Jobs</div>
+                            <div className={styles.summaryValue} style={{ color: '#3b82f6' }}>
+                                {data.summary.activeOrders}
+                            </div>
+                            <div className={styles.summaryMeta}>Work orders currently in progress ↗</div>
+                        </Link>
+
+                        <Link href="/andon" className={styles.summaryCard} style={{
+                            textDecoration: 'none', color: 'inherit',
+                            borderLeftColor: liveDownCount > 0 ? '#ef4444' : '#64748b',
+                        }}>
+                            <div className={styles.summaryLabel}>Machines Stopped</div>
+                            <div className={styles.summaryValue} style={{ color: liveDownCount > 0 ? '#ef4444' : 'var(--foreground)' }}>
+                                {data.summary.openDowntimes || downCount}
+                            </div>
+                            <div className={styles.summaryMeta}>
+                                {liveDownCount > 0 ? 'Action required — see Live Alerts ↗' : 'No active stoppages right now ↗'}
+                            </div>
+                        </Link>
+
+                        <Link href="/quality" className={styles.summaryCard} style={{
+                            textDecoration: 'none', color: 'inherit',
+                            borderLeftColor: data.summary.failedQc > 0 ? '#ef4444' : '#64748b',
+                        }}>
+                            <div className={styles.summaryLabel}>Failed Inspections</div>
+                            <div className={styles.summaryValue} style={{ color: data.summary.failedQc > 0 ? '#ef4444' : 'var(--foreground)' }}>
+                                {data.summary.failedQc}
+                            </div>
+                            <div className={styles.summaryMeta}>Quality checks that did not pass ↗</div>
                         </Link>
                     </div>
-                    {/* KPI Row */}
-                    <div className={styles.kpiRow}>
-                        <div className={styles.kpiCard}>
-                            <OEEGauge value={data.oee.oee} label="Overall Efficiency" color={oeeColor(data.oee.oee)} />
+
+                    {/* ── Machine Status Board ─────────────────────────────────── */}
+                    {data.machines.length > 0 && (
+                        <div style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: '0.85rem', padding: '1rem 1.25rem', boxShadow: 'var(--shadow-soft)' }}>
+                            {/* Section header */}
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                <div>
+                                    <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--foreground)' }}>
+                                        Machine Status Board
+                                    </h2>
+                                    <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: 'var(--muted-foreground)' }}>
+                                        What is happening right now on the factory floor
+                                    </p>
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                    {[
+                                        { label: `${runningCount} Running`, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+                                        { label: `${downCount} DOWN`, color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
+                                        { label: `${maintenanceCount} Maintenance`, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+                                        { label: `${idleCount} Idle`, color: '#64748b', bg: 'rgba(100,116,139,0.1)' },
+                                    ].map(s => (
+                                        <span key={s.label} style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700, color: s.color, background: s.bg }}>
+                                            {s.label}
+                                        </span>
+                                    ))}
+                                    <Link href="/factory-map" style={{ padding: '3px 12px', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700, color: '#3b82f6', background: 'rgba(59,130,246,0.1)', textDecoration: 'none' }}>
+                                        Open Full Map →
+                                    </Link>
+                                </div>
+                            </div>
+
+                            {/* Machine tiles grid */}
+                            <div className={styles.machineBoard}>
+                                {data.machines.map(machine => {
+                                    const statusColor = getMachineStatusColor(machine.status);
+                                    const statusLabel = getMachineStatusLabel(machine.status);
+                                    const activeDownInfo = (data.activeDown ?? []).find(d => d.id === machine.id);
+                                    const isDown = machine.status === 'down';
+                                    return (
+                                        <div
+                                            key={machine.id}
+                                            className={getMachineTileClass(machine.status)}
+                                            onClick={isDown ? () => { setResolveTarget(activeDownInfo ?? { id: machine.id, name: machine.name, reason: 'Unknown', since: new Date().toISOString(), durationMins: 0 }); setResolveNotes(''); setResolveError(''); setResolveSuccess(false); } : undefined}
+                                            style={isDown ? { cursor: 'pointer' } : undefined}
+                                            title={isDown ? 'Click to resolve this stoppage' : undefined}
+                                        >
+                                            {/* Machine name */}
+                                            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--foreground)', marginBottom: '6px' }}>
+                                                {machine.name}
+                                            </div>
+
+                                            {/* Status badge */}
+                                            <div style={{
+                                                display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                                padding: '4px 10px', borderRadius: '999px',
+                                                background: statusColor + '22',
+                                                color: statusColor,
+                                                fontSize: '0.75rem', fontWeight: 800,
+                                                marginBottom: isDown ? '6px' : '0',
+                                            }}>
+                                                <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusColor, display: 'inline-block' }} />
+                                                {statusLabel}
+                                            </div>
+
+                                            {/* OEE for running machines */}
+                                            {(machine.status === 'running' || machine.status === 'warning') && machine.oee > 0 && (
+                                                <div style={{ fontSize: '0.78rem', color: 'var(--muted-foreground)', marginTop: '4px' }}>
+                                                    OEE: <strong style={{ color: oeeColor(machine.oee) }}>{machine.oee}%</strong>
+                                                </div>
+                                            )}
+
+                                            {/* Down reason + click hint */}
+                                            {isDown && (
+                                                <>
+                                                    <div style={{ fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 }}>
+                                                        {activeDownInfo?.reason ?? 'Reason not recorded'}
+                                                    </div>
+                                                    <div style={{ fontSize: '0.7rem', color: '#dc2626', marginTop: '6px', padding: '3px 8px', background: 'rgba(220,38,38,0.1)', borderRadius: '6px', display: 'inline-block', fontWeight: 700 }}>
+                                                        Tap to Resolve →
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         </div>
-                        <div className={styles.kpiCard}>
-                            <OEEGauge value={data.oee.availability} label="Uptime" color={oeeColor(data.oee.availability)} />
+                    )}
+
+                    {/* ── OEE Performance Row ──────────────────────────────────── */}
+                    <div>
+                        <div style={{ marginBottom: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <Activity size={16} color="#3b82f6" />
+                            <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--foreground)' }}>
+                                OEE Performance
+                            </h2>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--muted-foreground)' }}>— How efficiently the factory is running</span>
                         </div>
-                        <div className={styles.kpiCard}>
-                            <OEEGauge value={data.oee.performance} label="Speed" color={oeeColor(data.oee.performance)} />
-                        </div>
-                        <div className={styles.kpiCard}>
-                            <OEEGauge value={data.oee.quality} label="Good Parts %" color={oeeColor(data.oee.quality)} />
-                        </div>
-                        <div className={styles.kpiCard}>
-                            <StopsCounter
-                                count={data.activeDown?.length ?? 0}
-                                downtime={data.downtime}
-                                stopsByMachine={data.stopsByMachine ?? []}
-                                stoppedMachines={(data.activeDown ?? []).map(m => ({ id: m.id, name: m.name }))}
-                            />
+                        <div className={styles.kpiRow}>
+                            <div className={styles.kpiCard}>
+                                <OEEGauge value={data.oee.oee} label="Overall Efficiency (OEE)" color={oeeColor(data.oee.oee)} />
+                            </div>
+                            <div className={styles.kpiCard}>
+                                <OEEGauge value={data.oee.availability} label="Available Time %" color={oeeColor(data.oee.availability)} />
+                            </div>
+                            <div className={styles.kpiCard}>
+                                <OEEGauge value={data.oee.performance} label="Running at Speed %" color={oeeColor(data.oee.performance)} />
+                            </div>
+                            <div className={styles.kpiCard}>
+                                <OEEGauge value={data.oee.quality} label="Good Parts Made %" color={oeeColor(data.oee.quality)} />
+                            </div>
+                            <div className={styles.kpiCard}>
+                                <StopsCounter
+                                    count={data.activeDown?.length ?? 0}
+                                    downtime={data.downtime}
+                                    stopsByMachine={data.stopsByMachine ?? []}
+                                    stoppedMachines={(data.activeDown ?? []).map(m => ({ id: m.id, name: m.name }))}
+                                />
+                            </div>
                         </div>
                     </div>
 
-                    {/* Main Content Grid */}
+                    {/* ── Charts Row ────────────────────────────────────────────── */}
                     <div className={styles.mainGrid}>
                         <div className={styles.leftCol}>
                             <div className={styles.chartCard} style={{ flex: 1 }}>
@@ -519,9 +727,11 @@ function DashboardContent() {
                         <div className={styles.rightCol}>
                             <div className={styles.tableCard}>
                                 {data.machines.length === 0 ? (
-                                    <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
-                                        <p style={{ marginBottom: '0.5rem' }}>No machine data yet.</p>
-                                        <p style={{ fontSize: '0.85rem' }}>Run the Demo Seed from <a href="/settings" style={{ color: '#3b82f6' }}>Settings</a> to populate factory data.</p>
+                                    <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted-foreground)', background: 'var(--card-bg)', borderRadius: '0.75rem', border: '1px solid var(--card-border)' }}>
+                                        <p style={{ marginBottom: '0.5rem', fontWeight: 600 }}>No machine data yet.</p>
+                                        <p style={{ fontSize: '0.85rem' }}>
+                                            Run the Demo Seed from <a href="/settings" style={{ color: '#3b82f6' }}>Settings</a> to populate factory data.
+                                        </p>
                                     </div>
                                 ) : (
                                     <WorkCenterTable machines={data.machines} />
@@ -534,6 +744,153 @@ function DashboardContent() {
                     </div>
                 </>
             )}
+
+            {/* ── Resolve Downtime Modal ──────────────────────────────────────── */}
+            {resolveTarget && (
+                <div
+                    onClick={(e) => { if (e.target === e.currentTarget) { setResolveTarget(null); setResolveSuccess(false); } }}
+                    style={{
+                        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9999,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem',
+                    }}
+                >
+                    <div style={{
+                        background: 'var(--card-bg)', borderRadius: '16px', padding: '1.75rem',
+                        width: '100%', maxWidth: '460px', boxShadow: '0 24px 60px rgba(0,0,0,0.35)',
+                        border: resolveSuccess ? '2px solid #10b981' : '2px solid rgba(220,38,38,0.4)',
+                    }}>
+                        {resolveSuccess ? (
+                            /* ── Success state ── */
+                            <div style={{ textAlign: 'center', padding: '1rem 0' }}>
+                                <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>✅</div>
+                                <div style={{ fontWeight: 800, fontSize: '1.2rem', color: '#10b981', marginBottom: '0.4rem' }}>
+                                    Machine Resolved!
+                                </div>
+                                <div style={{ color: 'var(--muted-foreground)', fontSize: '0.9rem', marginBottom: '1.25rem' }}>
+                                    {resolveTarget.name} is back in service. Dashboard will update shortly.
+                                </div>
+                                <button onClick={() => { setResolveTarget(null); setResolveSuccess(false); }} style={{
+                                    background: '#10b981', color: '#fff', border: 'none', borderRadius: '10px',
+                                    padding: '10px 28px', fontWeight: 700, fontSize: '0.95rem', cursor: 'pointer',
+                                }}>
+                                    Close
+                                </button>
+                            </div>
+                        ) : (
+                            /* ── Resolve form ── */
+                            <>
+                                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+                                    <div>
+                                        <div style={{ fontWeight: 800, fontSize: '1.1rem', color: 'var(--foreground)' }}>
+                                            Resolve Machine Stoppage
+                                        </div>
+                                        <div style={{ fontSize: '0.82rem', color: 'var(--muted-foreground)', marginTop: '2px' }}>
+                                            Confirm the issue is fixed to bring this machine back online
+                                        </div>
+                                    </div>
+                                    <button onClick={() => setResolveTarget(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', fontSize: '1.3rem', lineHeight: 1, padding: '0 4px' }}>×</button>
+                                </div>
+
+                                {/* Machine info */}
+                                <div style={{ background: 'rgba(220,38,38,0.07)', border: '1px solid rgba(220,38,38,0.25)', borderRadius: '10px', padding: '0.85rem 1rem', marginBottom: '1.1rem' }}>
+                                    <div style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--foreground)', marginBottom: '4px' }}>
+                                        {resolveTarget.name}
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '1.2rem', flexWrap: 'wrap' }}>
+                                        <div style={{ fontSize: '0.82rem', color: '#dc2626', fontWeight: 600 }}>
+                                            Reason: {resolveTarget.reason}
+                                        </div>
+                                        <div style={{ fontSize: '0.82rem', color: 'var(--muted-foreground)' }}>
+                                            Down for: {resolveTarget.durationMins > 60
+                                                ? `${Math.floor(resolveTarget.durationMins / 60)}h ${resolveTarget.durationMins % 60}m`
+                                                : `${resolveTarget.durationMins} min`}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Resolution notes */}
+                                <label style={{ display: 'block', fontWeight: 700, fontSize: '0.85rem', color: 'var(--foreground)', marginBottom: '6px' }}>
+                                    What was done to fix it? (optional)
+                                </label>
+                                <textarea
+                                    value={resolveNotes}
+                                    onChange={e => setResolveNotes(e.target.value)}
+                                    placeholder="e.g. Replaced broken sensor, reset controller, cleared jam..."
+                                    rows={3}
+                                    style={{ width: '100%', borderRadius: '10px', border: '1px solid var(--card-border)', background: 'var(--surface-muted)', padding: '0.6rem 0.8rem', fontSize: '0.9rem', color: 'var(--foreground)', resize: 'none', marginBottom: '1rem' }}
+                                />
+
+                                {resolveError && (
+                                    <div style={{ color: '#dc2626', fontSize: '0.82rem', marginBottom: '0.75rem', padding: '8px 12px', background: 'rgba(220,38,38,0.07)', borderRadius: '8px' }}>
+                                        {resolveError}
+                                    </div>
+                                )}
+
+                                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                    <button onClick={() => setResolveTarget(null)} style={{
+                                        flex: 1, padding: '11px', borderRadius: '10px',
+                                        border: '1px solid var(--card-border)', background: 'none',
+                                        color: 'var(--foreground)', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer',
+                                    }}>
+                                        Cancel
+                                    </button>
+                                    <button
+                                        disabled={resolving}
+                                        onClick={async () => {
+                                            if (!resolveTarget.downtimeEventId) {
+                                                setResolveError('No downtime event found for this machine. It may have already been resolved.');
+                                                return;
+                                            }
+                                            setResolving(true);
+                                            setResolveError('');
+                                            try {
+                                                const res = await fetch('/api/downtime', {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({
+                                                        action: 'end',
+                                                        downtimeEventId: resolveTarget.downtimeEventId,
+                                                        resolutionNotes: resolveNotes || 'Issue resolved by operator',
+                                                    }),
+                                                });
+                                                if (res.ok) {
+                                                    setResolveSuccess(true);
+                                                    refresh();
+                                                } else {
+                                                    const err = await res.json();
+                                                    setResolveError(err.error ?? 'Failed to resolve. Try again.');
+                                                }
+                                            } catch {
+                                                setResolveError('Network error. Check connection and try again.');
+                                            } finally {
+                                                setResolving(false);
+                                            }
+                                        }}
+                                        style={{
+                                            flex: 2, padding: '11px', borderRadius: '10px', border: 'none',
+                                            background: resolving ? '#9ca3af' : '#10b981',
+                                            color: '#fff', fontWeight: 800, fontSize: '0.95rem',
+                                            cursor: resolving ? 'not-allowed' : 'pointer',
+                                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                        }}
+                                    >
+                                        {resolving ? 'Resolving...' : '✓  Machine is Fixed — Back Online'}
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            <style>{`
+                @keyframes spin { to { transform: rotate(360deg); } }
+                @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+                @keyframes pulse-btn {
+                    0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
+                    50%      { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
+                }
+            `}</style>
         </div>
     );
 }

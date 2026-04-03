@@ -63,7 +63,7 @@ export default function StopsCounter({
                     {topMachines.map(m => (
                         <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.22rem' }}>
                             <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#ef4444', flexShrink: 0 }} />
-                            <span style={{ flex: 1, fontSize: '0.8rem', color: 'var(--foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <span style={{ flex: 1, fontSize: '0.8rem', color: 'var(--foreground)', wordBreak: 'break-word' }}>
                                 {m.name}
                             </span>
                             <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#dc2626', flexShrink: 0 }}>
@@ -89,7 +89,7 @@ export default function StopsCounter({
                                 {index + 1}
                             </span>
                             <span style={{ width: 7, height: 7, borderRadius: '2px', background: '#f97316', flexShrink: 0 }} />
-                            <span style={{ flex: 1, fontSize: '0.8rem', color: 'var(--foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <span style={{ flex: 1, fontSize: '0.8rem', color: 'var(--foreground)', wordBreak: 'break-word' }}>
                                 {item.label}
                             </span>
                             <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--muted-foreground)', flexShrink: 0 }}>
@@ -109,7 +109,7 @@ export default function StopsCounter({
                     {currentlyDown.map(m => (
                         <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.22rem' }}>
                             <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#dc2626', animation: 'pulse 1.5s infinite', flexShrink: 0 }} />
-                            <span style={{ flex: 1, fontSize: '0.8rem', color: 'var(--foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <span style={{ flex: 1, fontSize: '0.8rem', color: 'var(--foreground)', wordBreak: 'break-word' }}>
                                 {m.name}
                             </span>
                             <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#fff', background: '#dc2626', borderRadius: '3px', padding: '0.05rem 0.35rem', flexShrink: 0 }}>

@@ -65,7 +65,7 @@ export default function TraceabilityPage() {
             {/* Header */}
             <div style={{ marginBottom: '1.5rem' }}>
                 <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: 'var(--foreground)', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                    <GitBranch size={24} color="#8b5cf6" /> Traceability & Genealogy
+                    <GitBranch size={24} color="#8b5cf6" /> Product History
                 </h1>
                 <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: 'var(--muted-foreground)' }}>
                     Full forward/backward trace by serial number or lot — who made it, what materials, on which machine
@@ -88,7 +88,7 @@ export default function TraceabilityPage() {
                             value={searchTerm}
                             onChange={e => setSearchTerm(e.target.value)}
                             onKeyDown={e => e.key === 'Enter' && search()}
-                            placeholder={searchType === 'serial' ? 'e.g. SN-2024-001234' : 'e.g. LOT-2024-A001'}
+                            placeholder={searchType === 'serial' ? 'e.g. VALVE-6IN-WO-2024-001-001' : 'e.g. LOT-CS-A106-001'}
                             style={{ width: '100%', padding: '0.65rem 0.75rem 0.65rem 2.25rem', borderRadius: '0.5rem', border: '1.5px solid var(--card-border)', fontSize: '0.95rem', boxSizing: 'border-box', outline: 'none', background: 'var(--card-bg)', color: 'var(--foreground)' }}
                             onFocus={e => e.target.style.borderColor = '#3b82f6'}
                             onBlur={e => e.target.style.borderColor = 'var(--card-border)'}
@@ -99,7 +99,7 @@ export default function TraceabilityPage() {
                     </button>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
-                    {['SN-DEMO-001', 'SN-DEMO-002', 'LOT-RAW-A01'].map(ex => (
+                    {['VALVE-6IN-WO-2024-001-001', 'FLANGE-4IN-WO-2024-002-003', 'LOT-CS-A106-001'].map(ex => (
                         <button key={ex} onClick={() => { setSearchTerm(ex); setSearchType(ex.startsWith('LOT') ? 'lot' : 'serial'); }} style={{ padding: '0.25rem 0.65rem', borderRadius: '999px', border: '1px solid var(--card-border)', background: 'var(--surface-muted)', color: 'var(--muted-foreground)', cursor: 'pointer', fontSize: '0.75rem' }}>
                             {ex}
                         </button>

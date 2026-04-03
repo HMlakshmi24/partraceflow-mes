@@ -6,8 +6,20 @@ import { eventBus } from '@/lib/events/EventBus';
 export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const orderId = searchParams.get('orderId');
+    const resultFilter = searchParams.get('result');
+    const limit = parseInt(searchParams.get('limit') ?? '50');
 
     try {
+        // ?result=FAIL — return QualityCheck records filtered by result
+        if (resultFilter) {
+            const checks = await prisma.qualityCheck.findMany({
+                where: { result: resultFilter },
+                orderBy: { id: 'desc' },
+                take: limit,
+            });
+            return NextResponse.json({ checks });
+        }
+
         if (orderId) {
             const records = await prisma.inspectionRecord.findMany({
                 where: { workOrderId: orderId },
