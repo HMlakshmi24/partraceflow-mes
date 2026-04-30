@@ -4,6 +4,10 @@ import { onWeldCreated } from '@/lib/spoolFlow';
 import { requireSpoolAction } from '@/lib/spoolRBAC';
 import { CreateWeldSchema, validationError } from '@/lib/validation';
 import { revisionError } from '@/lib/revisionGuard';
+import { AuditService, EventType } from '@/lib/services/AuditService';
+
+// Joint must be in one of these statuses before a weld record can be created
+const WELD_ALLOWED_JOINT_STATUSES = ['FIT_UP', 'PENDING'];
 
 export async function GET(req: NextRequest) {
   try {
@@ -72,16 +76,28 @@ export async function POST(req: NextRequest) {
     const parsed = CreateWeldSchema.safeParse(data);
     if (!parsed.success) return validationError(parsed.error);
 
-    // Revision guard: check drawing status before recording weld
+    // Status guard: joint must be in FIT_UP before welding can be recorded
     if (data.jointId) {
-      const joint = await prisma.spoolJoint.findUnique({ where: { id: data.jointId }, select: { spoolId: true } });
-      if (joint?.spoolId) {
+      const joint = await prisma.spoolJoint.findUnique({
+        where: { id: data.jointId },
+        select: { spoolId: true, status: true, jointId: true },
+      });
+      if (!joint) return NextResponse.json({ error: 'Joint not found' }, { status: 404 });
+      if (!WELD_ALLOWED_JOINT_STATUSES.includes(joint.status)) {
+        return NextResponse.json(
+          { error: `Cannot record weld — joint ${joint.jointId} is in '${joint.status}' status. Joint must be in FIT_UP before welding.` },
+          { status: 422 },
+        );
+      }
+      // Revision guard: check drawing status before recording weld
+      if (joint.spoolId) {
         const revErr = await revisionError(joint.spoolId, 'WELD', isSupervisor);
         if (revErr) return NextResponse.json(revErr.body, { status: revErr.status });
       }
     }
 
     const record = await prisma.weldRecord.create({ data });
+    await AuditService.log(EventType.AUDIT_CHANGE, `Weld record created for joint`, { weldId: record.id, jointId: record.jointId }, guard.userId);
     if (record.jointId) await onWeldCreated(record.jointId).catch(() => {});
     return NextResponse.json({ record });
   } catch (e: any) {

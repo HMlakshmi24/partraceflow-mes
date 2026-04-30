@@ -8,36 +8,81 @@ import { hashPassword } from '@/lib/auth';
 // ─── Seed Data ──────────────────────────────────────────────────────────────
 
 const MACHINES_SEED = [
-    { code: 'W21', name: 'CNC Milling Center',   status: 'RUNNING' },
-    { code: 'W22', name: 'Assembly Station A',   status: 'RUNNING' },
-    { code: 'W23', name: 'Welding Robot',         status: 'IDLE'    },
-    { code: 'W24', name: 'Quality Inspection Gate', status: 'RUNNING' },
-    { code: 'SIL01', name: 'Silkscreen Line 1',  status: 'IDLE'    },
-    { code: 'SIL02', name: 'Packaging Station',  status: 'RUNNING' },
+    { code: 'CNC-01',  name: 'CNC Milling Center #1',     status: 'RUNNING'     },
+    { code: 'CNC-02',  name: 'CNC Turning Center #2',     status: 'RUNNING'     },
+    { code: 'WLD-01',  name: 'MIG Welding Robot',         status: 'IDLE'        },
+    { code: 'QC-GATE', name: 'CMM Quality Gate',          status: 'RUNNING'     },
+    { code: 'ASSY-01', name: 'Assembly Station — Line 3', status: 'RUNNING'     },
+    { code: 'PKG-01',  name: 'Packaging & Labelling Unit',status: 'RUNNING'     },
 ];
 
 const PRODUCTS_SEED = [
-    { sku: 'PART-101', name: 'Precision Gear Assembly',  description: 'High-tolerance gear set for automotive' },
-    { sku: 'PART-102', name: 'Aluminium Housing B',      description: 'Die-cast housing for electric motor' },
-    { sku: 'PART-103', name: 'Steel Bracket Kit',        description: 'Structural bracket — M8 bolt pattern' },
+    { sku: 'PMP-HG-101', name: 'Pump Housing Assembly',       description: 'Centrifugal pump casing — SS304, Class 150' },
+    { sku: 'VLV-WU-202', name: 'Valve Welding Unit',          description: 'Gate valve body — A105N, 600# flange' },
+    { sku: 'FAB-L3-303', name: 'Line-3 Pipe Spool Fabrication', description: 'P&ID Line 3 spool set — CS, Sch 40, 6"' },
+    { sku: 'BRK-STL-404', name: 'Structural Steel Bracket Kit', description: 'Structural bracket — IS 2062 Gr B, M16 pattern' },
 ];
 
 // Passwords: admin → 'admin123', operators → 'demo'
-// hashPassword() is called lazily at seed time so it doesn't run at import
 const USERS_SEED = [
-    { username: 'admin',      role: 'ADMIN',      password: 'admin123' },
-    { username: 'OP-JOHN',    role: 'OPERATOR',   password: 'demo'     },
-    { username: 'OP-MARIA',   role: 'OPERATOR',   password: 'demo'     },
-    { username: 'QC-SARAH',   role: 'QUALITY',    password: 'demo'     },
-    { username: 'SUPV-LEE',   role: 'SUPERVISOR', password: 'demo'     },
+    { username: 'admin',          role: 'ADMIN',       password: 'admin123', displayName: 'Admin'           },
+    { username: 'Ramesh.Kumar',   role: 'OPERATOR',    password: 'demo',     displayName: 'Ramesh Kumar'    },
+    { username: 'Priya.Nair',     role: 'OPERATOR',    password: 'demo',     displayName: 'Priya Nair'      },
+    { username: 'Ravi.Shankar',   role: 'OPERATOR',    password: 'demo',     displayName: 'Ravi Shankar'    },
+    { username: 'Deepa.QC',       role: 'QUALITY',     password: 'demo',     displayName: 'Deepa (QC)'      },
+    { username: 'Arjun.Supv',     role: 'SUPERVISOR',  password: 'demo',     displayName: 'Arjun (Supv)'    },
+    { username: 'Meena.Planner',  role: 'PLANNER',     password: 'demo',     displayName: 'Meena (Planner)' },
 ];
 
+// Full state machine journey per order — realistic industrial scenario
 const WO_TEMPLATES = [
-    { suffix: '001', qty: 250, priority: 1, partIdx: 0, status: 'IN_PROGRESS' },
-    { suffix: '002', qty: 180, priority: 2, partIdx: 1, status: 'RELEASED'    },
-    { suffix: '003', qty: 320, priority: 1, partIdx: 2, status: 'IN_PROGRESS' },
-    { suffix: '004', qty: 100, priority: 3, partIdx: 0, status: 'PLANNED'     },
-    { suffix: '005', qty: 400, priority: 2, partIdx: 1, status: 'COMPLETED'   },
+    { suffix: '1023', qty: 250, priority: 3, partIdx: 0, status: 'IN_PROGRESS',
+      timeline: [
+          { hoursAgo: 48, action: 'STATUS_CHANGE', from: 'PLANNED',     to: 'RELEASED',    by: 'Meena.Planner', role: 'PLANNER',    notes: 'Released to shop floor — Morning shift' },
+          { hoursAgo: 44, action: 'STATUS_CHANGE', from: 'RELEASED',    to: 'IN_PROGRESS', by: 'Ramesh.Kumar',  role: 'OPERATOR',   notes: 'Started fabrication — CNC-01, Morning Shift', machine: 'CNC-01', operator: 'Ramesh Kumar' },
+          { hoursAgo: 38, action: 'NOTE',           from: null,           to: null,          by: 'Ramesh.Kumar',  role: 'OPERATOR',   notes: '⚠ Minor delay — coolant refill, 25 min lost' },
+      ]
+    },
+    { suffix: '1045', qty: 180, priority: 2, partIdx: 1, status: 'REWORK',
+      timeline: [
+          { hoursAgo: 72, action: 'STATUS_CHANGE', from: 'PLANNED',     to: 'RELEASED',    by: 'Meena.Planner', role: 'PLANNER',    notes: 'Urgent order — expedite flag set' },
+          { hoursAgo: 68, action: 'STATUS_CHANGE', from: 'RELEASED',    to: 'IN_PROGRESS', by: 'Priya.Nair',    role: 'OPERATOR',   notes: 'Started on WLD-01, Afternoon Shift', machine: 'WLD-01', operator: 'Priya Nair' },
+          { hoursAgo: 52, action: 'STATUS_CHANGE', from: 'IN_PROGRESS', to: 'QC_PENDING',  by: 'Priya.Nair',    role: 'OPERATOR',   notes: 'Sent to QC Gate after fabrication complete' },
+          { hoursAgo: 48, action: 'QC_RESULT',      from: null,           to: null,          by: 'Deepa.QC',      role: 'QUALITY',    notes: '❌ QC FAILED — Weld defect detected on joint J-7. Root cause: porosity in weld bead.' },
+          { hoursAgo: 46, action: 'STATUS_CHANGE', from: 'QC_PENDING',  to: 'REWORK',      by: 'Arjun.Supv',    role: 'SUPERVISOR', notes: 'Approved rework. Assigned back to WLD-01.' },
+          { hoursAgo: 30, action: 'NOTE',           from: null,           to: null,          by: 'Ravi.Shankar',  role: 'OPERATOR',   notes: 'Rework in progress — re-welding joint J-7. Est. 4 hrs.' },
+      ]
+    },
+    { suffix: '1067', qty: 320, priority: 1, partIdx: 2, status: 'QC_PENDING',
+      timeline: [
+          { hoursAgo: 36, action: 'STATUS_CHANGE', from: 'PLANNED',     to: 'RELEASED',    by: 'Meena.Planner', role: 'PLANNER',    notes: 'Priority 1 — Line-3 shutdown deadline' },
+          { hoursAgo: 34, action: 'STATUS_CHANGE', from: 'RELEASED',    to: 'IN_PROGRESS', by: 'Ravi.Shankar',  role: 'OPERATOR',   notes: 'Fabrication started — ASSY-01, Night Shift', machine: 'ASSY-01', operator: 'Ravi Shankar' },
+          { hoursAgo: 10, action: 'STATUS_CHANGE', from: 'IN_PROGRESS', to: 'QC_PENDING',  by: 'Ravi.Shankar',  role: 'OPERATOR',   notes: 'Fabrication complete. Handed off to QC Gate.' },
+          { hoursAgo: 8,  action: 'NOTE',           from: null,           to: null,          by: 'Deepa.QC',      role: 'QUALITY',    notes: 'CMM inspection in progress — awaiting dimensional report.' },
+      ]
+    },
+    { suffix: '1089', qty: 100, priority: 2, partIdx: 3, status: 'RELEASED',
+      timeline: [
+          { hoursAgo: 6, action: 'STATUS_CHANGE', from: 'PLANNED', to: 'RELEASED', by: 'Meena.Planner', role: 'PLANNER', notes: 'Released — CNC-02 cleared for this order from 14:00 shift' },
+      ]
+    },
+    { suffix: '1012', qty: 400, priority: 2, partIdx: 0, status: 'COMPLETED',
+      timeline: [
+          { hoursAgo: 168, action: 'STATUS_CHANGE', from: 'PLANNED',     to: 'RELEASED',    by: 'Meena.Planner', role: 'PLANNER',    notes: 'Standard release' },
+          { hoursAgo: 164, action: 'STATUS_CHANGE', from: 'RELEASED',    to: 'IN_PROGRESS', by: 'Ramesh.Kumar',  role: 'OPERATOR',   notes: 'Production started', machine: 'CNC-01', operator: 'Ramesh Kumar' },
+          { hoursAgo: 140, action: 'STATUS_CHANGE', from: 'IN_PROGRESS', to: 'QC_PENDING',  by: 'Ramesh.Kumar',  role: 'OPERATOR',   notes: 'Fabrication done. Sent to QC.' },
+          { hoursAgo: 136, action: 'QC_RESULT',      from: null,           to: null,          by: 'Deepa.QC',      role: 'QUALITY',    notes: '✅ QC PASSED — All dimensional checks within tolerance.' },
+          { hoursAgo: 134, action: 'STATUS_CHANGE', from: 'QC_PENDING',  to: 'APPROVED',    by: 'Arjun.Supv',    role: 'SUPERVISOR', notes: 'Approved by supervisor for final delivery.' },
+          { hoursAgo: 120, action: 'STATUS_CHANGE', from: 'APPROVED',    to: 'COMPLETED',   by: 'Arjun.Supv',    role: 'SUPERVISOR', notes: 'Order closed. 400 units shipped to warehouse.' },
+      ]
+    },
+    { suffix: '1098', qty: 150, priority: 3, partIdx: 1, status: 'ON_HOLD',
+      timeline: [
+          { hoursAgo: 24, action: 'STATUS_CHANGE', from: 'PLANNED',     to: 'RELEASED',    by: 'Meena.Planner', role: 'PLANNER',    notes: 'Released for Morning shift' },
+          { hoursAgo: 22, action: 'STATUS_CHANGE', from: 'RELEASED',    to: 'IN_PROGRESS', by: 'Priya.Nair',    role: 'OPERATOR',   notes: 'Started — WLD-01', machine: 'WLD-01', operator: 'Priya Nair' },
+          { hoursAgo: 18, action: 'STATUS_CHANGE', from: 'IN_PROGRESS', to: 'ON_HOLD',     by: 'Arjun.Supv',    role: 'SUPERVISOR', notes: '⚠ HOLD — Material shortage. Awaiting SS304 pipe delivery from supplier.' },
+      ]
+    },
 ];
 
 const DOWNTIME_CATS = [
@@ -176,25 +221,49 @@ export async function seedDemoData() {
         });
     }
 
-    // 6. Work Orders
+    // 6. Work Orders + Activity Timelines
     const year = new Date().getFullYear();
     for (const tmpl of WO_TEMPLATES) {
         const orderNumber = `WO-${year}-${tmpl.suffix}`;
-        const dueDate = new Date();
-        dueDate.setDate(dueDate.getDate() + (tmpl.priority === 1 ? 3 : tmpl.priority === 2 ? 7 : 14));
+        const dueOffset   = tmpl.priority === 3 ? 2 : tmpl.priority === 2 ? 5 : 10;
+        const dueDate     = new Date(Date.now() + dueOffset * 86400000);
 
-        const existing = await prisma.workOrder.findUnique({ where: { orderNumber } });
-        if (!existing) {
-            await prisma.workOrder.create({
+        let order = await prisma.workOrder.findUnique({ where: { orderNumber } });
+        if (!order) {
+            order = await prisma.workOrder.create({
                 data: {
                     orderNumber,
-                    quantity: tmpl.qty,
-                    priority: tmpl.priority,
-                    status: tmpl.status,
+                    quantity:  tmpl.qty,
+                    priority:  tmpl.priority,
+                    status:    tmpl.status,
                     dueDate,
                     productId: products[tmpl.partIdx],
+                    createdAt: new Date(Date.now() - ((tmpl.timeline?.[0]?.hoursAgo ?? 0) + 1) * 3600000),
                 },
             });
+        }
+
+        // Seed activity timeline for this order
+        if (tmpl.timeline) {
+            const existingActivities = await prisma.orderActivity.count({ where: { orderId: order.id } });
+            if (existingActivities === 0) {
+                for (const ev of tmpl.timeline) {
+                    await prisma.orderActivity.create({
+                        data: {
+                            orderId:     order.id,
+                            action:      ev.action,
+                            fromStatus:  ev.from  ?? null,
+                            toStatus:    ev.to    ?? null,
+                            performedBy: ev.by,
+                            role:        ev.role,
+                            machine:     (ev as any).machine  ?? null,
+                            operator:    (ev as any).operator ?? null,
+                            notes:       ev.notes ?? null,
+                            timestamp:   new Date(Date.now() - ev.hoursAgo * 3600000),
+                        },
+                    });
+                }
+            }
         }
     }
 

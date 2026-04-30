@@ -4,7 +4,7 @@ import { onPressureTestResult } from '@/lib/spoolFlow';
 import { requireSpoolAction } from '@/lib/spoolRBAC';
 import { CreatePressureTestSchema, validationError } from '@/lib/validation';
 import { apiError, apiSuccess } from '@/lib/apiResponse';
-import { AuditService } from '@/lib/services/AuditService';
+import { AuditService, EventType } from '@/lib/services/AuditService';
 
 export async function GET(req: NextRequest) {
   try {
@@ -85,6 +85,22 @@ export async function POST(req: NextRequest) {
     const createGuard = await requireSpoolAction('CREATE_PRESSURE_TEST');
     if (createGuard instanceof NextResponse) return createGuard;
 
+    // Status guard: spool must be in NDE_CLEAR before pressure test can be performed
+    if (data.spoolId) {
+      const spool = await prisma.pipeSpool.findUnique({
+        where: { id: data.spoolId },
+        select: { status: true, spoolId: true },
+      });
+      if (!spool) return apiError('Spool not found', 'SPOOL_NOT_FOUND', 404);
+      if (spool.status !== 'NDE_CLEAR') {
+        return apiError(
+          `Cannot create pressure test — spool ${spool.spoolId} is in '${spool.status}' status. Spool must pass NDE (NDE_CLEAR) before pressure testing.`,
+          'FLOW_ERROR',
+          422,
+        );
+      }
+    }
+
     // Validate payload
     const parsed = CreatePressureTestSchema.safeParse(data);
     if (!parsed.success) return validationError(parsed.error);
@@ -95,6 +111,7 @@ export async function POST(req: NextRequest) {
     if (payload.testedBy) { payload.witnessedBy = payload.testedBy; delete payload.testedBy; }
 
     const record = await prisma.pressureTestRecord.create({ data: payload });
+    await AuditService.log(EventType.AUDIT_CHANGE, `Pressure test record created`, { testId: record.id, spoolId: record.spoolId }, createGuard.userId);
     // Flow: if result set on creation
     if (record.spoolId && payload.result) {
       await onPressureTestResult(record.spoolId, payload.result).catch(() => {});

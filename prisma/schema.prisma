@@ -70,11 +70,14 @@ model WorkOrder {
   orderNumber    String   @unique // e.g., "WO-2024-001"
   quantity       Int
   priority       Int      @default(1)
+  // Valid statuses: PLANNED → RELEASED → IN_PROGRESS → QC_PENDING → APPROVED → COMPLETED
+  //                 Any → ON_HOLD | CANCELLED; QC_PENDING → REWORK → IN_PROGRESS
   status         String   @default("PLANNED")
   dueDate        DateTime
   productId      String
   product        Product  @relation(fields: [productId], references: [id])
   workflowInstances WorkflowInstance[]
+  activities     OrderActivity[]
   batchId        String?
   scheduledStart DateTime?
   scheduledEnd   DateTime?
@@ -82,6 +85,21 @@ model WorkOrder {
   batches        Batch[]
   inspectionRecords InspectionRecord[]
   createdAt      DateTime @default(now())
+}
+
+model OrderActivity {
+  id          String   @id @default(uuid())
+  orderId     String
+  order       WorkOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  action      String   // STATUS_CHANGE | QC_RESULT | NOTE | ASSIGNED | ALERT
+  fromStatus  String?
+  toStatus    String?
+  performedBy String?  // username
+  role        String?  // user role
+  machine     String?  // machine code/name
+  operator    String?  // operator name
+  notes       String?
+  timestamp   DateTime @default(now())
 }
 
 model InspectionRecord {

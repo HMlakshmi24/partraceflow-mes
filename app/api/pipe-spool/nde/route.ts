@@ -4,7 +4,10 @@ import { onNDEResult } from '@/lib/spoolFlow';
 import { requireSpoolAction } from '@/lib/spoolRBAC';
 import { CreateNDESchema, validationError } from '@/lib/validation';
 import { apiError, apiSuccess } from '@/lib/apiResponse';
-import { AuditService } from '@/lib/services/AuditService';
+import { AuditService, EventType } from '@/lib/services/AuditService';
+
+// Joint must have been welded before NDE can be performed
+const NDE_ALLOWED_JOINT_STATUSES = ['WELDED', 'NDE_PENDING', 'REPAIR'];
 
 export async function GET(req: NextRequest) {
   try {
@@ -90,6 +93,22 @@ export async function POST(req: NextRequest) {
     const guard = await requireSpoolAction('CREATE_NDE');
     if (guard instanceof NextResponse) return guard;
 
+    // Status guard: joint must be WELDED/NDE_PENDING/REPAIR before NDE can be performed
+    if (data.jointId) {
+      const joint = await prisma.spoolJoint.findUnique({
+        where: { id: data.jointId },
+        select: { status: true, jointId: true },
+      });
+      if (!joint) return apiError('Joint not found', 'JOINT_NOT_FOUND', 404);
+      if (!NDE_ALLOWED_JOINT_STATUSES.includes(joint.status)) {
+        return apiError(
+          `Cannot create NDE record — joint ${joint.jointId} is in '${joint.status}' status. Joint must be WELDED before NDE can be performed.`,
+          'FLOW_ERROR',
+          422,
+        );
+      }
+    }
+
     // Validate payload
     const parsed = CreateNDESchema.safeParse(data);
     if (!parsed.success) return validationError(parsed.error);
@@ -102,6 +121,7 @@ export async function POST(req: NextRequest) {
     if (payload.ndeOperator) { payload.inspector = payload.ndeOperator; delete payload.ndeOperator; }
 
     const record = await prisma.nDERecord.create({ data: payload });
+    await AuditService.log(EventType.AUDIT_CHANGE, `NDE record created`, { ndeId: record.id, jointId: record.jointId, ndeType: record.ndeType }, guard.userId);
     if (record.jointId && payload.result) {
       await onNDEResult(record.jointId, payload.result, payload.holdFlag ?? false, record.id).catch(() => {});
     }

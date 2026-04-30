@@ -72,9 +72,27 @@ export async function POST(req: NextRequest) {
 
             const task = await prisma.workflowTask.findUnique({
                 where: { id: taskId },
-                include: { instance: true }
+                include: { instance: { include: { tasks: { orderBy: { id: 'asc' } } } } }
             });
             if (!task) return Response.json({ error: 'Task not found' }, { status: 404 });
+
+            // Sequence guard: all tasks created before this one in the instance must be COMPLETED first
+            const allTasks = task.instance?.tasks ?? [];
+            const thisIndex = allTasks.findIndex(t => t.id === taskId);
+            const blockedBy = allTasks
+                .slice(0, thisIndex)
+                .find(t => t.status !== 'COMPLETED');
+            if (blockedBy) {
+                return Response.json(
+                    { error: `Cannot complete this task — previous task '${blockedBy.id}' is still '${blockedBy.status}'. Tasks must be completed in order.` },
+                    { status: 422 },
+                );
+            }
+
+            // Task must not already be completed
+            if (task.status === 'COMPLETED') {
+                return Response.json({ error: 'Task is already completed' }, { status: 422 });
+            }
 
             await prisma.workflowTask.update({
                 where: { id: taskId },
