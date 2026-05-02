@@ -57,6 +57,8 @@ function LoginContent() {
     const [loading, setLoading] = useState(false);
     const [loadingCard, setLoadingCard] = useState<string | null>(null);
     const [error, setError] = useState('');
+    const [setupDone, setSetupDone] = useState(false);
+    const [settingUp, setSettingUp] = useState(false);
     const denied = params.get('denied') === '1';
     const expired = params.get('expired') === '1';
 
@@ -74,18 +76,54 @@ function LoginContent() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username: u.trim(), password: p }),
             });
-            const data = await res.json();
+            let data: { success?: boolean; error?: string } = {};
+            try { data = await res.json(); } catch { /* non-JSON body, handled below */ }
             if (res.ok && data.success) {
                 router.replace(params.get('next') ?? '/dashboard');
-            } else {
-                setError(data.error ?? 'Incorrect username or password. Please try again.');
-                setLoadingCard(null);
+                return;
             }
+            if (res.status === 503) {
+                setError((data.error ?? 'Database unreachable') + ' — Use "First Time Setup" below or check /api/health for details.');
+            } else if (res.status === 401) {
+                setError('Invalid username or password. If this is a fresh deployment, click "First Time Setup" below to create the admin account.');
+            } else {
+                setError(data.error ?? 'Login failed. Please try again.');
+            }
+            setLoadingCard(null);
         } catch {
-            setError('Cannot reach the server. Please check your internet connection.');
+            setError('Network error — cannot reach the server. Check your internet connection or open /api/health in a new tab.');
             setLoadingCard(null);
         } finally {
             setLoading(false);
+        }
+    }
+
+    async function runFirstTimeSetup() {
+        setSettingUp(true);
+        setError('');
+        try {
+            const check = await fetch('/api/setup').then(r => r.json()).catch(() => null);
+            if (check && !check.needsSetup) {
+                setError('Users already exist — setup not needed. Try logging in with admin / admin123, or seed full demo data from Settings after login.');
+                return;
+            }
+            const res = await fetch('/api/setup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: 'admin', password: 'admin123' }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setSetupDone(true);
+                setUsername('admin');
+                setPassword('admin123');
+            } else {
+                setError(data.error ?? 'Setup failed. Ensure DATABASE_URL is set correctly in Vercel environment variables.');
+            }
+        } catch {
+            setError('Cannot reach server. Check DATABASE_URL is set in Vercel project settings.');
+        } finally {
+            setSettingUp(false);
         }
     }
 
@@ -362,6 +400,32 @@ function LoginContent() {
                             )}
                         </button>
                     </form>
+
+                    {/* First Time Setup — shown after error or always visible as secondary action */}
+                    {setupDone ? (
+                        <div style={{ marginTop: '1.25rem', padding: '0.9rem 1rem', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.35)', borderRadius: '0.75rem', color: '#6ee7b7', fontSize: '0.88rem', textAlign: 'center' }}>
+                            <CheckCircle size={16} style={{ display: 'inline', marginRight: '0.4rem' }} />
+                            Admin account created! Username: <strong>admin</strong> · Password: <strong>admin123</strong>
+                            <br />
+                            <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>Click Sign In above or seed full demo data from Settings after login.</span>
+                        </div>
+                    ) : (
+                        <div style={{ marginTop: '1.25rem', textAlign: 'center' }}>
+                            <button
+                                type="button"
+                                onClick={runFirstTimeSetup}
+                                disabled={settingUp || loading}
+                                style={{ background: 'none', border: '1px solid rgba(255,255,255,0.18)', borderRadius: '0.6rem', color: 'rgba(255,255,255,0.5)', fontSize: '0.82rem', padding: '0.5rem 1.2rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                            >
+                                {settingUp ? (
+                                    <><span style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> Setting up...</>
+                                ) : (
+                                    '⚙ First Time Setup — create admin account'
+                                )}
+                            </button>
+                            <div style={{ color: 'rgba(255,255,255,0.25)', fontSize: '0.74rem', marginTop: '0.4rem' }}>Use this only on a fresh deployment with no users</div>
+                        </div>
+                    )}
                 </div>
             </div>
 

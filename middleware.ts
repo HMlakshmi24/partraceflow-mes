@@ -17,7 +17,7 @@ const ROLE_REQUIREMENTS: Record<string, string[]> = {
   '/audit': ['ADMIN', 'SUPERVISOR'],
 };
 
-const PUBLIC_PATHS = ['/login', '/api/auth/login', '/api/health', '/api/demo'];
+const PUBLIC_PATHS = ['/login', '/api/auth/login', '/api/health', '/api/demo', '/api/setup'];
 const MACHINE_API_PREFIXES = ['/api/rfid/ingest', '/api/events', '/api/machines/telemetry'];
 
 function addSecurityHeaders(res: NextResponse): NextResponse {
