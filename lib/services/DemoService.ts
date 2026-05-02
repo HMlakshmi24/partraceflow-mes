@@ -23,15 +23,16 @@ const PRODUCTS_SEED = [
     { sku: 'BRK-STL-404', name: 'Structural Steel Bracket Kit', description: 'Structural bracket — IS 2062 Gr B, M16 pattern' },
 ];
 
-// Passwords: admin → 'admin123', operators → 'demo'
+// Passwords loaded from env vars; fall back to demo defaults if not set.
+// Set DEMO_ADMIN_PASSWORD and DEMO_OPERATOR_PASSWORD in .env for production use.
 const USERS_SEED = [
-    { username: 'admin',          role: 'ADMIN',       password: 'admin123', displayName: 'Admin'           },
-    { username: 'Ramesh.Kumar',   role: 'OPERATOR',    password: 'demo',     displayName: 'Ramesh Kumar'    },
-    { username: 'Priya.Nair',     role: 'OPERATOR',    password: 'demo',     displayName: 'Priya Nair'      },
-    { username: 'Ravi.Shankar',   role: 'OPERATOR',    password: 'demo',     displayName: 'Ravi Shankar'    },
-    { username: 'Deepa.QC',       role: 'QUALITY',     password: 'demo',     displayName: 'Deepa (QC)'      },
-    { username: 'Arjun.Supv',     role: 'SUPERVISOR',  password: 'demo',     displayName: 'Arjun (Supv)'    },
-    { username: 'Meena.Planner',  role: 'PLANNER',     password: 'demo',     displayName: 'Meena (Planner)' },
+    { username: 'admin',          role: 'ADMIN',       password: process.env.DEMO_ADMIN_PASSWORD ?? 'admin123', displayName: 'Admin'           },
+    { username: 'Ramesh.Kumar',   role: 'OPERATOR',    password: process.env.DEMO_OPERATOR_PASSWORD ?? 'demo',  displayName: 'Ramesh Kumar'    },
+    { username: 'Priya.Nair',     role: 'OPERATOR',    password: process.env.DEMO_OPERATOR_PASSWORD ?? 'demo',  displayName: 'Priya Nair'      },
+    { username: 'Ravi.Shankar',   role: 'OPERATOR',    password: process.env.DEMO_OPERATOR_PASSWORD ?? 'demo',  displayName: 'Ravi Shankar'    },
+    { username: 'Deepa.QC',       role: 'QUALITY',     password: process.env.DEMO_OPERATOR_PASSWORD ?? 'demo',  displayName: 'Deepa (QC)'      },
+    { username: 'Arjun.Supv',     role: 'SUPERVISOR',  password: process.env.DEMO_OPERATOR_PASSWORD ?? 'demo',  displayName: 'Arjun (Supv)'    },
+    { username: 'Meena.Planner',  role: 'PLANNER',     password: process.env.DEMO_OPERATOR_PASSWORD ?? 'demo',  displayName: 'Meena (Planner)' },
 ];
 
 // Full state machine journey per order — realistic industrial scenario

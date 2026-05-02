@@ -9,6 +9,23 @@ import { AuditService, EventType } from '@/lib/services/AuditService';
 // Joint must have been welded before NDE can be performed
 const NDE_ALLOWED_JOINT_STATUSES = ['WELDED', 'NDE_PENDING', 'REPAIR'];
 
+function normalizeNDEPayload(data: Record<string, unknown>) {
+  const payload: Record<string, unknown> = { ...data };
+
+  if (payload.remarks && !payload.notes) payload.notes = payload.remarks;
+  delete payload.remarks;
+
+  if (payload.reportNumber && !payload.ndeNumber) payload.ndeNumber = payload.reportNumber;
+  delete payload.reportNumber;
+
+  if (payload.ndeOperator && !payload.inspector) payload.inspector = payload.ndeOperator;
+  delete payload.ndeOperator;
+
+  delete payload.ndeContractor;
+
+  return payload;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -42,7 +59,7 @@ export async function GET(req: NextRequest) {
       include: { joint: { select: { jointId: true, spoolId: true } } },
     });
     return apiSuccess({ records });
-  } catch (e) {
+  } catch {
     return apiError('Failed to fetch NDE records', 'NDE_FETCH_FAILED', 500);
   }
 }
@@ -102,31 +119,29 @@ export async function POST(req: NextRequest) {
       if (!joint) return apiError('Joint not found', 'JOINT_NOT_FOUND', 404);
       if (!NDE_ALLOWED_JOINT_STATUSES.includes(joint.status)) {
         return apiError(
-          `Cannot create NDE record — joint ${joint.jointId} is in '${joint.status}' status. Joint must be WELDED before NDE can be performed.`,
+          `Cannot create NDE record - joint ${joint.jointId} is in '${joint.status}' status. Joint must be WELDED before NDE can be performed.`,
           'FLOW_ERROR',
           422,
         );
       }
     }
 
-    // Validate payload
-    const parsed = CreateNDESchema.safeParse(data);
+    const normalizedPayload = normalizeNDEPayload(data as Record<string, unknown>);
+    const parsed = CreateNDESchema.safeParse(normalizedPayload);
     if (!parsed.success) return validationError(parsed.error);
 
-    // Map frontend fields → schema fields
-    const payload: any = { ...data };
-    if (payload.remarks) { payload.notes = payload.remarks; delete payload.remarks; }
-    if (payload.reportNumber) { payload.ndeNumber = payload.reportNumber; delete payload.reportNumber; }
-    if (payload.ndeContractor) { delete payload.ndeContractor; }
-    if (payload.ndeOperator) { payload.inspector = payload.ndeOperator; delete payload.ndeOperator; }
-
-    const record = await prisma.nDERecord.create({ data: payload });
-    await AuditService.log(EventType.AUDIT_CHANGE, `NDE record created`, { ndeId: record.id, jointId: record.jointId, ndeType: record.ndeType }, guard.userId);
-    if (record.jointId && payload.result) {
-      await onNDEResult(record.jointId, payload.result, payload.holdFlag ?? false, record.id).catch(() => {});
+    const record = await prisma.nDERecord.create({ data: parsed.data });
+    await AuditService.log(
+      EventType.AUDIT_CHANGE,
+      'NDE record created',
+      { ndeId: record.id, jointId: record.jointId, ndeType: record.ndeType },
+      guard.userId,
+    );
+    if (record.jointId && parsed.data.result) {
+      await onNDEResult(record.jointId, parsed.data.result, parsed.data.holdFlag ?? false, record.id).catch(() => {});
     }
     return apiSuccess({ record });
-  } catch (e: any) {
+  } catch {
     return apiError('Failed to save NDE record', 'NDE_SAVE_FAILED', 500);
   }
 }

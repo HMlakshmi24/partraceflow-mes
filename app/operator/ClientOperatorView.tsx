@@ -3,7 +3,7 @@
 import { startTask, completeTask } from '@/lib/actions/workflow';
 import { useRouter } from 'next/navigation';
 import { useTransition, useState } from 'react';
-import { CheckCircle, Play, Clock, AlertTriangle, Workflow, ListTodo, X, User } from 'lucide-react';
+import { CheckCircle, Play, Clock, AlertTriangle, Workflow, ListTodo, X, User, Cpu } from 'lucide-react';
 import styles from './operator.module.css';
 
 const DOWNTIME_REASONS = [
@@ -26,6 +26,30 @@ function getShiftLabel(now: Date) {
     if (h >= 6 && h < 14) return 'Shift A';
     if (h >= 14 && h < 22) return 'Shift B';
     return 'Shift C';
+}
+
+function getPriorityLabel(priority: number): string {
+    if (priority >= 4) return 'URGENT';
+    if (priority === 3) return 'P3';
+    if (priority === 2) return 'P2';
+    return 'P1';
+}
+
+function getPriorityColor(priority: number): string {
+    if (priority >= 4) return '#dc2626'; // red
+    if (priority === 3) return '#ea580c'; // orange
+    if (priority === 2) return '#ca8a04'; // yellow
+    return '#6b7280'; // gray
+}
+
+function isOverdue(dueDate: string | null): boolean {
+    if (!dueDate) return false;
+    return new Date(dueDate).getTime() < Date.now();
+}
+
+function formatDueDate(dueDate: string | null): string {
+    if (!dueDate) return '';
+    return new Date(dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 export default function ClientOperatorView({
@@ -376,8 +400,19 @@ export default function ClientOperatorView({
                                         <span className={styles.orderValue}>{activeTask.orderNumber}</span>
                                     </div>
                                     <div className={styles.orderField}>
+                                        <span className={styles.orderLabel}>Product</span>
+                                        <span className={styles.orderValue}>{activeTask.productName ?? '—'}</span>
+                                    </div>
+                                    <div className={styles.orderField}>
                                         <span className={styles.orderLabel}>Operation Step</span>
-                                        <span className={styles.orderValue}>{activeTask.stepName}</span>
+                                        <span className={styles.orderValue}>
+                                            {activeTask.stepName}
+                                            {activeTask.totalSteps && (
+                                                <span style={{ marginLeft: '0.5rem', fontSize: '0.78rem', color: '#94a3b8', fontWeight: 400 }}>
+                                                    (Step {activeTask.stepSequence} of {activeTask.totalSteps})
+                                                </span>
+                                            )}
+                                        </span>
                                     </div>
                                     <div className={styles.orderField}>
                                         <span className={styles.orderLabel}>Status</span>
@@ -385,6 +420,26 @@ export default function ClientOperatorView({
                                             <div className={styles.statusDot}></div> In Progress
                                         </div>
                                     </div>
+                                </div>
+
+                                {/* Context info row: machine, due date, priority */}
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginTop: '0.75rem', marginBottom: '0.25rem' }}>
+                                    {activeTask.machineCode && (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', fontWeight: 600, color: '#60a5fa', background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.25)', borderRadius: '0.4rem', padding: '0.2rem 0.6rem' }}>
+                                            <Cpu size={13} /> {activeTask.machineCode}
+                                        </span>
+                                    )}
+                                    {activeTask.dueDate && (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', fontWeight: 600, color: isOverdue(activeTask.dueDate) ? '#ef4444' : '#94a3b8', background: isOverdue(activeTask.dueDate) ? 'rgba(239,68,68,0.1)' : 'rgba(148,163,184,0.08)', border: `1px solid ${isOverdue(activeTask.dueDate) ? 'rgba(239,68,68,0.3)' : 'rgba(148,163,184,0.15)'}`, borderRadius: '0.4rem', padding: '0.2rem 0.6rem' }}>
+                                            <Clock size={13} /> Due {formatDueDate(activeTask.dueDate)}
+                                            {isOverdue(activeTask.dueDate) && (
+                                                <span style={{ marginLeft: '0.25rem', background: '#ef4444', color: '#fff', fontSize: '0.68rem', fontWeight: 700, borderRadius: '0.25rem', padding: '0.05rem 0.35rem', letterSpacing: '0.04em' }}>OVERDUE</span>
+                                            )}
+                                        </span>
+                                    )}
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.8rem', fontWeight: 700, color: getPriorityColor(activeTask.priority ?? 1), background: `${getPriorityColor(activeTask.priority ?? 1)}18`, border: `1px solid ${getPriorityColor(activeTask.priority ?? 1)}40`, borderRadius: '0.4rem', padding: '0.2rem 0.6rem' }}>
+                                        {getPriorityLabel(activeTask.priority ?? 1)}
+                                    </span>
                                 </div>
 
                                 <div className={styles.progressContainer}>
@@ -458,9 +513,41 @@ export default function ClientOperatorView({
                                             <span className={styles.queueFieldLabel}>Order #</span>
                                             <span className={styles.queueFieldValue}>{task.orderNumber}</span>
                                         </div>
+                                        {task.productName && (
+                                            <div className={styles.queueField}>
+                                                <span className={styles.queueFieldLabel}>Product</span>
+                                                <span className={styles.queueFieldValue}>{task.productName}</span>
+                                            </div>
+                                        )}
                                         <div className={styles.queueField}>
                                             <span className={styles.queueFieldLabel}>Operation</span>
-                                            <span className={styles.queueFieldValue}>{task.stepName}</span>
+                                            <span className={styles.queueFieldValue}>
+                                                {task.stepName}
+                                                {task.totalSteps && (
+                                                    <span style={{ marginLeft: '0.4rem', fontSize: '0.75rem', color: '#94a3b8', fontWeight: 400 }}>
+                                                        Step {task.stepSequence}/{task.totalSteps}
+                                                    </span>
+                                                )}
+                                            </span>
+                                        </div>
+                                        {/* Context badges: machine, due date, priority */}
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginTop: '0.3rem' }}>
+                                            {task.machineCode && (
+                                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', fontWeight: 600, color: '#60a5fa', background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.2)', borderRadius: '0.35rem', padding: '0.1rem 0.45rem' }}>
+                                                    <Cpu size={11} /> {task.machineCode}
+                                                </span>
+                                            )}
+                                            {task.dueDate && (
+                                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', fontWeight: 600, color: isOverdue(task.dueDate) ? '#ef4444' : '#94a3b8', background: isOverdue(task.dueDate) ? 'rgba(239,68,68,0.1)' : 'rgba(148,163,184,0.07)', border: `1px solid ${isOverdue(task.dueDate) ? 'rgba(239,68,68,0.25)' : 'rgba(148,163,184,0.12)'}`, borderRadius: '0.35rem', padding: '0.1rem 0.45rem' }}>
+                                                    <Clock size={11} /> {formatDueDate(task.dueDate)}
+                                                    {isOverdue(task.dueDate) && (
+                                                        <span style={{ marginLeft: '0.2rem', background: '#ef4444', color: '#fff', fontSize: '0.62rem', fontWeight: 700, borderRadius: '0.2rem', padding: '0.02rem 0.3rem', letterSpacing: '0.04em' }}>OVERDUE</span>
+                                                    )}
+                                                </span>
+                                            )}
+                                            <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.72rem', fontWeight: 700, color: getPriorityColor(task.priority ?? 1), background: `${getPriorityColor(task.priority ?? 1)}15`, border: `1px solid ${getPriorityColor(task.priority ?? 1)}35`, borderRadius: '0.35rem', padding: '0.1rem 0.45rem' }}>
+                                                {getPriorityLabel(task.priority ?? 1)}
+                                            </span>
                                         </div>
                                     </div>
                                     <div className={styles.queueActions}>

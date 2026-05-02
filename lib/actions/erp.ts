@@ -3,8 +3,10 @@
 import { prisma } from '@/lib/services/database';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { validateWorkOrder, ValidationError, BusinessLogicError } from '@/lib/utils/validation';
+import { ValidationError, BusinessLogicError } from '@/lib/utils/validation';
 import { ErrorHandler, withRetry } from '@/lib/utils/errorHandler';
+import { getNextActions } from '@/lib/orderStateMachine';
+import { OrderLifecycleService } from '@/lib/services/OrderLifecycleService';
 
 const createOrderSchema = z.object({
     orderNumber: z.string().min(3, "Order # must be at least 3 chars"),
@@ -93,6 +95,16 @@ export async function createManufacturingOrder(formData: FormData): Promise<void
                     details: `Released ${orderNumber} for ${quantity} units of ${productExists.name}`
                 }
             });
+
+            await tx.orderActivity.create({
+                data: {
+                    orderId: wo.id,
+                    action: 'CREATED',
+                    performedBy: 'system',
+                    role: 'SYSTEM',
+                    notes: `Order ${orderNumber} created and released for ${quantity} units of ${productExists.name}`,
+                }
+            });
         });
 
         // Revalidate relevant paths
@@ -127,7 +139,11 @@ export async function getManufacturingOrders() {
                     }
                 },
                 orderBy: { createdAt: 'desc' }
-            });
+            }).then(orders => orders.map(order => ({
+                ...order,
+                nextActions: getNextActions(order.status),
+                isDelayed: ['RELEASED', 'IN_PROGRESS', 'QC_PENDING'].includes(order.status) && new Date(order.dueDate) < new Date(),
+            })));
         });
     } catch (error) {
         ErrorHandler.logError(error, { operation: 'getManufacturingOrders' });
@@ -137,21 +153,18 @@ export async function getManufacturingOrders() {
 
 export async function updateWorkOrderStatus(orderId: string, status: string) {
     try {
-        const validStatuses = ['RELEASED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'];
+        const validStatuses = ['RELEASED', 'IN_PROGRESS', 'QC_PENDING', 'APPROVED', 'REWORK', 'ON_HOLD', 'COMPLETED', 'CANCELLED'];
         if (!validStatuses.includes(status)) {
             throw new ValidationError('Invalid work order status', 'status');
         }
 
-        const updatedOrder = await prisma.workOrder.update({
-            where: { id: orderId },
-            data: { status }
-        });
-
-        await prisma.systemEvent.create({
-            data: {
-                eventType: 'ORDER_STATUS_CHANGE',
-                details: `Order ${updatedOrder.orderNumber} status changed to ${status}`
-            }
+        const updatedOrder = await OrderLifecycleService.transitionOrder({
+            orderId,
+            newStatus: status,
+            performedBy: 'system',
+            role: 'SYSTEM',
+            notes: `Legacy ERP action moved order to ${status}`,
+            enforceRole: false,
         });
 
         revalidatePath('/planner');
@@ -193,7 +206,7 @@ export async function deleteWorkOrder(orderId: string) {
             throw new ValidationError('Work order not found', 'orderId');
         }
 
-        const hasActiveTasks = order.workflowInstances.some((instance: any) => 
+        const hasActiveTasks = order.workflowInstances.some(instance => 
             instance.tasks.length > 0
         );
 

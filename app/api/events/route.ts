@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/services/database';
+import { OperationalAlertService } from '@/lib/services/OperationalAlertService';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -35,6 +36,7 @@ export async function GET(req: NextRequest) {
             const push = async () => {
                 if (closed) return;
                 try {
+                    await OperationalAlertService.scanAndRaiseAlerts();
                     const [machines, alerts, orders] = await Promise.all([
                         prisma.machine.findMany({
                             select: { id: true, code: true, name: true, status: true, oee: true },

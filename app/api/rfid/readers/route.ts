@@ -8,7 +8,7 @@ import { getReaderHealth, heartbeat } from '@/lib/connectors/rfidConnector';
 
 export async function GET() {
   const readers = getReaderHealth();
-  const online = readers.filter(r => r.online).length;
+  const online = readers.filter(r => r.status === 'ONLINE').length;
   return NextResponse.json({ readers, online, total: readers.length });
 }
 

@@ -10,6 +10,7 @@ export class QueueService {
      * 3. FIFO (Created Earlier = Higher Priority)
      */
     static async getPendingTasks(resourceId: string) {
+        void resourceId;
         // Step 1: Fetch all PENDING tasks
         // In a real system, we would filter by skill/machine matching here.
         const tasks = await prisma.workflowTask.findMany({
@@ -49,10 +50,16 @@ export class QueueService {
      * Assign a task to a user (Claim).
      */
     static async claimTask(taskId: string, userId: string) {
-        const task = await prisma.workflowTask.findUnique({ where: { id: taskId } });
+        const task = await prisma.workflowTask.findUnique({
+            where: { id: taskId },
+            include: { instance: { include: { workOrder: true } } }
+        });
         if (!task) throw new Error('Task not found');
         if (task.status !== 'PENDING') throw new Error('Task is not pending');
         if (task.operatorId && task.operatorId !== userId) throw new Error('Task already claimed by another user');
+        if (!['RELEASED', 'IN_PROGRESS', 'REWORK'].includes(task.instance.workOrder.status)) {
+            throw new Error(`Order ${task.instance.workOrder.orderNumber} is ${task.instance.workOrder.status}. Previous step not completed.`);
+        }
 
         return await prisma.workflowTask.update({
             where: { id: taskId },

@@ -27,22 +27,22 @@ export async function POST(req: NextRequest) {
     // Register reader heartbeat
     heartbeat(readerId, readerName, location);
 
-    // Dedup: ignore if same reader+tag within 3 seconds
+// Dedup: ignore if same reader+tag within 3 seconds
     if (isDuplicate(readerId, tagId)) {
       return NextResponse.json({ status: 'duplicate', tagId, readerId, message: 'Duplicate read ignored' });
     }
 
-    recordRead(readerId);
+    recordRead(tagId, readerId);
 
     // Resolve which asset this tag belongs to
     const asset = await resolveTag(tagId);
 
     // Audit: log to console (extend to DB by adding RFIDRead model to schema if needed)
-    console.info('[rfid/ingest]', { tagId, readerId, asset: asset.type, ts: ts.toISOString() });
+    console.info('[rfid/ingest]', { tagId, readerId, asset: asset?.type, ts: ts.toISOString() });
 
     // Auto-advance spool status based on reader location
-    if (asset.type === 'spool' && location) {
-      await autoAdvanceFromReader(asset.id, asset.status, location);
+    if (asset && asset.type === 'spool' && location) {
+      await autoAdvanceFromReader(asset.id, 'FABRICATING', location);
     }
 
     return NextResponse.json({

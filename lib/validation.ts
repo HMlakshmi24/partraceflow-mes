@@ -119,7 +119,7 @@ export const SPCRecordSchema = z.object({
 // ─── Settings ─────────────────────────────────────────────────────────────
 
 export const SessionRoleSchema = z.object({
-    role: z.enum(['ADMIN', 'OPERATOR', 'SUPERVISOR', 'PLANNER', 'QUALITY', 'MAINTENANCE']),
+    role: z.enum(['ADMIN', 'OPERATOR', 'SUPERVISOR', 'PLANNER', 'QC', 'QUALITY', 'MAINTENANCE']),
 });
 
 // ─── Pipe Spool ───────────────────────────────────────────────────────────

@@ -659,7 +659,7 @@ export default function PlannerPage() {
                                                 <Printer size={14} /> Print
                                             </button>
 
-                                            {getNextActions(viewOrder.status).map((nextStatus) => {
+                                            {(viewOrder.nextActions ?? getNextActions(viewOrder.status)).map((nextStatus: string) => {
                                                 const btn = ACTION_BUTTONS[nextStatus];
                                                 if (!btn) return null;
                                                 const isCancel = nextStatus === 'CANCELLED';
