@@ -1,18 +1,23 @@
 import ClientOperatorView from './ClientOperatorView';
 import styles from './operator.module.css';
 import { HardHat } from 'lucide-react';
-import { getOperatorTasks, getSystemEvents, getOperatorUsers, getMachinesForOperator } from '@/lib/actions/workflow';
+import { getOperatorTasks, getOperatorUsers, getMachinesForOperator, getOrderActivities } from '@/lib/actions/workflow';
 
 export default async function OperatorPage() {
     const results = await Promise.allSettled([
         getOperatorTasks(),
-        getSystemEvents(),
         getOperatorUsers(),
         getMachinesForOperator(),
     ]);
-    const [tasks, events, operators, machines] = results.map(r =>
+    const [tasks, operators, machines] = results.map(r =>
         r.status === 'fulfilled' ? r.value : []
-    ) as [Awaited<ReturnType<typeof getOperatorTasks>>, Awaited<ReturnType<typeof getSystemEvents>>, Awaited<ReturnType<typeof getOperatorUsers>>, Awaited<ReturnType<typeof getMachinesForOperator>>];
+    ) as [Awaited<ReturnType<typeof getOperatorTasks>>, Awaited<ReturnType<typeof getOperatorUsers>>, Awaited<ReturnType<typeof getMachinesForOperator>>];
+
+    // Fetch rich audit trail for the active order so the Station Log shows who did what and when
+    const activeTask = tasks.find((t: { status: string }) => t.status === 'IN_PROGRESS') as { orderId?: string } | undefined;
+    const activities = activeTask?.orderId
+        ? await getOrderActivities(activeTask.orderId).catch(() => [])
+        : [];
 
     return (
         <div className={styles.operatorWorkspace}>
@@ -28,7 +33,7 @@ export default async function OperatorPage() {
 
             <ClientOperatorView
                 initialTasks={tasks}
-                initialEvents={events}
+                initialActivities={activities}
                 operators={operators}
                 machines={machines}
             />

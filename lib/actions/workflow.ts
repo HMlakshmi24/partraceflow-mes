@@ -94,6 +94,11 @@ export async function getOperatorTasks() {
             instance: {
                 include: {
                     workOrder: { include: { product: true } },
+                    // Fetch ALL tasks in this instance so we can compute canStart server-side
+                    tasks: {
+                        include: { stepDef: true },
+                        orderBy: { stepDef: { sequence: 'asc' } },
+                    },
                 },
             },
             stepDef: true,
@@ -102,20 +107,6 @@ export async function getOperatorTasks() {
         },
         orderBy: { startTime: 'asc' },
     });
-
-    // Count total steps per workflow instance for "Step X of Y" display
-    const instanceIds = [...new Set(tasks.map(t => t.instanceId))];
-    const stepCounts: Record<string, number> = {};
-    if (instanceIds.length > 0) {
-        const counts = await prisma.workflowTask.groupBy({
-            by: ['instanceId'],
-            where: { instanceId: { in: instanceIds } },
-            _count: { id: true },
-        });
-        for (const c of counts) {
-            stepCounts[c.instanceId] = c._count.id;
-        }
-    }
 
     // Sort: IN_PROGRESS first, then by work order priority + due date
     const sorted = tasks.sort((a, b) => {
@@ -127,24 +118,43 @@ export async function getOperatorTasks() {
         return new Date(a.instance.workOrder.dueDate).getTime() - new Date(b.instance.workOrder.dueDate).getTime();
     });
 
-    return sorted.map(t => ({
-        id: t.id,
-        status: t.status,
-        orderNumber: t.instance?.workOrder?.orderNumber,
-        orderStatus: t.instance?.workOrder?.status,
-        productName: t.instance?.workOrder?.product?.name ?? null,
-        dueDate: t.instance?.workOrder?.dueDate?.toISOString() ?? null,
-        priority: t.instance?.workOrder?.priority ?? 1,
-        stepName: t.stepDef?.name || 'Operation Step',
-        stepSequence: t.stepDef?.sequence ?? 1,
-        totalSteps: stepCounts[t.instanceId] ?? null,
-        machineName: t.machine?.name ?? null,
-        machineCode: t.machine?.code ?? null,
-        machineStatus: t.machine?.status ?? null,
-        operatorName: t.operator?.username ?? null,
-        startTime: t.startTime?.toISOString() ?? null,
-        endTime: t.endTime?.toISOString() ?? null,
-    }));
+    return sorted.map(t => {
+        const allInstanceTasks = t.instance.tasks;
+        const totalSteps = allInstanceTasks.length;
+        const thisSeq = t.stepDef?.sequence ?? 999;
+
+        // Compute which earlier steps are blocking this task from starting
+        const blockingSteps = allInstanceTasks.filter(other => {
+            const otherSeq = other.stepDef?.sequence ?? 0;
+            return otherSeq < thisSeq && other.status !== 'COMPLETED';
+        });
+        const canStart = t.status === 'PENDING' && blockingSteps.length === 0;
+        const blockingReason = blockingSteps.length > 0
+            ? `Waiting for: ${blockingSteps.map(b => b.stepDef?.name ?? 'previous step').join(', ')}`
+            : null;
+
+        return {
+            id: t.id,
+            status: t.status,
+            orderId: t.instance?.workOrder?.id ?? null,
+            orderNumber: t.instance?.workOrder?.orderNumber,
+            orderStatus: t.instance?.workOrder?.status,
+            productName: t.instance?.workOrder?.product?.name ?? null,
+            dueDate: t.instance?.workOrder?.dueDate?.toISOString() ?? null,
+            priority: t.instance?.workOrder?.priority ?? 1,
+            stepName: t.stepDef?.name || 'Operation Step',
+            stepSequence: t.stepDef?.sequence ?? 1,
+            totalSteps,
+            machineName: t.machine?.name ?? null,
+            machineCode: t.machine?.code ?? null,
+            machineStatus: t.machine?.status ?? null,
+            operatorName: t.operator?.username ?? null,
+            startTime: t.startTime?.toISOString() ?? null,
+            endTime: t.endTime?.toISOString() ?? null,
+            canStart,
+            blockingReason,
+        };
+    });
 }
 
 export async function getOperatorUsers() {
@@ -261,5 +271,26 @@ export async function getSystemEvents() {
     return await prisma.systemEvent.findMany({
         orderBy: { timestamp: 'desc' },
         take: 50
+    });
+}
+
+export async function getOrderActivities(orderId: string) {
+    if (!orderId) return [];
+    return await prisma.orderActivity.findMany({
+        where: { orderId },
+        orderBy: { timestamp: 'desc' },
+        take: 40,
+        select: {
+            id: true,
+            action: true,
+            fromStatus: true,
+            toStatus: true,
+            performedBy: true,
+            role: true,
+            machine: true,
+            operator: true,
+            notes: true,
+            timestamp: true,
+        },
     });
 }
