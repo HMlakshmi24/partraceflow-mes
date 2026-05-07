@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
 import { ShiftService } from '@/lib/services/ShiftService';
+import { requireRole } from '@/lib/api-auth';
 
 export async function GET(req: NextRequest) {
     try {
@@ -45,10 +46,22 @@ export async function GET(req: NextRequest) {
     }
 }
 
+const SUPERVISOR_ACTIONS = ['create_schedule', 'start_shift', 'close_shift'];
+const OPERATOR_SHIFT_ROLES = ['ADMIN', 'SUPERVISOR', 'OPERATOR'];
+
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
         const { action } = body;
+
+        // Scheduling and shift control require ADMIN/SUPERVISOR; clock-in/out also allow OPERATOR
+        if (SUPERVISOR_ACTIONS.includes(action)) {
+            const authError = requireRole(req, ['ADMIN', 'SUPERVISOR']);
+            if (authError) return authError;
+        } else {
+            const authError = requireRole(req, OPERATOR_SHIFT_ROLES);
+            if (authError) return authError;
+        }
 
         if (action === 'create_schedule') {
             const { shiftId, date, targetQuantity } = body;

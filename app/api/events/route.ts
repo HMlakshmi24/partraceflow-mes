@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/services/database';
 import { OperationalAlertService } from '@/lib/services/OperationalAlertService';
+import { requireRole } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -86,8 +87,12 @@ export async function GET(req: NextRequest) {
 
 /**
  * POST /api/events — Accept simulated hardware / external system events.
+ * Restricted to ADMIN/SUPERVISOR — external hardware uses the machine API key path.
  */
 export async function POST(req: NextRequest) {
+    const authError = requireRole(req, ['ADMIN', 'SUPERVISOR']);
+    if (authError) return authError;
+
     try {
         const body = await req.json();
         const { source, eventType, details } = body;

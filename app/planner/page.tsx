@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import styles from './planner.module.css';
 import {
-    STATUS_LABELS, STATUS_COLORS, ACTION_BUTTONS, getNextActions, isTerminal,
+    STATUS_LABELS, STATUS_COLORS, ACTION_BUTTONS, getNextActions, isTerminal, ORDER_ROLE_ACTION_MAP,
 } from '@/lib/orderStateMachine';
 
 // ── Status colour + icon helpers ─────────────────────────────────────────────
@@ -149,6 +149,7 @@ export default function PlannerPage() {
     const [activities,   setActivities]   = useState<any[]>([]);
     const [activeTab,    setActiveTab]    = useState<'details' | 'timeline'>('details');
 
+    const [userRole, setUserRole]      = useState<string>('ADMIN');
     const [msg, setMsg]               = useState<{ text: string; type: 'success' | 'error' } | null>(null);
     const [isPending, startTransition] = useTransition();
 
@@ -178,7 +179,10 @@ export default function PlannerPage() {
         } finally { setIsLoading(false); }
     };
 
-    useEffect(() => { loadData(); }, []);
+    useEffect(() => {
+        fetch('/api/session').then(r => r.json()).then(d => { if (d?.role) setUserRole(d.role); }).catch(() => {});
+        loadData();
+    }, []);
 
     useEffect(() => {
         let result = [...orders];
@@ -659,7 +663,9 @@ export default function PlannerPage() {
                                                 <Printer size={14} /> Print
                                             </button>
 
-                                            {(viewOrder.nextActions ?? getNextActions(viewOrder.status)).map((nextStatus: string) => {
+                                            {(viewOrder.nextActions ?? getNextActions(viewOrder.status))
+                                                .filter((s: string) => (ORDER_ROLE_ACTION_MAP[s] ?? ['ADMIN']).includes(userRole))
+                                                .map((nextStatus: string) => {
                                                 const btn = ACTION_BUTTONS[nextStatus];
                                                 if (!btn) return null;
                                                 const isCancel = nextStatus === 'CANCELLED';

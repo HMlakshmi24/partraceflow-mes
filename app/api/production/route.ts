@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/services/database'
+import { requireRole } from '@/lib/api-auth'
 
 export async function GET(request: NextRequest) {
+  const authError = requireRole(request, ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR']);
+  if (authError) return authError;
   try {
     const { searchParams } = new URL(request.url)
     const plantId = searchParams.get('plantId')

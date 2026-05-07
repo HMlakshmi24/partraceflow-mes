@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
-import { canTransition, VALID_TRANSITIONS, STATUS_LABELS } from '@/lib/orderStateMachine';
+import { canTransition, VALID_TRANSITIONS } from '@/lib/orderStateMachine';
+import { requireRole } from '@/lib/api-auth';
 
 const OPERATORS = ['Ramesh.Kumar', 'Priya.Nair', 'Ravi.Shankar'];
-const QC_USERS   = ['Deepa.QC'];
 const SUPERVISORS = ['Arjun.Supv'];
 const MACHINES   = ['CNC-01', 'CNC-02', 'WLD-01', 'ASSY-01', 'QC-GATE'];
 
@@ -72,7 +72,10 @@ function getPerformer(toStatus: string): { by: string; role: string } {
     return { by: 'system', role: 'SYSTEM' };
 }
 
-export async function POST(_req: NextRequest) {
+export async function POST(req: NextRequest) {
+    const authError = requireRole(req, ['ADMIN', 'SUPERVISOR']);
+    if (authError) return authError;
+
     try {
         // Pick up to 2 non-terminal active orders to advance
         const candidates = await prisma.workOrder.findMany({

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
+import { requireSpoolAction } from '@/lib/spoolRBAC';
 
 export async function GET(req: NextRequest) {
   try {
@@ -47,6 +48,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const guard = await requireSpoolAction('ASSIGN_YARD');
+  if (guard instanceof NextResponse) return guard;
+
   try {
     const body = await req.json();
     const { action, id, ...data } = body;

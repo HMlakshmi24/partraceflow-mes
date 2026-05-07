@@ -15,6 +15,7 @@ export async function GET(request: NextRequest) {
         role: session.role,
         userId: session.userId,
         username: session.username,
+        exp: session.exp,
         authenticated: true,
       });
     }

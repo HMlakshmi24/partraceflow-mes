@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
 import { RecipeService } from '@/lib/services/RecipeService';
+import { requireRole } from '@/lib/api-auth';
 
 export async function GET(req: NextRequest) {
+    const authError = requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR', 'OPERATOR']);
+    if (authError) return authError;
+
     try {
         const { searchParams } = new URL(req.url);
         const recipeId = searchParams.get('id');
@@ -85,6 +89,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+    const authError = requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR']);
+    if (authError) return authError;
+
     try {
         const body = await req.json();
         const { action } = body;

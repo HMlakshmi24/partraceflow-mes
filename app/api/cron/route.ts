@@ -1,15 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { OrderLifecycleService } from '@/lib/services/OrderLifecycleService';
 
-// Called by Vercel Cron or manually — runs automated triggers
-// Set in vercel.json: { "crons": [{ "path": "/api/cron", "schedule": "*/5 * * * *" }] }
 export async function GET(req: NextRequest) {
-    // Verify cron secret to prevent unauthorized calls
-    const authHeader = req.headers.get('authorization');
     const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+
+    // H1: Reject all requests if CRON_SECRET is not configured — prevents open execution
+    if (!cronSecret) {
+        return NextResponse.json(
+            { error: 'CRON_SECRET is not set. Configure it in Vercel environment settings.' },
+            { status: 503 }
+        );
+    }
+
+    const authHeader = req.headers.get('authorization');
+    if (authHeader !== `Bearer ${cronSecret}`) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
     try {
         await OrderLifecycleService.flagOverdueOrders();
         return NextResponse.json({ ok: true, ran: ['flagOverdueOrders'], at: new Date().toISOString() });

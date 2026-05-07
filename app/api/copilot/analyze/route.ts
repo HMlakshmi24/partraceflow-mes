@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { MESCopilotService } from '@/lib/services/MESCopilotService'
 import { prisma } from '@/lib/services/database'
+import { requireRole } from '@/lib/api-auth'
 
 export async function POST(request: NextRequest) {
+  const authError = requireRole(request, ['ADMIN', 'SUPERVISOR', 'PLANNER', 'QC', 'QUALITY']);
+  if (authError) return authError;
+
   try {
     const body = await request.json()
     const { question, sessionId, userId } = body

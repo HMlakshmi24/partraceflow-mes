@@ -1,0 +1,191 @@
+{\rtf1\ansi\deff0
+{\fonttbl{\f0 Arial;}{\f1 Courier New;}}
+\paperw12240\paperh15840\margl1440\margr1440\margt1440\margb1440
+\fs24
+\b PARTRACEFLOW MES END-TO-END GUIDE\b0\par
+\par
+This document consolidates the MES walkthrough into one document-style file for the docs folder. It is intended to be opened directly in Microsoft Word or any editor that supports RTF.\par
+\par
+\b 1. Purpose\b0\par
+ParTraceflow MES is a full-stack manufacturing execution system for production tracking, quality control, traceability, machine monitoring, shift operations, workflows, and pipe spool management.\par
+\par
+\b 2. Before You Start\b0\par
+1. Install Node.js 18 or later.\par
+2. Open a terminal in the project root.\par
+3. Change into the app folder.\par
+4. Ensure the environment file contains a valid database URL and session secret.\par
+\par
+\f1
+cd .\mes-app
+\par
+npm install
+\par
+npx prisma generate
+\par
+npx prisma db push
+\par
+npx prisma db seed
+\par
+npm run dev
+\f0
+\par
+\par
+\b 3. Open The System\b0\par
+Open http://localhost:3000 in the browser.\par
+\par
+\b 4. Log In\b0\par
+Use one of the seeded demo accounts. Example accounts commonly used in this project are:\par
+1. admin / admin123\par
+2. SUPV-LEE / demo\par
+3. QC-SARAH / demo\par
+4. OP-JOHN / demo\par
+5. OP-MARIA / demo\par
+\par
+\b 5. Main Navigation Flow\b0\par
+The core end-to-end walkthrough of the MES should be followed in this order:\par
+1. Dashboard\par
+2. Planner\par
+3. Operator\par
+4. Quality\par
+5. Traceability\par
+6. Andon and factory monitoring\par
+7. Pipe spool workflow\par
+8. Admin and workflow configuration\par
+\par
+\b 6. Dashboard Walkthrough\b0\par
+1. Open the dashboard page.\par
+2. Review overall KPIs such as production, downtime, and OEE.\par
+3. Confirm live machine or line status indicators are visible.\par
+4. Check active alerts and event summaries.\par
+5. Use the dashboard as the supervisor entry point before moving into detailed execution pages.\par
+\par
+\b 7. Production Planning Walkthrough\b0\par
+1. Open the planner page.\par
+2. Review work orders, priorities, due dates, and scheduling information.\par
+3. Verify production resources and machine assignments.\par
+4. Confirm the next work order that should be executed on the shop floor.\par
+5. Move to the operator page to execute production.\par
+\par
+\b 8. Operator Execution Walkthrough\b0\par
+1. Open the operator page.\par
+2. Select the assigned work order or queued job.\par
+3. Start the job or task.\par
+4. Record progress, output, and any downtime reason if an interruption occurs.\par
+5. Complete the task when the operation finishes.\par
+6. Confirm the system updates status and feeds downstream quality and traceability records.\par
+\par
+\b 9. Quality Walkthrough\b0\par
+1. Open the quality page.\par
+2. Review inspection queues, quality alerts, and SPC views.\par
+3. Record inspection results.\par
+4. Approve accepted items or raise NCRs when issues are found.\par
+5. Verify that the quality decision updates the product or spool lifecycle correctly.\par
+\par
+\b 10. Traceability Walkthrough\b0\par
+1. Open the traceability page or related traceability APIs.\par
+2. Search by batch, lot, serial number, RFID tag, or spool identifier.\par
+3. Confirm backward traceability to material source.\par
+4. Confirm forward traceability to downstream assemblies or finished items.\par
+5. Verify the audit trail contains production and quality events captured earlier.\par
+\par
+\b 11. Andon And Factory Monitoring Walkthrough\b0\par
+1. Open the andon page or factory map.\par
+2. Review machine states, active issues, and operator-visible alerts.\par
+3. Trigger or inspect a downtime event.\par
+4. Confirm the alert appears in the dashboard and event stream.\par
+5. Resolve the issue and verify the status returns to normal.\par
+\par
+\b 12. Pipe Spool End-To-End Walkthrough\b0\par
+This is the most structured lifecycle in the system.\par
+\par
+Spool lifecycle:\par
+FABRICATING -> RECEIVED -> IN_STORAGE -> ISSUED -> FIT_UP -> WELDED -> NDE_PENDING -> NDE_CLEAR -> PRESSURE_TESTED -> COMPLETE\par
+\par
+Follow these steps:\par
+1. Create or open a spool record.\par
+2. Confirm material receipt and spool registration.\par
+3. Move the spool into storage.\par
+4. Issue the spool for work.\par
+5. Record fit-up activities.\par
+6. Record welding details including welder and procedure references.\par
+7. Create NDE records and submit them for review.\par
+8. If the NDE passes, advance to NDE_CLEAR.\par
+9. If the NDE fails, create or link NCR actions and resolve them.\par
+10. Perform pressure testing and record the certificate or result.\par
+11. Close all inspection and approval items.\par
+12. Mark the spool complete when documentation is fully ready.\par
+\par
+\b 13. RFID Flow\b0\par
+1. A reader or gateway posts a tag event to the MES.\par
+2. The system receives the event through the RFID ingestion endpoint.\par
+3. The event is deduplicated.\par
+4. The spool or tracked item is identified.\par
+5. The corresponding lifecycle or location update is applied.\par
+6. Reader health can be checked through the reader status endpoint.\par
+\par
+\b 14. Workflow And Approval Flow\b0\par
+1. Open the workflow designer.\par
+2. Create or edit a process definition.\par
+3. Define the steps, routing, and assigned roles.\par
+4. Save the workflow.\par
+5. Deploy the workflow.\par
+6. Start a workflow instance from the relevant business context.\par
+7. Complete tasks as each assigned role.\par
+8. Confirm the workflow reaches completion and generates an audit trail.\par
+\par
+\b 15. Admin Walkthrough\b0\par
+1. Open admin-facing pages or configuration areas.\par
+2. Review user roles and permissions.\par
+3. Confirm machine, product, workflow, and operational master data are valid.\par
+4. Review event logs, notifications, and health endpoints.\par
+5. Use admin tools only after the end-user operational flow has been validated.\par
+\par
+\b 16. Key URLs\b0\par
+1. /dashboard\par
+2. /planner\par
+3. /operator\par
+4. /quality\par
+5. /factory-map\par
+6. /andon\par
+7. /workflows/designer\par
+8. /pipe-spool/spools\par
+\par
+\b 17. Verification Steps\b0\par
+After the system is running, use these checks:\par
+1. Confirm the app loads at localhost:3000.\par
+2. Confirm login works.\par
+3. Confirm dashboard data loads.\par
+4. Confirm planner and operator pages open.\par
+5. Confirm API-backed pages return live data.\par
+6. Confirm one complete record can move through production and quality flow.\par
+\par
+\b 18. Useful Commands\b0\par
+\f1
+npm run dev
+\par
+npm run build
+\par
+npm run start
+\par
+npm run lint
+\par
+npm run test:smoke
+\par
+npm run test:e2e
+\par
+npm run test:all
+\par
+npm run demo
+\f0
+\par
+\par
+\b 19. Troubleshooting\b0\par
+1. If dependencies are missing, run npm install again.\par
+2. If Prisma client is out of date, run npx prisma generate.\par
+3. If schema and database are out of sync, run npx prisma db push.\par
+4. If seed data is missing, run npx prisma db seed.\par
+5. If the dev server fails, stop it and rerun npm run dev.\par
+\par
+\b 20. Summary\b0\par
+This docs folder now contains one consolidated document-format guide instead of multiple Markdown walkthrough files. If needed, this RTF can be opened in Word and saved as DOCX.\par
+}

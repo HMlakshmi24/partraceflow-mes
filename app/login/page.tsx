@@ -57,6 +57,7 @@ function LoginContent() {
     const [loading, setLoading] = useState(false);
     const [loadingCard, setLoadingCard] = useState<string | null>(null);
     const [error, setError] = useState('');
+    const [isRateLimit, setIsRateLimit] = useState(false);
     const [setupDone, setSetupDone] = useState(false);
     const [settingUp, setSettingUp] = useState(false);
     const denied = params.get('denied') === '1';
@@ -70,6 +71,7 @@ function LoginContent() {
     async function doLogin(u: string, p: string) {
         setLoading(true);
         setError('');
+        setIsRateLimit(false);
         try {
             const res = await fetch('/api/auth/login', {
                 method: 'POST',
@@ -82,7 +84,12 @@ function LoginContent() {
                 router.replace(params.get('next') ?? '/dashboard');
                 return;
             }
-            if (res.status === 503) {
+            if (res.status === 429) {
+                const retryAfter = res.headers.get('Retry-After');
+                const waitMins = retryAfter ? Math.ceil(Number(retryAfter) / 60) : 15;
+                setIsRateLimit(true);
+                setError(`Too many login attempts. Please wait ${waitMins} minute${waitMins !== 1 ? 's' : ''} before trying again.`);
+            } else if (res.status === 503) {
                 setError((data.error ?? 'Database unreachable') + ' — Use "First Time Setup" below or check /api/health for details.');
             } else if (res.status === 401) {
                 setError('Invalid username or password. If this is a fresh deployment, click "First Time Setup" below to create the admin account.');
@@ -315,12 +322,16 @@ function LoginContent() {
                         <div style={{
                             display: 'flex', gap: '0.7rem', alignItems: 'flex-start',
                             padding: '0.9rem 1rem', borderRadius: '0.75rem',
-                            background: 'rgba(239,68,68,0.14)', border: '1px solid rgba(239,68,68,0.35)',
-                            color: '#fca5a5', fontSize: '0.9rem', marginBottom: '1.5rem',
-                            lineHeight: 1.5,
+                            background: isRateLimit ? 'rgba(245,158,11,0.15)' : 'rgba(239,68,68,0.14)',
+                            border: isRateLimit ? '1px solid rgba(245,158,11,0.5)' : '1px solid rgba(239,68,68,0.35)',
+                            color: isRateLimit ? '#fcd34d' : '#fca5a5',
+                            fontSize: '0.9rem', marginBottom: '1.5rem', lineHeight: 1.5,
                         }}>
                             <AlertCircle size={18} style={{ flexShrink: 0, marginTop: 2 }} />
-                            {error}
+                            <div>
+                                {isRateLimit && <div style={{ fontWeight: 800, marginBottom: '2px' }}>Rate limit reached</div>}
+                                {error}
+                            </div>
                         </div>
                     )}
 

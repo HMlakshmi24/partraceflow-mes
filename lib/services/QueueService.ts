@@ -2,72 +2,66 @@ import { prisma } from '@/lib/services/database';
 
 export class QueueService {
 
-    /**
-     * Get prioritized list of tasks for an operator or machine.
-     * Rules:
-     * 1. Priority (High Number = Higher Priority)
-     * 2. Due Date (Earlier = Higher Priority)
-     * 3. FIFO (Created Earlier = Higher Priority)
-     */
     static async getPendingTasks(resourceId: string) {
         void resourceId;
-        // Step 1: Fetch all PENDING tasks
-        // In a real system, we would filter by skill/machine matching here.
         const tasks = await prisma.workflowTask.findMany({
-            where: {
-                status: 'PENDING',
-                // Optional: machineId == resourceId (if it's a machine)
-            },
+            where: { status: 'PENDING' },
             include: {
-                instance: {
-                    include: {
-                        workOrder: true
-                    }
-                },
-                stepDef: true
-            }
+                instance: { include: { workOrder: true } },
+                stepDef: true,
+            },
         });
 
-        // Step 2: Sort based on brochure's "Intelligent Queue" logic
         return tasks.sort((a, b) => {
-            const priorityA = a.instance.workOrder.priority ?? 0;
-            const priorityB = b.instance.workOrder.priority ?? 0;
+            const pa = a.instance.workOrder.priority ?? 0;
+            const pb = b.instance.workOrder.priority ?? 0;
+            if (pa !== pb) return pb - pa;
 
-            // 1. Priority (Desc)
-            if (priorityA !== priorityB) return priorityB - priorityA;
+            const da = new Date(a.instance.workOrder.dueDate).getTime();
+            const db = new Date(b.instance.workOrder.dueDate).getTime();
+            if (da !== db) return da - db;
 
-            // 2. Due Date (Asc)
-            const dueA = new Date(a.instance.workOrder.dueDate).getTime();
-            const dueB = new Date(b.instance.workOrder.dueDate).getTime();
-            if (dueA !== dueB) return dueA - dueB;
-
-            // 3. FIFO (Asc)
-            return new Date(a.id).getTime() - new Date(b.id).getTime(); // Using UUID timestamp approximation or created_at if available
+            return a.id.localeCompare(b.id);
         });
     }
 
     /**
-     * Assign a task to a user (Claim).
+     * Atomically claim a task for an operator.
+     *
+     * Uses a conditional updateMany (WHERE status = 'PENDING') inside a transaction
+     * so two concurrent callers cannot both succeed — only one gets count=1, the
+     * other gets count=0 and receives a clear error. Eliminates the read-then-write
+     * race condition from the previous single-row update approach.
      */
     static async claimTask(taskId: string, userId: string) {
         const task = await prisma.workflowTask.findUnique({
             where: { id: taskId },
-            include: { instance: { include: { workOrder: true } } }
+            include: { instance: { include: { workOrder: true } } },
         });
         if (!task) throw new Error('Task not found');
-        if (task.status !== 'PENDING') throw new Error('Task is not pending');
-        if (task.operatorId && task.operatorId !== userId) throw new Error('Task already claimed by another user');
+
         if (!['RELEASED', 'IN_PROGRESS', 'REWORK'].includes(task.instance.workOrder.status)) {
-            throw new Error(`Order ${task.instance.workOrder.orderNumber} is ${task.instance.workOrder.status}. Previous step not completed.`);
+            throw new Error(
+                `Order ${task.instance.workOrder.orderNumber} is ${task.instance.workOrder.status}. Cannot start task.`
+            );
         }
 
-        return await prisma.workflowTask.update({
-            where: { id: taskId },
-            data: {
-                operatorId: userId,
-                status: 'IN_PROGRESS',
-                startTime: new Date()
+        if (task.operatorId && task.operatorId !== userId && task.status === 'PENDING') {
+            throw new Error('Task is already claimed by another operator');
+        }
+
+        // Atomic claim: only succeeds if status is still PENDING at this instant
+        return await prisma.$transaction(async (tx) => {
+            const updated = await tx.workflowTask.updateMany({
+                where: { id: taskId, status: 'PENDING' },
+                data: { operatorId: userId, status: 'IN_PROGRESS', startTime: new Date() },
+            });
+
+            if (updated.count === 0) {
+                throw new Error('Task was already started by another operator — please refresh your queue');
             }
+
+            return tx.workflowTask.findUniqueOrThrow({ where: { id: taskId } });
         });
     }
 }

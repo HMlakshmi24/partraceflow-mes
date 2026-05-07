@@ -8,26 +8,17 @@ import { OrderLifecycleService } from '@/lib/services/OrderLifecycleService';
 import { revalidatePath } from 'next/cache';
 
 /**
- * Resolve a username or operator code to a real User.id.
- * Creates a default operator user if one doesn't exist yet.
+ * Resolve a username or user ID to a real User.id.
+ * Throws if the user does not exist — never creates unknown users on-the-fly.
  */
 async function resolveOperatorId(operatorUsername: string): Promise<string> {
-    // First try to find existing user by id (in case a real UUID is passed)
     const byId = await prisma.user.findUnique({ where: { id: operatorUsername } }).catch(() => null);
     if (byId) return byId.id;
 
-    // Try to find by username
     const byUsername = await prisma.user.findUnique({ where: { username: operatorUsername } }).catch(() => null);
     if (byUsername) return byUsername.id;
 
-    // Create the operator user on-the-fly for demo/dev environments
-    const newUser = await prisma.user.create({
-        data: {
-            username: operatorUsername,
-            role: 'OPERATOR',
-        }
-    });
-    return newUser.id;
+    throw new Error(`Operator "${operatorUsername}" not found. Seed demo data or create the user in Settings first.`);
 }
 
 /**
@@ -220,19 +211,23 @@ export async function startTask(taskId: string, operator: string) {
 export async function completeTask(taskId: string, operator: string) {
     try {
         const operatorId = await resolveOperatorId(operator);
-        
-        // Get task details for audit logging before completion
+
         const task = await prisma.workflowTask.findUnique({
             where: { id: taskId },
             include: { stepDef: true }
         });
-        
+
         if (!task) {
             return { success: false, msg: 'Task not found' };
         }
-        
+
         if (task.status !== 'IN_PROGRESS') {
-            return { success: false, msg: `Task is not in progress - current status: ${task.status}` };
+            return { success: false, msg: `Task is not in progress — current status: ${task.status}` };
+        }
+
+        // Enforce ownership: only the operator who started the task can complete it
+        if (task.operatorId && task.operatorId !== operatorId) {
+            return { success: false, msg: 'You did not start this task — only the assigned operator can complete it' };
         }
         
         // Calculate duration from task start time

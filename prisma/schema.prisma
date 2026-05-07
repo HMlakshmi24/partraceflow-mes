@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mongodb"
   url      = env("DATABASE_URL")
 }
 
@@ -12,7 +12,7 @@ datasource db {
 // --------------------------------------------------------
 
 model Product {
-  id          String   @id @default(uuid())
+  id          String   @id @default(cuid()) @map("_id")
   sku         String   @unique // e.g., "PART-101"
   name        String
   description String?
@@ -24,7 +24,7 @@ model Product {
 }
 
 model Machine {
-  id          String   @id @default(uuid())
+  id          String   @id @default(cuid()) @map("_id")
   code        String   @unique // e.g., "W21"
   name        String
   status      String   @default("IDLE") // IDLE, RUNNING, DOWN, MAINTENANCE
@@ -42,9 +42,10 @@ model Machine {
 }
 
 model User {
-  id           String    @id @default(uuid())
+  id           String    @id @default(cuid()) @map("_id")
   username     String    @unique
   passwordHash String?   // scrypt hash; null = demo mode (any password)
+  mustChangePassword Boolean @default(false)
   role         String    // OPERATOR, SUPERVISOR, ADMIN, PLANNER, QUALITY, MAINTENANCE
   plantId      String?
   employeeId   String?
@@ -66,7 +67,7 @@ model User {
 // --------------------------------------------------------
 
 model WorkOrder {
-  id             String   @id @default(uuid())
+  id             String   @id @default(cuid()) @map("_id")
   orderNumber    String   @unique // e.g., "WO-2024-001"
   quantity       Int
   priority       Int      @default(1)
@@ -88,9 +89,9 @@ model WorkOrder {
 }
 
 model OrderActivity {
-  id          String   @id @default(uuid())
+  id          String   @id @default(cuid()) @map("_id")
   orderId     String
-  order       WorkOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order       WorkOrder @relation(fields: [orderId], references: [id])
   action      String   // STATUS_CHANGE | QC_RESULT | NOTE | ASSIGNED | ALERT
   fromStatus  String?
   toStatus    String?
@@ -103,7 +104,7 @@ model OrderActivity {
 }
 
 model InspectionRecord {
-  id           String   @id @default(uuid())
+  id           String   @id @default(cuid()) @map("_id")
   workOrderId  String
   workOrder    WorkOrder @relation(fields: [workOrderId], references: [id])
   inspector    String   @default("Inspector_01")
@@ -120,14 +121,14 @@ model InspectionRecord {
 // --------------------------------------------------------
 
 model WorkflowStepDef {
-  id          String @id @default(uuid())
+  id          String @id @default(cuid()) @map("_id")
   name        String
   sequence    Int
   tasks       WorkflowTask[]
 }
 
 model WorkflowInstance {
-  id            String   @id @default(uuid())
+  id            String   @id @default(cuid()) @map("_id")
   serialNumber  String?
   status        String   @default("ACTIVE")
   workOrderId   String
@@ -142,7 +143,7 @@ model WorkflowInstance {
 }
 
 model WorkflowTask {
-  id             String   @id @default(uuid())
+  id             String   @id @default(cuid()) @map("_id")
   status         String   @default("PENDING")
   instanceId     String
   instance       WorkflowInstance @relation(fields: [instanceId], references: [id])
@@ -156,7 +157,7 @@ model WorkflowTask {
   endTime        DateTime?
   reworkCount    Int      @default(0)
   parentTaskId   String?  // For rework loops
-  parentTask     WorkflowTask? @relation("TaskHierarchy", fields: [parentTaskId], references: [id])
+  parentTask     WorkflowTask? @relation("TaskHierarchy", fields: [parentTaskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   childTasks     WorkflowTask[] @relation("TaskHierarchy")
   qualityChecks  QualityCheck[]
   approvals      TaskApproval[]
@@ -170,17 +171,17 @@ model WorkflowTask {
 // --------------------------------------------------------
 
 model QualityCheck {
-  id          String   @id @default(uuid())
+  id          String   @id @default(cuid()) @map("_id")
   parameter   String
   expected    String
   actual      String
   result      String
   taskId      String
-  task        WorkflowTask @relation(fields: [taskId], references: [id])
+  task        WorkflowTask @relation(fields: [taskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model SystemEvent {
-  id        String   @id @default(uuid())
+  id        String   @id @default(cuid()) @map("_id")
   timestamp DateTime @default(now())
   eventType String
   details   String
@@ -190,7 +191,7 @@ model SystemEvent {
 
 // Persisted workflow definitions (BPMN/JSON payloads)
 model WorkflowDefinition {
-  id        String   @id @default(uuid())
+  id        String   @id @default(cuid()) @map("_id")
   name      String
   version   Int      @default(1)
   // payload stored as JSON string (Node Graph)
@@ -202,7 +203,7 @@ model WorkflowDefinition {
 
 // Token-based execution tracker
 model WorkflowToken {
-  id          String   @id @default(uuid())
+  id          String   @id @default(cuid()) @map("_id")
   instanceId  String
   instance    WorkflowInstance @relation(fields: [instanceId], references: [id])
   nodeId      String   // ID in the JSON Model (e.g., "StartEvent_1")
@@ -215,7 +216,7 @@ model WorkflowToken {
 // --------------------------------------------------------
 
 model QualityRule {
-  id          String @id @default(uuid())
+  id          String @id @default(cuid()) @map("_id")
   name        String
   description String?
   // Logic stored as JSON: { field: "pH", operator: ">", value: 7.0 }
@@ -225,11 +226,11 @@ model QualityRule {
 
 // Quality Gate with threshold rules and approvals
 model QualityGate {
-  id          String @id @default(uuid())
+  id          String @id @default(cuid()) @map("_id")
   name        String
   description String?
   taskId      String @unique
-  task        WorkflowTask @relation(fields: [taskId], references: [id])
+  task        WorkflowTask @relation(fields: [taskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   status      String @default("PENDING") // PENDING, PASSED, FAILED, REJECTED
   rules       QualityGateRule[]
   approvals   QualityApproval[]
@@ -237,9 +238,9 @@ model QualityGate {
 }
 
 model QualityGateRule {
-  id           String @id @default(uuid())
+  id           String @id @default(cuid()) @map("_id")
   gateId       String
-  gate         QualityGate @relation(fields: [gateId], references: [id])
+  gate         QualityGate @relation(fields: [gateId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   ruleId       String
   rule         QualityRule @relation(fields: [ruleId], references: [id])
   thresholdMin Float?
@@ -248,9 +249,9 @@ model QualityGateRule {
 }
 
 model QualityApproval {
-  id          String @id @default(uuid())
+  id          String @id @default(cuid()) @map("_id")
   gateId      String
-  gate        QualityGate @relation(fields: [gateId], references: [id])
+  gate        QualityGate @relation(fields: [gateId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   userId      String
   user        User @relation(fields: [userId], references: [id])
   status      String // APPROVED, REJECTED
@@ -260,9 +261,9 @@ model QualityApproval {
 
 // Task approvals for quality gates
 model TaskApproval {
-  id          String @id @default(uuid())
+  id          String @id @default(cuid()) @map("_id")
   taskId      String
-  task        WorkflowTask @relation(fields: [taskId], references: [id])
+  task        WorkflowTask @relation(fields: [taskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   userId      String
   user        User @relation("TaskApprovals", fields: [userId], references: [id])
   status      String // APPROVED, REJECTED
@@ -272,7 +273,7 @@ model TaskApproval {
 
 // Automated triggers
 model AutomatedTrigger {
-  id          String @id @default(uuid())
+  id          String @id @default(cuid()) @map("_id")
   name        String
   type        String // TIME_BASED, EVENT_BASED, STATUS_CHANGE
   config      String // JSON configuration
@@ -282,7 +283,7 @@ model AutomatedTrigger {
 }
 
 model TriggerAction {
-  id            String @id @default(uuid())
+  id            String @id @default(cuid()) @map("_id")
   triggerId     String
   trigger       AutomatedTrigger @relation(fields: [triggerId], references: [id])
   actionType    String // CREATE_EVENT, UPDATE_STATUS, SEND_NOTIFICATION
@@ -293,7 +294,7 @@ model TriggerAction {
 
 // CAD Integration
 model CADDocument {
-  id            String @id @default(uuid())
+  id            String @id @default(cuid()) @map("_id")
   productId     String
   product       Product @relation(fields: [productId], references: [id])
   fileName      String
@@ -310,7 +311,7 @@ model CADDocument {
 }
 
 model CADDocumentApproval {
-  id          String @id @default(uuid())
+  id          String @id @default(cuid()) @map("_id")
   documentId  String
   document    CADDocument @relation(fields: [documentId], references: [id])
   userId      String
@@ -325,7 +326,7 @@ model CADDocumentApproval {
 // --------------------------------------------------------
 
 model MachineSignal {
-  id          String   @id @default(uuid())
+  id          String   @id @default(cuid()) @map("_id")
   machineId   String
   machine     Machine  @relation(fields: [machineId], references: [id])
   signalName  String
@@ -342,7 +343,7 @@ model MachineSignal {
 }
 
 model MachineTelemetry {
-  id              String    @id @default(uuid())
+  id              String    @id @default(cuid()) @map("_id")
   signalId        String
   signal          MachineSignal @relation(fields: [signalId], references: [id])
   value           String    // stored as string, parsed by consumer
@@ -354,7 +355,7 @@ model MachineTelemetry {
 }
 
 model MachineEvent {
-  id             String    @id @default(uuid())
+  id             String    @id @default(cuid()) @map("_id")
   machineId      String
   machine        Machine   @relation(fields: [machineId], references: [id])
   eventType      String    // ALARM, STATUS_CHANGE, FAULT, MAINTENANCE_REQUEST
@@ -369,7 +370,7 @@ model MachineEvent {
 }
 
 model SignalMapping {
-  id            String        @id @default(uuid())
+  id            String        @id @default(cuid()) @map("_id")
   signalId      String
   signal        MachineSignal @relation(fields: [signalId], references: [id])
   mesField      String        // which MES field this signal updates (e.g. "machine.status", "task.quantity")
@@ -382,7 +383,7 @@ model SignalMapping {
 // --------------------------------------------------------
 
 model Enterprise {
-  id        String   @id @default(uuid())
+  id        String   @id @default(cuid()) @map("_id")
   code      String   @unique
   name      String
   country   String?
@@ -392,7 +393,7 @@ model Enterprise {
 }
 
 model Plant {
-  id               String          @id @default(uuid())
+  id               String          @id @default(cuid()) @map("_id")
   code             String          @unique
   name             String
   location         String?
@@ -404,7 +405,7 @@ model Plant {
 }
 
 model ProductionArea {
-  id               String          @id @default(uuid())
+  id               String          @id @default(cuid()) @map("_id")
   code             String
   name             String
   plantId          String
@@ -413,7 +414,7 @@ model ProductionArea {
 }
 
 model ProductionLine {
-  id              String         @id @default(uuid())
+  id              String         @id @default(cuid()) @map("_id")
   code            String
   name            String
   areaId          String
@@ -424,7 +425,7 @@ model ProductionLine {
 }
 
 model MachineComponent {
-  id               String    @id @default(uuid())
+  id               String    @id @default(cuid()) @map("_id")
   machineId        String
   machine          Machine   @relation(fields: [machineId], references: [id])
   componentName    String
@@ -441,7 +442,7 @@ model MachineComponent {
 // --------------------------------------------------------
 
 model EventRule {
-  id              String        @id @default(uuid())
+  id              String        @id @default(cuid()) @map("_id")
   name            String
   description     String?
   isActive        Boolean       @default(true)
@@ -454,7 +455,7 @@ model EventRule {
 }
 
 model EventAction {
-  id            String    @id @default(uuid())
+  id            String    @id @default(cuid()) @map("_id")
   ruleId        String
   rule          EventRule @relation(fields: [ruleId], references: [id])
   actionType    String    // SEND_NOTIFICATION, CREATE_DOWNTIME, PAUSE_WORKFLOW, CREATE_MAINTENANCE_REQUEST, LOG_EVENT
@@ -464,7 +465,7 @@ model EventAction {
 }
 
 model EventTrigger {
-  id              String    @id @default(uuid())
+  id              String    @id @default(cuid()) @map("_id")
   ruleId          String
   rule            EventRule @relation(fields: [ruleId], references: [id])
   triggeredAt     DateTime  @default(now())
@@ -478,7 +479,7 @@ model EventTrigger {
 // --------------------------------------------------------
 
 model Lot {
-  id                       String    @id @default(uuid())
+  id                       String    @id @default(cuid()) @map("_id")
   lotNumber                String    @unique
   productId                String
   product                  Product   @relation(fields: [productId], references: [id])
@@ -494,7 +495,7 @@ model Lot {
 }
 
 model Batch {
-  id                  String              @id @default(uuid())
+  id                  String              @id @default(cuid()) @map("_id")
   batchNumber         String              @unique
   workOrderId         String
   workOrder           WorkOrder           @relation(fields: [workOrderId], references: [id])
@@ -510,7 +511,7 @@ model Batch {
 }
 
 model SerialNumber {
-  id                  String              @id @default(uuid())
+  id                  String              @id @default(cuid()) @map("_id")
   serial              String              @unique
   batchId             String
   batch               Batch               @relation(fields: [batchId], references: [id])
@@ -523,13 +524,13 @@ model SerialNumber {
 }
 
 model MaterialUsage {
-  id         String        @id @default(uuid())
+  id         String        @id @default(cuid()) @map("_id")
   batchId    String
   batch      Batch         @relation(fields: [batchId], references: [id])
   lotId      String
   lot        Lot           @relation(fields: [lotId], references: [id])
   taskId     String?
-  task       WorkflowTask? @relation(fields: [taskId], references: [id])
+  task       WorkflowTask? @relation(fields: [taskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   quantity   Float
   unit       String
   usedAt     DateTime      @default(now())
@@ -537,7 +538,7 @@ model MaterialUsage {
 }
 
 model TraceabilityRecord {
-  id             String        @id @default(uuid())
+  id             String        @id @default(cuid()) @map("_id")
   batchId        String?
   batch          Batch?        @relation(fields: [batchId], references: [id])
   serialNumberId String?
@@ -546,7 +547,7 @@ model TraceabilityRecord {
   machineId      String?
   operatorId     String?
   taskId         String?
-  task           WorkflowTask? @relation(fields: [taskId], references: [id])
+  task           WorkflowTask? @relation(fields: [taskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   data           String        // JSON: measurement values, quantities, etc.
   timestamp      DateTime      @default(now())
 }
@@ -556,7 +557,7 @@ model TraceabilityRecord {
 // --------------------------------------------------------
 
 model DowntimeCategory {
-  id      String          @id @default(uuid())
+  id      String          @id @default(cuid()) @map("_id")
   code    String          @unique
   name    String
   type    String          // PLANNED, UNPLANNED
@@ -564,7 +565,7 @@ model DowntimeCategory {
 }
 
 model DowntimeReason {
-  id         String           @id @default(uuid())
+  id         String           @id @default(cuid()) @map("_id")
   code       String           @unique
   name       String
   categoryId String
@@ -573,7 +574,7 @@ model DowntimeReason {
 }
 
 model DowntimeEvent {
-  id               String          @id @default(uuid())
+  id               String          @id @default(cuid()) @map("_id")
   machineId        String
   machine          Machine         @relation(fields: [machineId], references: [id])
   reasonId         String?
@@ -595,7 +596,7 @@ model DowntimeEvent {
 // --------------------------------------------------------
 
 model Shift {
-  id            String          @id @default(uuid())
+  id            String          @id @default(cuid()) @map("_id")
   plantId       String
   plant         Plant           @relation(fields: [plantId], references: [id])
   code          String
@@ -608,7 +609,7 @@ model Shift {
 }
 
 model ShiftSchedule {
-  id               String          @id @default(uuid())
+  id               String          @id @default(cuid()) @map("_id")
   shiftId          String
   shift            Shift           @relation(fields: [shiftId], references: [id])
   productionLineId String
@@ -621,7 +622,7 @@ model ShiftSchedule {
 }
 
 model OperatorShift {
-  id         String        @id @default(uuid())
+  id         String        @id @default(cuid()) @map("_id")
   userId     String
   user       User          @relation(fields: [userId], references: [id])
   scheduleId String
@@ -632,7 +633,7 @@ model OperatorShift {
 }
 
 model ShiftProduction {
-  id                String        @id @default(uuid())
+  id                String        @id @default(cuid()) @map("_id")
   scheduleId        String        @unique
   schedule          ShiftSchedule @relation(fields: [scheduleId], references: [id])
   actualQuantity    Int           @default(0)
@@ -652,7 +653,7 @@ model ShiftProduction {
 // --------------------------------------------------------
 
 model SkillCategory {
-  id          String         @id @default(uuid())
+  id          String         @id @default(cuid()) @map("_id")
   code        String         @unique
   name        String         // CNC_OPERATION, WELDING, QUALITY_INSPECTION, FORKLIFT
   description String?
@@ -660,7 +661,7 @@ model SkillCategory {
 }
 
 model OperatorSkill {
-  id             String          @id @default(uuid())
+  id             String          @id @default(cuid()) @map("_id")
   userId         String
   user           User            @relation(fields: [userId], references: [id])
   categoryId     String
@@ -673,7 +674,7 @@ model OperatorSkill {
 }
 
 model Certification {
-  id                  String        @id @default(uuid())
+  id                  String        @id @default(cuid()) @map("_id")
   skillId             String
   skill               OperatorSkill @relation(fields: [skillId], references: [id])
   userId              String
@@ -687,7 +688,7 @@ model Certification {
 }
 
 model TrainingRecord {
-  id            String   @id @default(uuid())
+  id            String   @id @default(cuid()) @map("_id")
   userId        String
   user          User     @relation(fields: [userId], references: [id])
   trainingName  String
@@ -705,7 +706,7 @@ model TrainingRecord {
 // --------------------------------------------------------
 
 model Document {
-  id               String              @id @default(uuid())
+  id               String              @id @default(cuid()) @map("_id")
   documentNumber   String              @unique
   title            String
   type             String              // SOP, WORK_INSTRUCTION, DRAWING, SPECIFICATION, CERTIFICATE
@@ -719,7 +720,7 @@ model Document {
 }
 
 model DocumentVersion {
-  id                String   @id @default(uuid())
+  id                String   @id @default(cuid()) @map("_id")
   documentId        String
   document          Document @relation(fields: [documentId], references: [id])
   versionNumber     Int
@@ -736,7 +737,7 @@ model DocumentVersion {
 }
 
 model DocumentAssignment {
-  id              String   @id @default(uuid())
+  id              String   @id @default(cuid()) @map("_id")
   documentId      String
   document        Document @relation(fields: [documentId], references: [id])
   assignmentType  String   // TASK, MACHINE, PRODUCT, WORKFLOW, WORK_CENTER
@@ -753,7 +754,7 @@ model DocumentAssignment {
 // --------------------------------------------------------
 
 model ScheduledJob {
-  id             String                  @id @default(uuid())
+  id             String                  @id @default(cuid()) @map("_id")
   workOrderId    String                  @unique
   workOrder      WorkOrder               @relation(fields: [workOrderId], references: [id])
   machineId      String?
@@ -772,7 +773,7 @@ model ScheduledJob {
 }
 
 model SchedulingConstraint {
-  id             String       @id @default(uuid())
+  id             String       @id @default(cuid()) @map("_id")
   jobId          String
   job            ScheduledJob @relation(fields: [jobId], references: [id])
   constraintType String       // MACHINE_CAPACITY, OPERATOR_AVAILABILITY, MATERIAL_AVAILABILITY, MAINTENANCE_WINDOW, DEPENDENCY
@@ -782,7 +783,7 @@ model SchedulingConstraint {
 }
 
 model MaintenanceWindow {
-  id             String    @id @default(uuid())
+  id             String    @id @default(cuid()) @map("_id")
   machineId      String
   machine        Machine   @relation(fields: [machineId], references: [id])
   title          String
@@ -801,7 +802,7 @@ model MaintenanceWindow {
 // --------------------------------------------------------
 
 model NotificationChannel {
-  id            String             @id @default(uuid())
+  id            String             @id @default(cuid()) @map("_id")
   name          String
   type          String             // EMAIL, SMS, WEBHOOK, ANDON, MOBILE_PUSH
   config        String             // JSON: { "to": "...", "url": "...", "topic": "..." }
@@ -812,7 +813,7 @@ model NotificationChannel {
 }
 
 model NotificationRule {
-  id            String              @id @default(uuid())
+  id            String              @id @default(cuid()) @map("_id")
   name          String
   eventType     String              // MACHINE_DOWN, QUALITY_FAIL, TASK_OVERDUE, SHIFT_START, ORDER_COMPLETE
   channelId     String
@@ -824,7 +825,7 @@ model NotificationRule {
 }
 
 model Notification {
-  id            String              @id @default(uuid())
+  id            String              @id @default(cuid()) @map("_id")
   channelId     String
   channel       NotificationChannel @relation(fields: [channelId], references: [id])
   recipientId   String?
@@ -845,7 +846,7 @@ model Notification {
 // --------------------------------------------------------
 
 model AndonBoard {
-  id           String         @id @default(uuid())
+  id           String         @id @default(cuid()) @map("_id")
   code         String         @unique
   name         String
   location     String?
@@ -859,7 +860,7 @@ model AndonBoard {
 }
 
 model AndonDisplay {
-  id          String     @id @default(uuid())
+  id          String     @id @default(cuid()) @map("_id")
   boardId     String
   board       AndonBoard @relation(fields: [boardId], references: [id])
   zone        String     // e.g. "LINE_1", "CELL_A"
@@ -869,7 +870,7 @@ model AndonDisplay {
 }
 
 model AndonEvent {
-  id          String     @id @default(uuid())
+  id          String     @id @default(cuid()) @map("_id")
   boardId     String
   board       AndonBoard @relation(fields: [boardId], references: [id])
   machineId   String?
@@ -886,7 +887,7 @@ model AndonEvent {
 }
 
 model AndonMessage {
-  id          String   @id @default(uuid())
+  id          String   @id @default(cuid()) @map("_id")
   boardId     String?
   zoneCode    String?
   messageType String   // PRODUCTION_COUNT, SHIFT_TARGET, QUALITY_ALERT, DOWNTIME, CUSTOM
@@ -902,7 +903,7 @@ model AndonMessage {
 // --------------------------------------------------------
 
 model ProcessParameter {
-  id            String         @id @default(uuid())
+  id            String         @id @default(cuid()) @map("_id")
   machineId     String
   productId     String?
   parameterName String
@@ -919,7 +920,7 @@ model ProcessParameter {
 }
 
 model SPCRecord {
-  id           String           @id @default(uuid())
+  id           String           @id @default(cuid()) @map("_id")
   parameterId  String
   parameter    ProcessParameter @relation(fields: [parameterId], references: [id])
   value        Float
@@ -934,7 +935,7 @@ model SPCRecord {
 }
 
 model ControlLimit {
-  id           String           @id @default(uuid())
+  id           String           @id @default(cuid()) @map("_id")
   parameterId  String
   parameter    ProcessParameter @relation(fields: [parameterId], references: [id])
   ucl          Float            // Upper Control Limit
@@ -952,7 +953,7 @@ model ControlLimit {
 // --------------------------------------------------------
 
 model Recipe {
-  id          String              @id @default(uuid())
+  id          String              @id @default(cuid()) @map("_id")
   code        String              @unique
   name        String
   productId   String
@@ -969,7 +970,7 @@ model Recipe {
 }
 
 model RecipeParameter {
-  id          String  @id @default(uuid())
+  id          String  @id @default(cuid()) @map("_id")
   recipeId    String
   recipe      Recipe  @relation(fields: [recipeId], references: [id])
   parameterName String
@@ -984,7 +985,7 @@ model RecipeParameter {
 }
 
 model RecipeVersion {
-  id          String   @id @default(uuid())
+  id          String   @id @default(cuid()) @map("_id")
   recipeId    String
   recipe      Recipe   @relation(fields: [recipeId], references: [id])
   version     Int
@@ -995,7 +996,7 @@ model RecipeVersion {
 }
 
 model MachineRecipeAssignment {
-  id          String    @id @default(uuid())
+  id          String    @id @default(cuid()) @map("_id")
   machineId   String
   recipeId    String
   recipe      Recipe    @relation(fields: [recipeId], references: [id])
@@ -1010,7 +1011,7 @@ model MachineRecipeAssignment {
 // --------------------------------------------------------
 
 model MachineHealthScore {
-  id              String   @id @default(uuid())
+  id              String   @id @default(cuid()) @map("_id")
   machineId       String
   overallScore    Float    // 0-100, higher = healthier
   vibrationScore  Float?
@@ -1022,7 +1023,7 @@ model MachineHealthScore {
 }
 
 model HealthPrediction {
-  id                  String    @id @default(uuid())
+  id                  String    @id @default(cuid()) @map("_id")
   machineId           String
   predictionType      String    // FAILURE_PROBABILITY, RUL (Remaining Useful Life), MAINTENANCE_NEEDED
   value               Float     // probability 0-1 or hours remaining
@@ -1039,7 +1040,7 @@ model HealthPrediction {
 // --------------------------------------------------------
 
 model CopilotSession {
-  id          String          @id @default(uuid())
+  id          String          @id @default(cuid()) @map("_id")
   userId      String?
   context     String          @default("{}") // JSON: current machine, order, shift context
   queries     CopilotQuery[]
@@ -1048,7 +1049,7 @@ model CopilotSession {
 }
 
 model CopilotQuery {
-  id          String         @id @default(uuid())
+  id          String         @id @default(cuid()) @map("_id")
   sessionId   String
   session     CopilotSession @relation(fields: [sessionId], references: [id])
   question    String
@@ -1064,7 +1065,7 @@ model CopilotQuery {
 // --------------------------------------------------------
 
 model Tenant {
-  id          String        @id @default(uuid())
+  id          String        @id @default(cuid()) @map("_id")
   code        String        @unique
   name        String
   plan        String        @default("STANDARD") // STANDARD, PROFESSIONAL, ENTERPRISE
@@ -1075,7 +1076,7 @@ model Tenant {
 }
 
 model TenantUser {
-  id       String @id @default(uuid())
+  id       String @id @default(cuid()) @map("_id")
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id])
   userId   String
@@ -1083,7 +1084,7 @@ model TenantUser {
 }
 
 model TenantSettings {
-  id                String  @id @default(uuid())
+  id                String  @id @default(cuid()) @map("_id")
   tenantId          String  @unique
   tenant            Tenant  @relation(fields: [tenantId], references: [id])
   timezone          String  @default("UTC")
@@ -1102,7 +1103,7 @@ model TenantSettings {
 // --------------------------------------------------------
 
 model DemoScenario {
-  id          String   @id @default(uuid())
+  id          String   @id @default(cuid()) @map("_id")
   name        String
   description String?
   isActive    Boolean  @default(false)
@@ -1115,7 +1116,7 @@ model DemoScenario {
 // ============================================================
 
 model PipeSpoolLine {
-  id             String   @id @default(uuid())
+  id             String   @id @default(cuid()) @map("_id")
   lineNumber     String   @unique
   area           String?
   service        String?
@@ -1144,7 +1145,7 @@ model PipeSpoolLine {
 }
 
 model IsometricDrawing {
-  id             String   @id @default(uuid())
+  id             String   @id @default(cuid()) @map("_id")
   drawingNumber  String   @unique
   title          String?
   lineId         String
@@ -1165,7 +1166,7 @@ model IsometricDrawing {
 }
 
 model PipeSpool {
-  id              String   @id @default(uuid())
+  id              String   @id @default(cuid()) @map("_id")
   spoolId         String   @unique
   lineId          String
   line            PipeSpoolLine @relation(fields: [lineId], references: [id])
@@ -1205,7 +1206,7 @@ model PipeSpool {
 }
 
 model SpoolJoint {
-  id             String   @id @default(uuid())
+  id             String   @id @default(cuid()) @map("_id")
   jointId        String   @unique
   spoolId        String
   spool          PipeSpool @relation(fields: [spoolId], references: [id])
@@ -1236,7 +1237,7 @@ model SpoolJoint {
 }
 
 model ITPTemplate {
-  id          String   @id @default(uuid())
+  id          String   @id @default(cuid()) @map("_id")
   name        String
   description String?
   type        String   @default("SPOOL")
@@ -1249,7 +1250,7 @@ model ITPTemplate {
 }
 
 model ITPStep {
-  id                 String   @id @default(uuid())
+  id                 String   @id @default(cuid()) @map("_id")
   itpId              String
   itp                ITPTemplate @relation(fields: [itpId], references: [id])
   sequence           Int
@@ -1268,7 +1269,7 @@ model ITPStep {
 }
 
 model SpoolInspection {
-  id             String   @id @default(uuid())
+  id             String   @id @default(cuid()) @map("_id")
   itpId          String?
   itp            ITPTemplate? @relation(fields: [itpId], references: [id])
   itpStepId      String?
@@ -1296,7 +1297,7 @@ model SpoolInspection {
 }
 
 model WeldRecord {
-  id           String   @id @default(uuid())
+  id           String   @id @default(cuid()) @map("_id")
   weldNumber   String?
   jointId      String
   joint        SpoolJoint @relation(fields: [jointId], references: [id])
@@ -1319,7 +1320,7 @@ model WeldRecord {
 }
 
 model NDERecord {
-  id              String   @id @default(uuid())
+  id              String   @id @default(cuid()) @map("_id")
   ndeNumber       String?
   jointId         String
   joint           SpoolJoint @relation(fields: [jointId], references: [id])
@@ -1345,7 +1346,7 @@ model NDERecord {
 }
 
 model PressureTestRecord {
-  id              String   @id @default(uuid())
+  id              String   @id @default(cuid()) @map("_id")
   testNumber      String?
   spoolId         String
   spool           PipeSpool @relation(fields: [spoolId], references: [id])
@@ -1371,7 +1372,7 @@ model PressureTestRecord {
 }
 
 model NCRRecord {
-  id               String   @id @default(uuid())
+  id               String   @id @default(cuid()) @map("_id")
   ncrNumber        String   @unique
   title            String
   relatedType      String
@@ -1398,7 +1399,7 @@ model NCRRecord {
 }
 
 model SpoolDocument {
-  id             String   @id @default(uuid())
+  id             String   @id @default(cuid()) @map("_id")
   documentType   String
   fileName       String
   filePath       String
@@ -1427,7 +1428,7 @@ model SpoolDocument {
 }
 
 model SpoolApproval {
-  id             String   @id @default(uuid())
+  id             String   @id @default(cuid()) @map("_id")
   relatedType    String
   spoolId        String?
   spool          PipeSpool? @relation(fields: [spoolId], references: [id])
@@ -1448,7 +1449,7 @@ model SpoolApproval {
 }
 
 model YardLocation {
-  id          String   @id @default(uuid())
+  id          String   @id @default(cuid()) @map("_id")
   zone        String
   rack        String?
   row         String?
@@ -1465,7 +1466,7 @@ model YardLocation {
 // ── Pipe Spool Alerts ─────────────────────────────────────────────────────────
 
 model SpoolAlert {
-  id          String   @id @default(uuid())
+  id          String   @id @default(cuid()) @map("_id")
   type        String   // HOLD_PLACED | NCR_RAISED | INSPECTION_FAILED | APPROVAL_REQUIRED | NDE_HOLD
   severity    String   @default("INFO")  // INFO | WARNING | CRITICAL
   title       String

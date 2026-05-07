@@ -14,7 +14,7 @@ export async function GET() {
     try {
         const [userCount, dbOk] = await Promise.all([
             prisma.user.count(),
-            prisma.$queryRaw`SELECT 1`.then(() => true).catch(() => false),
+            prisma.user.findFirst({ select: { id: true } }).then(() => true).catch(() => false),
         ]);
         return NextResponse.json({
             needsSetup: userCount === 0,

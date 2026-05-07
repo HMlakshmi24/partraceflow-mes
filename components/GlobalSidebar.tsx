@@ -9,6 +9,7 @@ import {
     CheckCircle, Map, Bot, Zap, Wrench, Clock, Shield, TrendingUp, BookOpen,
     Menu, X, ChevronDown, Settings, LogOut, Plug,
     Layers, Package, ShieldAlert, MapPin, BarChart3, Circle, FileSearch, Tag,
+    Timer,
 } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
 import SpoolAlertBell from './SpoolAlertBell';
@@ -103,7 +104,8 @@ const NAV_GROUPS = [
         id: 'system',
         label: 'System',
         items: [
-            { href: '/audit', icon: Shield, label: 'Activity Log' },
+            { href: '/reports', icon: BarChart3, label: 'Reports & Analytics' },
+            { href: '/audit',   icon: Shield,    label: 'Activity Log' },
         ],
     },
 ];
@@ -247,9 +249,28 @@ function NavGroup({ group, pathname, colors }: {
 
 // ── ProfileFooter ─────────────────────────────────────────────────────────────
 
-function ProfileFooter({ role, username, colors }: {
+function useSessionCountdown(exp: number | null): string {
+    const [label, setLabel] = useState('');
+    useEffect(() => {
+        if (!exp) { setLabel(''); return; }
+        const update = () => {
+            const secsLeft = exp - Math.floor(Date.now() / 1000);
+            if (secsLeft <= 0) { setLabel('Expired'); return; }
+            const h = Math.floor(secsLeft / 3600);
+            const m = Math.floor((secsLeft % 3600) / 60);
+            setLabel(h > 0 ? `${h}h ${m}m left` : `${m}m left`);
+        };
+        update();
+        const t = setInterval(update, 60000);
+        return () => clearInterval(t);
+    }, [exp]);
+    return label;
+}
+
+function ProfileFooter({ role, username, exp, colors }: {
     role: string;
     username: string;
+    exp: number | null;
     colors: ReturnType<typeof getSidebarColors>;
 }) {
     const router = useRouter();
@@ -257,6 +278,7 @@ function ProfileFooter({ role, username, colors }: {
     const initial = (username || role || '?')[0].toUpperCase();
     const roleStyle = ROLE_COLORS[role] ?? { bg: 'rgba(100,116,139,0.15)', color: '#94a3b8', border: 'rgba(100,116,139,0.3)' };
     const avatarGradient = AVATAR_COLORS[role] ?? 'linear-gradient(135deg, #67e8f9, #3b82f6)';
+    const sessionLabel = useSessionCountdown(exp);
 
     async function handleLogout() {
         await fetch('/api/auth/logout', { method: 'POST' });
@@ -328,7 +350,7 @@ function ProfileFooter({ role, username, colors }: {
                         {username || ROLE_LABELS[role] || role}
                     </div>
                     {/* Role badge */}
-                    <div style={{ marginTop: '3px' }}>
+                    <div style={{ marginTop: '3px', display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
                         <span style={{
                             display: 'inline-flex', alignItems: 'center',
                             padding: '1px 8px', borderRadius: '999px',
@@ -338,6 +360,15 @@ function ProfileFooter({ role, username, colors }: {
                         }}>
                             {ROLE_LABELS[role] ?? role}
                         </span>
+                        {sessionLabel && (
+                            <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '3px',
+                                fontSize: '0.63rem', color: colors.profileSubColor, fontWeight: 600,
+                            }}>
+                                <Timer size={10} />
+                                {sessionLabel}
+                            </span>
+                        )}
                     </div>
                 </div>
                 <Settings size={15} style={{ color: colors.profileSettingsColor, flexShrink: 0, transition: 'color 0.15s' }} />
@@ -353,6 +384,7 @@ export default function GlobalSidebar() {
     const { resolvedTheme } = useTheme();
     const [role, setRole] = useState<string>('ADMIN');
     const [username, setUsername] = useState<string>('');
+    const [sessionExp, setSessionExp] = useState<number | null>(null);
     const [open, setOpen] = useState(false);
     const [isMobile, setIsMobile] = useState(false);
     const [mounted, setMounted] = useState(false);
@@ -384,6 +416,7 @@ export default function GlobalSidebar() {
             .then(d => {
                 if (d?.role) setRole(d.role);
                 if (d?.username) setUsername(d.username);
+                if (d?.exp) setSessionExp(d.exp);
             })
             .catch(() => { });
     }, [pathname]);
@@ -468,7 +501,7 @@ export default function GlobalSidebar() {
             </nav>
 
             {/* Profile + Settings */}
-            <ProfileFooter role={role} username={username} colors={colors} />
+            <ProfileFooter role={role} username={username} exp={sessionExp} colors={colors} />
 
             <style>{`
                 @keyframes gradientSlide {

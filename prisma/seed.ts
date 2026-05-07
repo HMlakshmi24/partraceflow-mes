@@ -1,10 +1,15 @@
 
 import { PrismaClient } from '@prisma/client';
 
+// Import explicit hash function since users should not be plaintext
+import { hashPassword } from '../lib/auth';
+
 const prisma = new PrismaClient();
 
 async function main() {
     console.log('Seeding database...');
+    const hashedOperatorPassword = hashPassword('TempPass123!');
+    const hashedPlannerPassword = hashPassword('TempPass123!');
 
     // 1. Users
     const operator = await prisma.user.upsert({
@@ -13,6 +18,8 @@ async function main() {
         create: {
             username: 'operator',
             role: 'OPERATOR',
+            passwordHash: hashedOperatorPassword,
+            mustChangePassword: true,
         },
     });
 
@@ -22,6 +29,8 @@ async function main() {
         create: {
             username: 'planner',
             role: 'SUPERVISOR', // or PLANNER if you add that role
+            passwordHash: hashedPlannerPassword,
+            mustChangePassword: true,
         },
     });
 

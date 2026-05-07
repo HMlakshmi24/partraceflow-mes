@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { AndonService } from '@/lib/services/AndonService'
 import { prisma } from '@/lib/services/database'
+import { requireRole } from '@/lib/api-auth'
 
 export async function GET(request: NextRequest) {
   try {
@@ -29,6 +30,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const authError = requireRole(request, ['ADMIN', 'SUPERVISOR']);
+  if (authError) return authError;
+
   try {
     const body = await request.json()
     const { action, ...data } = body

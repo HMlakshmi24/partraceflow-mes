@@ -56,6 +56,17 @@ export const ACTION_BUTTONS: Record<string, { label: string; color: string; icon
     CANCELLED:   { label: 'Cancel Order',       color: '#ef4444', icon: 'x'           },
 };
 
+export const ORDER_ROLE_ACTION_MAP: Record<string, string[]> = {
+    RELEASED:    ['ADMIN', 'PLANNER', 'SUPERVISOR'],
+    IN_PROGRESS: ['ADMIN', 'OPERATOR', 'SUPERVISOR'],
+    QC_PENDING:  ['ADMIN', 'OPERATOR', 'SUPERVISOR', 'QC', 'QUALITY'],
+    APPROVED:    ['ADMIN', 'SUPERVISOR'],
+    REWORK:      ['ADMIN', 'SUPERVISOR', 'QC', 'QUALITY'],
+    COMPLETED:   ['ADMIN', 'SUPERVISOR'],
+    ON_HOLD:     ['ADMIN', 'SUPERVISOR', 'QC', 'QUALITY'],
+    CANCELLED:   ['ADMIN', 'SUPERVISOR', 'PLANNER'],
+};
+
 export function canTransition(from: string, to: string): boolean {
     return (VALID_TRANSITIONS[from] ?? []).includes(to);
 }

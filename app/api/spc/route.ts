@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
 import { SPCService } from '@/lib/services/SPCService';
+import { requireRole } from '@/lib/api-auth';
 
 export async function GET(req: NextRequest) {
     try {
@@ -48,6 +49,8 @@ export async function POST(req: NextRequest) {
         const { action } = body;
 
         if (action === 'add_measurement') {
+            const authError = requireRole(req, ['ADMIN', 'SUPERVISOR', 'OPERATOR', 'QC', 'QUALITY']);
+            if (authError) return authError;
             const { parameterId, value, machineId, taskId, operatorId } = body;
             if (!parameterId || value === undefined || !machineId) {
                 return NextResponse.json({ error: 'parameterId, value, machineId required' }, { status: 400 });
@@ -57,6 +60,8 @@ export async function POST(req: NextRequest) {
         }
 
         if (action === 'recalculate') {
+            const authError = requireRole(req, ['ADMIN', 'SUPERVISOR', 'QC', 'QUALITY']);
+            if (authError) return authError;
             const { parameterId, sampleCount } = body;
             if (!parameterId) return NextResponse.json({ error: 'parameterId required' }, { status: 400 });
             const limits = await SPCService.recalculateControlLimits(parameterId, sampleCount ?? 50);
@@ -64,6 +69,8 @@ export async function POST(req: NextRequest) {
         }
 
         if (action === 'create_parameter') {
+            const authError = requireRole(req, ['ADMIN', 'SUPERVISOR', 'QC', 'QUALITY']);
+            if (authError) return authError;
             const { parameterName, unit, machineId, nominalValue, upperSpecLimit, lowerSpecLimit } = body;
             if (!parameterName || !machineId) return NextResponse.json({ error: 'parameterName and machineId required' }, { status: 400 });
 
@@ -74,6 +81,8 @@ export async function POST(req: NextRequest) {
         }
 
         if (action === 'seed_demo') {
+            const authError = requireRole(req, ['ADMIN', 'SUPERVISOR']);
+            if (authError) return authError;
             const machines = await prisma.machine.findMany({ take: 2 });
             if (machines.length === 0) return NextResponse.json({ error: 'No machines found' }, { status: 404 });
 

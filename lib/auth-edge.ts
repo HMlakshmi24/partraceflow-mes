@@ -16,6 +16,10 @@ export async function verifyEdgeToken(
 ): Promise<{ userId: string; username: string; role: string } | null> {
     try {
         const secret = process.env.SESSION_SECRET ?? 'mes-dev-secret-CHANGE-IN-PRODUCTION';
+        // H5: Reject all sessions in production if SESSION_SECRET is the insecure default
+        if (process.env.NODE_ENV === 'production' && secret === 'mes-dev-secret-CHANGE-IN-PRODUCTION') {
+            throw new Error('[MES] SESSION_SECRET is not configured — set it in Vercel environment variables.');
+        }
         const [encoded, sig] = token.split('.');
         if (!encoded || !sig) return null;
 

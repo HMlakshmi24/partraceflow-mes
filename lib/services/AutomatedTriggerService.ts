@@ -514,13 +514,6 @@ export class AutomatedTriggerService {
   }
   
   private static async executeSendNotificationAction(config: any): Promise<void> {
-    // This would integrate with a notification service
-    console.log('Notification:', {
-      recipients: config.recipients,
-      message: config.message,
-      priority: config.priority
-    });
-    
     await prisma.systemEvent.create({
       data: {
         eventType: 'NOTIFICATION_SENT',
@@ -530,9 +523,6 @@ export class AutomatedTriggerService {
   }
   
   private static async executeCreateTaskAction(config: any): Promise<void> {
-    // This would create a new workflow task
-    console.log('Create task:', config);
-    
     await prisma.systemEvent.create({
       data: {
         eventType: 'TASK_CREATED',

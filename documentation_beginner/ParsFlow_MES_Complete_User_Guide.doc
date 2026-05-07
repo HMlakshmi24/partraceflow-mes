@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ParsFlow MES Complete User Guide</title>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  color: #1f2937;
+  line-height: 1.6;
+  margin: 32px;
+}
+h1, h2, h3 {
+  color: #0f172a;
+}
+h1 {
+  font-size: 30px;
+  margin-bottom: 8px;
+}
+h2 {
+  margin-top: 32px;
+  border-bottom: 2px solid #dbeafe;
+  padding-bottom: 6px;
+}
+h3 {
+  margin-top: 22px;
+}
+p, li {
+  font-size: 14px;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0 22px;
+}
+th, td {
+  border: 1px solid #cbd5e1;
+  padding: 10px;
+  vertical-align: top;
+  text-align: left;
+}
+th {
+  background: #eff6ff;
+}
+.hero {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  padding: 18px 20px;
+  border-radius: 10px;
+}
+.caption {
+  font-size: 12px;
+  color: #475569;
+  margin-top: 6px;
+}
+.screenshot {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  margin-top: 12px;
+}
+.box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  padding: 14px 16px;
+  border-radius: 10px;
+}
+.code {
+  font-family: Consolas, monospace;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+}
+ul {
+  margin-top: 8px;
+}
+</style>
+</head>
+<body>
+
+<h1>ParsFlow MES Complete User Guide</h1>
+<p><strong>Audience:</strong> Beginners, operators, supervisors, quality users, planners, management, and anyone who does not know MES yet.</p>
+
+<div class="hero">
+  <p><strong>Purpose of this guide:</strong> After reading this document, a beginner should understand what ParsFlow MES is, why it is useful, how the system modules are connected, how to log in, what each page does, what a pipe spool is, how the hardware connection works, and how to navigate the product end to end.</p>
+</div>
+
+<h2>1. Introduction to ParsFlow</h2>
+<p>ParsFlow MES is a Manufacturing Execution System built to control, track, and improve shop-floor operations in real time. It combines production planning, machine visibility, operator execution, quality control, traceability, workflow approvals, RFID integration, machine connectivity, and pipe spool lifecycle tracking in one system.</p>
+
+<h3>Why ParsFlow is better than a typical vendor solution</h3>
+<table>
+  <tr>
+    <th>Area</th>
+    <th>Why ParsFlow is stronger</th>
+  </tr>
+  <tr>
+    <td>Single platform</td>
+    <td>Instead of splitting planning, execution, quality, traceability, and approvals into separate tools, ParsFlow keeps them connected in one application.</td>
+  </tr>
+  <tr>
+    <td>Real-time visibility</td>
+    <td>Dashboard, Andon, event streams, and telemetry make production status visible immediately rather than after manual updates.</td>
+  </tr>
+  <tr>
+    <td>Hardware flexibility</td>
+    <td>The system is hardware-agnostic. RFID readers, PLC gateways, MQTT feeds, and external systems can connect through APIs and gateway services rather than vendor lock-in.</td>
+  </tr>
+  <tr>
+    <td>Traceability</td>
+    <td>Each event can be tied back to machine, operator, part, spool, lot, inspection, and approval history.</td>
+  </tr>
+  <tr>
+    <td>Pipe spool specialization</td>
+    <td>ParsFlow includes a dedicated spool lifecycle with weld records, NDE, pressure testing, NCR, ITP, RFID lookup, drawing register, yard tracking, and reporting.</td>
+  </tr>
+  <tr>
+    <td>User adoption</td>
+    <td>The frontend is direct and visual. Even users unfamiliar with MES can follow role-based pages such as Dashboard, Planner, Operator, Quality, and Pipe Spool.</td>
+  </tr>
+</table>
+
+<h2>2. What is MES?</h2>
+<p>MES means Manufacturing Execution System. It sits between business planning systems and physical factory execution. In simple words, MES answers these questions:</p>
+<ul>
+  <li>What should be produced?</li>
+  <li>Who should do the work?</li>
+  <li>Which machine should run it?</li>
+  <li>What happened on the floor?</li>
+  <li>Did quality checks pass?</li>
+  <li>Can we trace the product later?</li>
+  <li>Did any machine, workflow, or approval block the job?</li>
+</ul>
+
+<div class="box">
+  <p><strong>Simple beginner definition:</strong> ERP decides the business plan. MES manages the work as it actually happens in the factory.</p>
+</div>
+
+<h2>3. What is inside ParsFlow MES?</h2>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Main purpose</th>
+    <th>Linked with</th>
+  </tr>
+  <tr>
+    <td>Dashboard</td>
+    <td>Live KPI view of OEE, machine status, alerts, and production summary</td>
+    <td>Planner, Andon, Quality, machine telemetry</td>
+  </tr>
+  <tr>
+    <td>Planner</td>
+    <td>Create and review production work orders and schedules</td>
+    <td>Operator, workflows, production execution</td>
+  </tr>
+  <tr>
+    <td>Operator</td>
+    <td>Run tasks on the shop floor and record execution</td>
+    <td>Planner, dashboard, traceability, quality</td>
+  </tr>
+  <tr>
+    <td>Quality</td>
+    <td>Capture inspection results and failures</td>
+    <td>Traceability, spool module, NCR, dashboard</td>
+  </tr>
+  <tr>
+    <td>Traceability</td>
+    <td>Search backward and forward history of a lot, serial, or product</td>
+    <td>Operator, quality, RFID, spool records</td>
+  </tr>
+  <tr>
+    <td>Andon</td>
+    <td>Visual board for active issues and escalation</td>
+    <td>Dashboard, operators, downtime, maintenance</td>
+  </tr>
+  <tr>
+    <td>Factory Map</td>
+    <td>Show machine layout and status in a visual map</td>
+    <td>Dashboard, telemetry, downtime</td>
+  </tr>
+  <tr>
+    <td>Maintenance</td>
+    <td>Machine health prediction and maintenance recommendations</td>
+    <td>Telemetry, Andon, dashboard</td>
+  </tr>
+  <tr>
+    <td>SPC</td>
+    <td>Statistical process control and trend analysis</td>
+    <td>Quality and process monitoring</td>
+  </tr>
+  <tr>
+    <td>Recipes</td>
+    <td>Manage process recipes, versions, approvals, and machine assignments</td>
+    <td>Production and machine setup</td>
+  </tr>
+  <tr>
+    <td>Shifts</td>
+    <td>Shift tracking and handover</td>
+    <td>Dashboard, operator reporting</td>
+  </tr>
+  <tr>
+    <td>Audit</td>
+    <td>Review what happened and who changed what</td>
+    <td>All modules</td>
+  </tr>
+  <tr>
+    <td>Workflows</td>
+    <td>Create approval and process routing logic</td>
+    <td>Planner, tasks, approvals, quality gates</td>
+  </tr>
+  <tr>
+    <td>Copilot</td>
+    <td>Ask questions about plant data</td>
+    <td>Dashboard, quality, downtime, operations</td>
+  </tr>
+  <tr>
+    <td>Settings and Connectors</td>
+    <td>Configure integrations and connection visibility</td>
+    <td>ERP, PLC, RFID, MQTT, database</td>
+  </tr>
+  <tr>
+    <td>Pipe Spool</td>
+    <td>Manage fabrication and quality lifecycle of pipe spools</td>
+    <td>RFID, quality, documents, reports, approvals</td>
+  </tr>
+</table>
+
+<h2>4. How the modules are interlinked</h2>
+<p>The biggest strength of ParsFlow is that pages are not isolated. Data flows from one area to another.</p>
+<ol>
+  <li>Planner defines the work order and schedule.</li>
+  <li>Operator executes the work and creates shop-floor records.</li>
+  <li>Quality checks the output and stores pass or fail decisions.</li>
+  <li>Traceability uses those records to build a complete history.</li>
+  <li>Dashboard summarizes all this into KPIs and alerts.</li>
+  <li>Andon highlights urgent production issues.</li>
+  <li>Maintenance uses telemetry and health predictions for corrective action.</li>
+  <li>Workflows add approval logic when a process needs sign-off.</li>
+  <li>Connectors allow machines, RFID readers, PLCs, and ERP systems to feed live data into the same system.</li>
+</ol>
+
+<div class="box">
+  <p><strong>Important beginner idea:</strong> A dashboard card is usually not just a number. It is a summary of data collected from planner records, operator actions, machine events, quality checks, and hardware integration.</p>
+</div>
+
+<h2>5. How to start and log in</h2>
+<h3>Run the system locally</h3>
+<div class="code">cd .\mes-app
+npm install
+npx prisma generate
+npx prisma db push
+npx prisma db seed
+npm run dev</div>
+
+<p>Open <strong>http://localhost:3000</strong> in the browser.</p>
+
+<h3>Demo login accounts</h3>
+<table>
+  <tr>
+    <th>Username</th>
+    <th>Password</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td>admin</td>
+    <td>admin123</td>
+    <td>Administrator</td>
+  </tr>
+  <tr>
+    <td>SUPV-LEE</td>
+    <td>demo</td>
+    <td>Supervisor</td>
+  </tr>
+  <tr>
+    <td>OP-JOHN</td>
+    <td>demo</td>
+    <td>Operator</td>
+  </tr>
+  <tr>
+    <td>QC-SARAH</td>
+    <td>demo</td>
+    <td>Quality Inspector</td>
+  </tr>
+</table>
+
+<img class="screenshot" src="screenshots/01-login.png" alt="Login page">
+<div class="caption">Frontend screenshot: login page with quick role sign-in cards.</div>
+
+<h2>6. Dashboard overview</h2>
+<p>The dashboard is the operational command center. It gives supervisors and managers a real-time understanding of performance, quality, alerts, and machine condition.</p>
+
+<h3>What the dashboard usually answers</h3>
+<ul>
+  <li>How is production performing right now?</li>
+  <li>What is the OEE status?</li>
+  <li>Which machines are running, down, or in maintenance?</li>
+  <li>Are there active Andon alerts?</li>
+  <li>Are there quality or downtime issues?</li>
+  <li>Which areas need immediate action?</li>
+</ul>
+
+<img class="screenshot" src="screenshots/02-dashboard.png" alt="Dashboard page">
+<div class="caption">Frontend screenshot: live dashboard with KPI summary, machine overview, OEE, alerts, and operational shortcuts.</div>
+
+<h2>7. Beginner page-by-page explanation</h2>
+
+<h3>7.1 Planner</h3>
+<p>The Planner page is where production work is organized. It helps define work orders, due dates, schedules, machine alignment, and the next jobs that the floor should execute.</p>
+
+<h3>7.2 Operator</h3>
+<p>The Operator page is the execution workspace. Operators see their tasks, record actions, and update actual production progress.</p>
+
+<h3>7.3 Quality</h3>
+<p>The Quality page records inspection results. This is where failed inspections, pass decisions, and quality checks become formal system data instead of paper notes.</p>
+
+<h3>7.4 Traceability</h3>
+<p>The Traceability page answers questions such as: Which lot was used, which machine touched the part, who operated it, and what inspection result was recorded?</p>
+
+<h3>7.5 Andon</h3>
+<p>Andon is the visible issue board. It shows active shop-floor problems, downtime, escalations, and urgent events needing attention.</p>
+
+<h3>7.6 Factory Map</h3>
+<p>The Factory Map shows machine or work-center positions in a visual plant layout and helps users see machine health at a glance.</p>
+
+<h3>7.7 Maintenance</h3>
+<p>The Maintenance page focuses on prediction, health scores, and maintenance recommendations based on telemetry or machine conditions.</p>
+
+<h3>7.8 SPC</h3>
+<p>SPC means Statistical Process Control. It is used to see whether the process is stable, drifting, or producing abnormal variation.</p>
+
+<h3>7.9 Recipes</h3>
+<p>Recipes store controlled process settings, version history, approvals, and machine assignments. This is useful where machines need approved setpoints or standard process instructions.</p>
+
+<h3>7.10 Workflows and Workflow Designer</h3>
+<p>Workflows define who approves what, which steps happen next, and what routing logic must be followed. They are useful for approval chains and controlled process execution.</p>
+
+<h3>7.11 Settings and Connectors</h3>
+<p>This area helps users and administrators understand system integration points such as PostgreSQL, ERP, PLC, RFID, and MQTT connections.</p>
+
+<img class="screenshot" src="screenshots/04-connectors.png" alt="Connectors page">
+<div class="caption">Frontend screenshot: connectors page showing hardware and enterprise integrations such as PLC, RFID, MQTT, and ERP.</div>
+
+<h2>8. Pipe spool guide for complete beginners</h2>
+<h3>What is a spool?</h3>
+<p>A pipe spool is a prefabricated section of pipe assembly that may include pipe, fittings, flanges, elbows, and weld joints. In industrial projects, spools are fabricated, inspected, tested, stored, issued, installed, and finally handed over with complete records.</p>
+
+<div class="box">
+  <p><strong>Simple beginner definition:</strong> A spool is not just a pipe. It is a controlled assembly unit with engineering identity, weld records, inspections, test records, and status tracking.</p>
+</div>
+
+<h3>Why spool management matters</h3>
+<ul>
+  <li>Each spool may require material traceability.</li>
+  <li>Each weld may need welder and procedure history.</li>
+  <li>NDE and pressure tests must be linked back to the spool.</li>
+  <li>NCRs and quality holds must block incorrect release.</li>
+  <li>Final handover often requires document packages for the customer.</li>
+</ul>
+
+<h3>Spool lifecycle in ParsFlow</h3>
+<p>FABRICATING -> RECEIVED -> IN_STORAGE -> ISSUED -> FIT_UP -> WELDED -> NDE_PENDING -> NDE_CLEAR -> PRESSURE_TESTED -> COMPLETE</p>
+
+<h3>Pipe spool dashboard screenshot</h3>
+<img class="screenshot" src="screenshots/03-pipe-spool.png" alt="Pipe spool page">
+<div class="caption">Frontend screenshot: pipe spool dashboard with spool-specific KPIs and direct links into spool operations.</div>
+
+<h3>Pipe spool options and what each one means</h3>
+<table>
+  <tr>
+    <th>Option</th>
+    <th>What it means</th>
+  </tr>
+  <tr>
+    <td>Pipe Lines</td>
+    <td>Engineering-level view of pipe lines and the spool groups connected to them.</td>
+  </tr>
+  <tr>
+    <td>Spool Tracker</td>
+    <td>Main spool list showing spool identity, current status, location, and RFID tag mapping.</td>
+  </tr>
+  <tr>
+    <td>Joints and Welds</td>
+    <td>Track joints, welding completion, welder identity, and weld-related execution details.</td>
+  </tr>
+  <tr>
+    <td>Inspections</td>
+    <td>Capture inspection checklist execution and record pass, fail, hold, or witness points.</td>
+  </tr>
+  <tr>
+    <td>Weld Testing (NDE)</td>
+    <td>Store non-destructive examination results such as radiography or ultrasonic testing.</td>
+  </tr>
+  <tr>
+    <td>Issues and Defects (NCR)</td>
+    <td>Raise and manage non-conformance reports for quality problems.</td>
+  </tr>
+  <tr>
+    <td>Pressure Tests</td>
+    <td>Record hydrotest or pneumatic test activity and its result.</td>
+  </tr>
+  <tr>
+    <td>Storage Yard</td>
+    <td>Track where spools are physically placed before issue or installation.</td>
+  </tr>
+  <tr>
+    <td>Reports</td>
+    <td>Generate handover-style reports and spool documentation packages.</td>
+  </tr>
+  <tr>
+    <td>RFID Scanner</td>
+    <td>Look up a spool by RFID and speed up field or yard identification.</td>
+  </tr>
+  <tr>
+    <td>Inspection Templates</td>
+    <td>Create and manage ITP templates for structured inspection requirements.</td>
+  </tr>
+  <tr>
+    <td>Drawing Register</td>
+    <td>Store and search the engineering drawings that define the spool.</td>
+  </tr>
+  <tr>
+    <td>Spool Passport</td>
+    <td>Full history page for one spool showing status, joints, welds, inspections, NCRs, documents, and approvals.</td>
+  </tr>
+</table>
+
+<h3>Important spool terms</h3>
+<table>
+  <tr>
+    <th>Term</th>
+    <th>Meaning</th>
+  </tr>
+  <tr>
+    <td>Joint</td>
+    <td>A connection point that usually requires fit-up and welding.</td>
+  </tr>
+  <tr>
+    <td>Weld</td>
+    <td>The actual welded connection created at a joint.</td>
+  </tr>
+  <tr>
+    <td>NDE</td>
+    <td>Non-Destructive Examination such as RT, UT, MT, or PT to validate weld quality.</td>
+  </tr>
+  <tr>
+    <td>NCR</td>
+    <td>Non-Conformance Report raised when a defect or non-compliance is found.</td>
+  </tr>
+  <tr>
+    <td>ITP</td>
+    <td>Inspection and Test Plan that defines what inspections and witnesses are required.</td>
+  </tr>
+  <tr>
+    <td>RFID</td>
+    <td>Electronic tagging used to identify and locate spools automatically.</td>
+  </tr>
+  <tr>
+    <td>Pressure Test</td>
+    <td>A formal test proving the spool can safely hold pressure.</td>
+  </tr>
+</table>
+
+<h2>9. End-to-end operational example</h2>
+<ol>
+  <li>A planner schedules a job or spool-related work.</li>
+  <li>The operator starts and completes physical work.</li>
+  <li>The quality user records inspection or weld testing results.</li>
+  <li>If a failure occurs, an NCR is raised.</li>
+  <li>If required, approvals and workflow tasks are completed.</li>
+  <li>Traceability records every step.</li>
+  <li>Dashboard and Andon reflect the status in real time.</li>
+  <li>RFID, PLC, or MQTT events can automatically update the system if connected.</li>
+  <li>Reports and spool passports provide final auditable documentation.</li>
+</ol>
+
+<h2>10. Hardware connection guide</h2>
+<p>ParsFlow is designed to connect to factory hardware without forcing one locked vendor stack.</p>
+
+<h3>Hardware and integration types shown in the system</h3>
+<table>
+  <tr>
+    <th>Integration</th>
+    <th>Purpose</th>
+  </tr>
+  <tr>
+    <td>PLC</td>
+    <td>Reads machine signals such as speed, alarms, temperature, or state changes.</td>
+  </tr>
+  <tr>
+    <td>RFID Reader</td>
+    <td>Reads tagged items or spools for automatic tracking and status change.</td>
+  </tr>
+  <tr>
+    <td>MQTT Broker</td>
+    <td>Moves lightweight telemetry and event messages between edge devices and applications.</td>
+  </tr>
+  <tr>
+    <td>ERP</td>
+    <td>Shares master data, orders, inventory, or business transactions with MES.</td>
+  </tr>
+  <tr>
+    <td>Database</td>
+    <td>Stores the application data that supports all operational pages.</td>
+  </tr>
+</table>
+
+<h3>Recommended hardware connection pattern</h3>
+<ol>
+  <li>Connect field devices to an edge gateway near the machine or reader.</li>
+  <li>The gateway speaks the hardware protocol such as OPC-UA, Modbus/TCP, or LLRP.</li>
+  <li>The gateway sends normalized events to the MES using REST or MQTT.</li>
+  <li>ParsFlow receives those events and maps them to machine, spool, tag, or workflow records.</li>
+  <li>The dashboard, traceability, Andon, and spool pages update from the same event flow.</li>
+</ol>
+
+<h3>Example RFID flow</h3>
+<ol>
+  <li>A reader scans a spool tag.</li>
+  <li>The reader or gateway posts data to the RFID ingestion endpoint.</li>
+  <li>The system resolves the tag to the correct spool.</li>
+  <li>The spool status or location changes automatically based on the reader location.</li>
+  <li>The event becomes visible in traceability and operational pages.</li>
+</ol>
+
+<h3>Example PLC flow</h3>
+<ol>
+  <li>The PLC emits data such as machine temperature, alarm state, speed, or running state.</li>
+  <li>An OPC-UA or similar gateway normalizes the point names.</li>
+  <li>The gateway publishes the data to MES or MQTT.</li>
+  <li>ParsFlow updates machine status, events, or maintenance indicators.</li>
+  <li>Dashboard and Andon show the operational impact.</li>
+</ol>
+
+<h2>11. Recommended beginner learning order</h2>
+<ol>
+  <li>Read this introduction section fully.</li>
+  <li>Log in using the administrator or supervisor account.</li>
+  <li>Open the Dashboard first.</li>
+  <li>Open Planner to understand production preparation.</li>
+  <li>Open Operator to understand execution.</li>
+  <li>Open Quality and Traceability to understand control and history.</li>
+  <li>Open Pipe Spool if your plant uses spool fabrication or installation control.</li>
+  <li>Open Connectors to understand how hardware and external systems fit in.</li>
+</ol>
+
+<h2>12. Final summary</h2>
+<p>ParsFlow MES is not just a collection of screens. It is a connected operational system. Planner defines work, operators execute it, quality validates it, traceability records it, dashboard summarizes it, Andon escalates it, maintenance protects machine health, workflows control approvals, and connectors bridge the real factory to the digital system.</p>
+
+<p>For a beginner, the most important concepts to remember are:</p>
+<ul>
+  <li>MES controls factory execution, not just reporting.</li>
+  <li>Every page has a purpose, and the pages are linked together through shared events and records.</li>
+  <li>A pipe spool is a tracked assembly with engineering, welding, inspection, and handover data.</li>
+  <li>Hardware integration makes the system more automatic and more reliable.</li>
+  <li>ParsFlow is strong because it combines execution, traceability, quality, workflows, and hardware integration in one platform.</li>
+</ul>
+
+</body>
+</html>

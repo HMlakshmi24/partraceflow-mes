@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
+import { requireSpoolAction } from '@/lib/spoolRBAC';
 
 export async function GET(req: NextRequest) {
   try {
@@ -23,6 +24,12 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { action, id, ids, ...data } = body;
+
+    // Creating a new alert requires QC/QUALITY/SUPERVISOR/ADMIN
+    if (action === 'create') {
+      const guard = await requireSpoolAction('RAISE_NCR');
+      if (guard instanceof NextResponse) return guard;
+    }
 
     if (action === 'mark_read' && id) {
       await prisma.spoolAlert.update({ where: { id }, data: { read: true, readAt: new Date() } });

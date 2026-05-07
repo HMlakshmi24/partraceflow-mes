@@ -1,11 +1,11 @@
 {
   "framework": "nextjs",
-  "buildCommand": "npx prisma generate && npx prisma db push --accept-data-loss && next build",
+  "buildCommand": "npx prisma generate && next build",
   "installCommand": "npm install",
   "functions": {
     "app/api/**": {
       "maxDuration": 30
     }
   },
-  "crons": [{ "path": "/api/cron", "schedule": "*/5 * * * *" }]
+  "crons": [{ "path": "/api/cron", "schedule": "0 0 * * *" }]
 }

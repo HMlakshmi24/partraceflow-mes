@@ -21,7 +21,7 @@ function getSecret(): string {
     return secret;
 }
 
-const SESSION_EXPIRY_SECS = 8 * 60 * 60; // 8 hours
+const SESSION_EXPIRY_SECS = 1800; // 30 minutes
 const SCRYPT_N = 16384, SCRYPT_R = 8, SCRYPT_P = 1, KEY_LEN = 64;
 
 // ─── Password ──────────────────────────────────────────────────────────────

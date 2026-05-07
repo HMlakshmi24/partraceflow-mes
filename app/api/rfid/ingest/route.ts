@@ -20,12 +20,12 @@ export async function POST(req: NextRequest) {
     const raw = await req.json();
     const parsed = RFIDIngestSchema.safeParse(raw);
     if (!parsed.success) return validationError(parsed.error);
-    const { tagId, readerId, timestamp, readerName, location, rssi } = parsed.data;
+    const { tagId, readerId, timestamp, location, rssi } = parsed.data;
 
     const ts = timestamp ? new Date(timestamp) : new Date();
 
     // Register reader heartbeat
-    heartbeat(readerId, readerName, location);
+    heartbeat(readerId);
 
 // Dedup: ignore if same reader+tag within 3 seconds
     if (isDuplicate(readerId, tagId)) {
@@ -76,11 +76,11 @@ async function autoAdvanceFromReader(spoolId: string, currentStatus: string, loc
   const [, { from, to }] = rule;
   if (!from.includes(currentStatus)) return;
 
-  const { canTransition, SPOOL_TRANSITIONS } = await import('@/lib/spoolTransitions');
-  if (!canTransition(SPOOL_TRANSITIONS, currentStatus, to)) return;
+  const spoolMod = await import('@/lib/spoolTransitions');
+  if (!spoolMod.canTransition(spoolMod.SPOOL_TRANSITIONS, currentStatus, to)) return;
 
   await prisma.pipeSpool.update({
     where: { id: spoolId },
     data: { status: to },
-  }).catch(() => {});
+  }).catch((e) => { console.warn('[rfid] spool status update failed:', e?.message); });
 }

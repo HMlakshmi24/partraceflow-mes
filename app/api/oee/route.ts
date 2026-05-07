@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { OEEService } from '@/lib/services/OEEService'
 import { prisma } from '@/lib/services/database'
+import { requireRole } from '@/lib/api-auth'
 
 export async function GET(request: NextRequest) {
+  const authError = requireRole(request, ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'QC', 'QUALITY']);
+  if (authError) return authError;
   try {
     const { searchParams } = new URL(request.url)
     const machineId = searchParams.get('machineId')
     const plantId = searchParams.get('plantId')
-    const hoursBack = parseInt(searchParams.get('hours') ?? '8')
+    const hoursBack = Math.max(1, parseInt(searchParams.get('hours') ?? '8') || 8)
 
     const toDate = new Date()
     const fromDate = new Date(toDate.getTime() - hoursBack * 3600000)

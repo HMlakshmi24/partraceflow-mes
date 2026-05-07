@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getManufacturingOrders, getProducts } from '@/lib/actions/erp';
+import { requireRole } from '@/lib/api-auth';
 
 /**
  * Orders API
@@ -7,7 +8,10 @@ import { getManufacturingOrders, getProducts } from '@/lib/actions/erp';
  * Returns products and manufacturing orders required by the Planner UI.
  * Keep this endpoint minimal — complex business logic belongs in `lib/actions`.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+    const authError = requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR', 'OPERATOR', 'QC', 'QUALITY']);
+    if (authError) return authError;
+
     try {
         const [products, orders] = await Promise.all([
             getProducts(),
@@ -16,6 +20,7 @@ export async function GET() {
 
         return NextResponse.json({ products, orders });
     } catch (error) {
-        return NextResponse.json({ products: [], orders: [] }, { status: 200 });
+        console.error('[GET /api/orders]', error);
+        return NextResponse.json({ error: 'Failed to fetch orders' }, { status: 500 });
     }
 }

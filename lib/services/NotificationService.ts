@@ -39,20 +39,16 @@ export class NotificationService {
           await this.sendWebhook(config.url, notification)
           break
         case 'EMAIL':
-          // Production: integrate nodemailer or SendGrid
-          console.log(`[Notification] Email to ${config.to}: ${input.subject}`)
+          // Integrate nodemailer or SendGrid
           break
         case 'SMS':
-          // Production: integrate Twilio or AWS SNS
-          console.log(`[Notification] SMS to ${config.to}: ${input.body}`)
+          // Integrate Twilio or AWS SNS
           break
         case 'ANDON':
-          // Production: publish to MQTT andon topic
-          console.log(`[Notification] Andon display update: ${input.subject}`)
+          // Publish to MQTT andon topic
           break
         case 'MOBILE_PUSH':
-          // Production: integrate Firebase FCM
-          console.log(`[Notification] Push to ${config.deviceToken}: ${input.subject}`)
+          // Integrate Firebase FCM
           break
       }
 

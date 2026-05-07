@@ -262,6 +262,7 @@ function DashboardContent() {
     const [resolveSuccess, setResolveSuccess] = useState(false);
     const [triggeringDemo, setTriggeringDemo] = useState(false);
     const [currentTime, setCurrentTime] = useState(new Date());
+    const [plcTelemetry, setPlcTelemetry] = useState<Record<string, { temp: number; cycleTime: number; vibration: number }>>({});
     const eventSourceRef = useRef<EventSource | null>(null);
     const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -288,6 +289,31 @@ function DashboardContent() {
         const t = setInterval(() => setCurrentTime(new Date()), 60000);
         return () => clearInterval(t);
     }, []);
+
+    // Fake PLC telemetry — seeded from machine id, jittered every 5s
+    useEffect(() => {
+        const seed = (id: string) => id.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+        const gen = (machines: typeof data.machines) => {
+            const next: typeof plcTelemetry = {};
+            machines.forEach(m => {
+                const s = seed(m.id);
+                const prev = plcTelemetry[m.id];
+                if (m.status === 'running') {
+                    next[m.id] = {
+                        temp:      Math.round(((prev?.temp      ?? (52 + s % 30)) + (Math.random() - 0.5) * 2) * 10) / 10,
+                        cycleTime: Math.round(((prev?.cycleTime ?? (18 + s % 14)) + (Math.random() - 0.5) * 1) * 10) / 10,
+                        vibration: Math.round(((prev?.vibration ?? (0.4 + (s % 8) * 0.1)) + (Math.random() - 0.5) * 0.05) * 100) / 100,
+                    };
+                }
+            });
+            return next;
+        };
+        const tick = () => setPlcTelemetry(gen(data.machines));
+        tick();
+        const t = setInterval(tick, 5000);
+        return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [data.machines]);
 
     // Initial load + periodic refresh every 15s
     useEffect(() => {
@@ -659,6 +685,26 @@ function DashboardContent() {
                                             {(machine.status === 'running' || machine.status === 'warning') && machine.oee > 0 && (
                                                 <div style={{ fontSize: '0.78rem', color: 'var(--muted-foreground)', marginTop: '4px' }}>
                                                     OEE: <strong style={{ color: oeeColor(machine.oee) }}>{machine.oee}%</strong>
+                                                </div>
+                                            )}
+
+                                            {/* PLC telemetry — simulated sensor readings for running machines */}
+                                            {machine.status === 'running' && plcTelemetry[machine.id] && (
+                                                <div style={{ display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap' }}>
+                                                    {[
+                                                        { label: '🌡', value: `${plcTelemetry[machine.id].temp}°C` },
+                                                        { label: '⏱', value: `${plcTelemetry[machine.id].cycleTime}s` },
+                                                        { label: '📳', value: `${plcTelemetry[machine.id].vibration}g` },
+                                                    ].map(s => (
+                                                        <span key={s.label} style={{
+                                                            fontSize: '0.68rem', fontWeight: 700,
+                                                            color: 'var(--muted-foreground)',
+                                                            background: 'var(--card-border)',
+                                                            borderRadius: '4px', padding: '1px 5px',
+                                                        }}>
+                                                            {s.label} {s.value}
+                                                        </span>
+                                                    ))}
                                                 </div>
                                             )}
 

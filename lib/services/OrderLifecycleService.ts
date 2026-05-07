@@ -1,17 +1,8 @@
 import { prisma } from '@/lib/services/database';
-import { canTransition, getTransitionError, STATUS_LABELS, getNextActions } from '@/lib/orderStateMachine';
+import { canTransition, getTransitionError, STATUS_LABELS, getNextActions, ORDER_ROLE_ACTION_MAP } from '@/lib/orderStateMachine';
 import { NotificationService } from '@/lib/services/NotificationService';
 
-export const ORDER_ROLE_ACTION_MAP: Record<string, string[]> = {
-  RELEASED: ['ADMIN', 'PLANNER', 'SUPERVISOR'],
-  IN_PROGRESS: ['ADMIN', 'OPERATOR', 'SUPERVISOR'],
-  QC_PENDING: ['ADMIN', 'OPERATOR', 'SUPERVISOR', 'QC', 'QUALITY'],
-  APPROVED: ['ADMIN', 'SUPERVISOR'],
-  REWORK: ['ADMIN', 'SUPERVISOR', 'QC', 'QUALITY'],
-  COMPLETED: ['ADMIN', 'SUPERVISOR'],
-  ON_HOLD: ['ADMIN', 'SUPERVISOR', 'QC', 'QUALITY'],
-  CANCELLED: ['ADMIN', 'SUPERVISOR', 'PLANNER'],
-};
+export { ORDER_ROLE_ACTION_MAP };
 
 type TransitionParams = {
   orderId: string;
@@ -57,6 +48,33 @@ export class OrderLifecycleService {
         throw new Error(
           `Role ${params.role} cannot set order to ${STATUS_LABELS[params.newStatus] ?? params.newStatus}. Required: ${allowedRoles.join(', ')}.`,
         );
+      }
+    }
+
+    // Block QC_PENDING if any workflow tasks are still incomplete.
+    // Applies to both manual "Send to QC" and QC PASS submissions from the quality page.
+    // Only enforced when a workflow instance exists — demo orders without workflows are unaffected.
+    if (params.newStatus === 'QC_PENDING') {
+      const hasInstance = await prisma.workflowInstance.count({
+        where: { workOrderId: current.id, status: { not: 'CANCELLED' } },
+      });
+      if (hasInstance > 0) {
+        const activeInstances = await prisma.workflowInstance.findMany({
+          where: { workOrderId: current.id, status: { not: 'CANCELLED' } },
+          select: { id: true },
+        });
+        const activeInstanceIds = activeInstances.map(i => i.id);
+        const incompleteTasks = await prisma.workflowTask.count({
+          where: {
+            instanceId: { in: activeInstanceIds },
+            status: { notIn: ['COMPLETED', 'SKIPPED'] },
+          },
+        });
+        if (incompleteTasks > 0) {
+          throw new Error(
+            `Cannot move to QC — ${incompleteTasks} workflow task(s) are not yet completed.`,
+          );
+        }
       }
     }
 
@@ -245,29 +263,79 @@ export class OrderLifecycleService {
     const order = await prisma.workOrder.findUnique({ where: { id: params.workOrderId } });
     if (!order) throw new Error('Order not found');
 
+    // H3: Guard — QC cannot be submitted on terminal or irrelevant states
+    if (['COMPLETED', 'CANCELLED'].includes(order.status)) {
+      throw new Error(`Cannot submit QC for an order that is already ${order.status}`);
+    }
+
     const resultUpper = params.result.toUpperCase();
+
     if (resultUpper === 'FAIL' || resultUpper === 'REWORK') {
+      // Only allow FAIL if the order is in an active production state
+      if (!['IN_PROGRESS', 'QC_PENDING', 'RELEASED', 'REWORK'].includes(order.status)) {
+        throw new Error(`Cannot record QC failure — order is ${order.status}`);
+      }
+
       await this.transitionOrder({
         orderId: order.id,
         newStatus: 'REWORK',
         performedBy: params.performedBy,
         role: 'SYSTEM',
         userId: params.userId,
-        notes: params.notes ?? params.defectType ?? 'QC failed - rework required',
+        notes: params.notes ?? params.defectType ?? 'QC failed — rework required',
         action: 'QC_RESULT',
         enforceRole: false,
       });
+
+      // C1: Reset all COMPLETED workflow tasks back to PENDING so operators can re-execute them.
+      // Record how many rework cycles have occurred for traceability.
+      const reworkCount = await prisma.orderActivity.count({
+        where: { orderId: order.id, action: 'QC_RESULT', toStatus: 'REWORK' },
+      });
+
+      const reworkInstances = await prisma.workflowInstance.findMany({
+        where: { workOrderId: order.id },
+        select: { id: true },
+      });
+      const reworkInstanceIds = reworkInstances.map(i => i.id);
+      await prisma.workflowTask.updateMany({
+        where: {
+          instanceId: { in: reworkInstanceIds },
+          status: 'COMPLETED',
+        },
+        data: {
+          status: 'PENDING',
+          startTime: null,
+          endTime: null,
+          operatorId: null,
+        },
+      });
+
+      await this.recordOrderNote({
+        orderId: order.id,
+        action: 'REWORK_RESET',
+        performedBy: 'system',
+        role: 'SYSTEM',
+        userId: params.userId,
+        notes: `Rework cycle #${reworkCount + 1}: all workflow tasks reset to PENDING for re-execution`,
+      });
+
       return 'REWORK';
     }
 
-    if (resultUpper === 'PASS' && ['IN_PROGRESS', 'RELEASED', 'REWORK'].includes(order.status)) {
+    if (resultUpper === 'PASS') {
+      // Only allow PASS from valid production or pending states
+      if (!['IN_PROGRESS', 'RELEASED', 'REWORK', 'QC_PENDING'].includes(order.status)) {
+        throw new Error(`Cannot record QC pass — order is ${order.status}`);
+      }
+
       await this.transitionOrder({
         orderId: order.id,
         newStatus: 'QC_PENDING',
         performedBy: params.performedBy,
         role: 'SYSTEM',
         userId: params.userId,
-        notes: params.notes ?? 'QC passed and awaiting supervisor approval',
+        notes: params.notes ?? 'QC inspection passed — awaiting supervisor approval',
         action: 'QC_RESULT',
         enforceRole: false,
       });

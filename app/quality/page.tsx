@@ -1,13 +1,12 @@
 'use client';
 
-import { CheckCircle, XCircle, Camera, Save, Clipboard, TrendingUp, ChevronDown } from 'lucide-react';
+import { CheckCircle, XCircle, Camera, Save, Clipboard, TrendingUp, ChevronDown, ShieldCheck, Award } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import styles from './quality.module.css';
 
 interface Measurements { diameter: string; weight: string; torque: string; }
 interface VisualChecks { surfaceFinish: boolean; colorMatch: boolean; labelAlignment: boolean; }
 
-// Spec limits for auto-validation
 const SPECS = {
     diameter: { min: 24.9, max: 25.1, unit: 'mm', placeholder: 'Spec: 25.0 ±0.1' },
     weight: { min: 135, max: 145, unit: 'g', placeholder: 'Spec: 140 ±5' },
@@ -20,6 +19,136 @@ function specStatus(field: keyof typeof SPECS, val: string): 'ok' | 'fail' | 'no
     if (isNaN(n)) return 'none';
     const s = SPECS[field];
     return n >= s.min && n <= s.max ? 'ok' : 'fail';
+}
+
+// ── Supervisor Approval Panel ──────────────────────────────────────────────
+// Shows orders in QC_PENDING state; SUPERVISOR/ADMIN can approve or send to REWORK.
+function SupervisorApprovalPanel({ onAction }: { onAction: () => void }) {
+    const [pendingOrders, setPendingOrders] = useState<any[]>([]);
+    const [approving, setApproving] = useState<string | null>(null);
+    const [role, setRole] = useState('');
+    const [username, setUsername] = useState('');
+
+    useEffect(() => {
+        // Get session role
+        fetch('/api/session').then(r => r.json()).then(d => {
+            setRole(d.role ?? '');
+            setUsername(d.username ?? 'supervisor');
+        }).catch(() => {});
+        // Load QC_PENDING orders
+        loadPending();
+    }, []);
+
+    function loadPending() {
+        fetch('/api/quality')
+            .then(r => r.json())
+            .then(d => {
+                const all: any[] = Array.isArray(d) ? d : [];
+                setPendingOrders(all.filter((o: any) => o.status === 'QC_PENDING' || o.status === 'APPROVED'));
+            })
+            .catch(() => {});
+    }
+
+    async function handleApproval(orderId: string, newStatus: 'APPROVED' | 'REWORK', notes?: string) {
+        setApproving(orderId + newStatus);
+        try {
+            const res = await fetch(`/api/orders/${orderId}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-mes-username': username,
+                    'x-mes-role': role,
+                },
+                body: JSON.stringify({ status: newStatus, notes: notes ?? (newStatus === 'APPROVED' ? 'Supervisor approved' : 'Supervisor rejected — rework required') }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                loadPending();
+                onAction();
+            } else {
+                alert(data.error ?? 'Failed');
+            }
+        } catch {
+            alert('Network error');
+        } finally {
+            setApproving(null);
+        }
+    }
+
+    async function handleComplete(orderId: string) {
+        setApproving(orderId + 'COMPLETED');
+        try {
+            const res = await fetch(`/api/orders/${orderId}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-mes-username': username,
+                    'x-mes-role': role,
+                },
+                body: JSON.stringify({ status: 'COMPLETED', notes: 'Order signed off and marked complete by supervisor' }),
+            });
+            if (res.ok) { loadPending(); onAction(); }
+            else { const d = await res.json(); alert(d.error ?? 'Failed'); }
+        } catch { alert('Network error'); }
+        finally { setApproving(null); }
+    }
+
+    const isSupervisor = ['ADMIN', 'SUPERVISOR'].includes(role);
+
+    if (!isSupervisor && pendingOrders.length === 0) return null;
+
+    return (
+        <div style={{ margin: '1rem 1rem 0', background: 'rgba(6,182,212,0.06)', border: '1px solid rgba(6,182,212,0.3)', borderRadius: '12px', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.85rem 1.25rem', borderBottom: pendingOrders.length > 0 ? '1px solid rgba(6,182,212,0.2)' : 'none' }}>
+                <ShieldCheck size={18} color="#06b6d4" />
+                <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#06b6d4' }}>
+                    Supervisor Approval Gate — {pendingOrders.length} order{pendingOrders.length !== 1 ? 's' : ''} awaiting sign-off
+                </span>
+                {!isSupervisor && <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: '#64748b' }}>Log in as SUPERVISOR or ADMIN to approve</span>}
+            </div>
+
+            {pendingOrders.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                    {pendingOrders.map((order: any, i: number) => (
+                        <div key={order.id} style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.85rem 1.25rem', borderTop: i > 0 ? '1px solid rgba(6,182,212,0.1)' : 'none', flexWrap: 'wrap' }}>
+                            <div style={{ flex: 1, minWidth: 200 }}>
+                                <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--foreground)', fontFamily: 'monospace' }}>{order.orderNumber}</div>
+                                <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '0.15rem' }}>{order.product?.name ?? 'Unknown product'}</div>
+                            </div>
+                            <span style={{ fontSize: '0.72rem', fontWeight: 700, background: 'rgba(6,182,212,0.15)', color: '#06b6d4', padding: '0.2rem 0.6rem', borderRadius: '999px' }}>QC PENDING</span>
+                            {isSupervisor ? (
+                                <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+                                    <button
+                                        onClick={() => handleApproval(order.id, 'APPROVED')}
+                                        disabled={!!approving}
+                                        style={{ padding: '0.45rem 1rem', borderRadius: '0.5rem', border: 'none', background: '#06b6d4', color: '#fff', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.35rem', opacity: approving ? 0.6 : 1 }}
+                                    >
+                                        <Award size={14} /> {approving === order.id + 'APPROVED' ? 'Approving…' : 'Approve'}
+                                    </button>
+                                    <button
+                                        onClick={() => handleComplete(order.id)}
+                                        disabled={!!approving}
+                                        style={{ padding: '0.45rem 1rem', borderRadius: '0.5rem', border: 'none', background: '#10b981', color: '#fff', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.35rem', opacity: approving ? 0.6 : 1 }}
+                                    >
+                                        <CheckCircle size={14} /> {approving === order.id + 'COMPLETED' ? 'Completing…' : 'Approve & Complete'}
+                                    </button>
+                                    <button
+                                        onClick={() => handleApproval(order.id, 'REWORK', 'Supervisor rejected — rework required')}
+                                        disabled={!!approving}
+                                        style={{ padding: '0.45rem 1rem', borderRadius: '0.5rem', border: '1px solid rgba(249,115,22,0.5)', background: 'rgba(249,115,22,0.1)', color: '#f97316', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', opacity: approving ? 0.6 : 1 }}
+                                    >
+                                        {approving === order.id + 'REWORK' ? 'Sending…' : 'Send to Rework'}
+                                    </button>
+                                </div>
+                            ) : (
+                                <span style={{ fontSize: '0.78rem', color: '#64748b', fontStyle: 'italic' }}>Requires SUPERVISOR role</span>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
 }
 
 export default function QualityGatePage() {
@@ -36,6 +165,15 @@ export default function QualityGatePage() {
     const [submitting, setSubmit] = useState(false);
     const [result, setResult] = useState<{ success: boolean; message: string; orderStatus?: string } | null>(null);
     const [history, setHistory] = useState<any[]>([]);
+    const [approvalKey, setApprovalKey] = useState(0); // bump to force approval panel refresh
+
+    function reloadOrders() {
+        fetch('/api/quality')
+            .then(r => r.json())
+            .then(data => { if (Array.isArray(data)) setOrders(data); })
+            .catch(() => {});
+        setApprovalKey(k => k + 1);
+    }
 
     // Load orders for inspection
     useEffect(() => {
@@ -96,14 +234,10 @@ export default function QualityGatePage() {
             const data = await res.json();
             if (res.ok) {
                 setResult({ success: true, message: `Inspection submitted: ${status}`, orderStatus: data.orderStatus });
-                // Reload orders + history
-                const r2 = await fetch('/api/quality');
-                const d2 = await r2.json();
-                if (Array.isArray(d2)) setOrders(d2);
+                reloadOrders();
                 const r3 = await fetch(`/api/quality?orderId=${orderId}`);
                 const d3 = await r3.json();
                 if (Array.isArray(d3)) setHistory(d3);
-                // Reset form
                 setStatus('PENDING'); setNotes(''); setDefect('');
                 setMeas({ diameter: '', weight: '', torque: '' });
                 setVisuals({ surfaceFinish: false, colorMatch: false, labelAlignment: false });
@@ -120,6 +254,9 @@ export default function QualityGatePage() {
 
     return (
         <div className={styles.qualityControl}>
+            {/* ── Supervisor Approval Gate ─────────────────────────────────── */}
+            <SupervisorApprovalPanel key={approvalKey} onAction={reloadOrders} />
+
             {/* ── Failed Inspections History ──────────────────────────────── */}
             <div style={{ margin: '1rem 1rem 0', background: 'var(--card-bg)', border: failedChecks.length > 0 ? '1px solid rgba(239,68,68,0.3)' : '1px solid var(--card-border)', borderRadius: '12px', overflow: 'hidden' }}>
                 <button

@@ -56,8 +56,7 @@ class MESEventBus extends EventEmitter {
       timestamp: new Date()
     }
     this.emit(event.type, fullEvent)
-    this.emit('*', fullEvent) // wildcard listener for logging/SSE
-    console.log(`[EventBus] ${event.type} from ${event.source}`)
+    this.emit('*', fullEvent) // wildcard listener for SSE
   }
 
   subscribe<T = Record<string, unknown>>(

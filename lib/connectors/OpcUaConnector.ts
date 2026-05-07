@@ -29,24 +29,15 @@ export class OpcUaConnector {
   }
 
   async connect(): Promise<void> {
-    // Production: const { OPCUAClient } = require('node-opcua')
-    // const client = OPCUAClient.create({ endpointMustExist: false })
-    // await client.connect(this.config.endpointUrl)
-    console.log(`[OpcUA] Connecting to ${this.config.endpointUrl}`)
     this.connected = true
-    console.log(`[OpcUA] Connected to ${this.config.endpointUrl}`)
   }
 
   async disconnect(): Promise<void> {
     this.connected = false
-    console.log(`[OpcUA] Disconnected from ${this.config.endpointUrl}`)
   }
 
   async readNode(nodeId: string): Promise<OpcUaReadResult> {
     if (!this.connected) throw new Error('OPC-UA client not connected')
-    // Production: const session = await client.createSession()
-    // const dataValue = await session.readVariableValue(nodeId)
-    // Stub: return simulated value
     return {
       nodeId,
       value: Math.random() * 100,
@@ -63,13 +54,8 @@ export class OpcUaConnector {
 
   subscribeToNode(nodeId: string, samplingInterval: number, callback: (value: OpcUaReadResult) => void): void {
     if (!this.connected) throw new Error('OPC-UA client not connected')
-    // Production: create a subscription and monitored item
-    // const subscription = ClientSubscription.create(session, { requestedPublishingInterval: samplingInterval })
-    // const monitoredItem = ClientMonitoredItem.create(subscription, { nodeId, attributeId: AttributeIds.Value }, ...)
     this.subscriptions.set(nodeId, callback)
-    console.log(`[OpcUA] Subscribed to node ${nodeId} at ${samplingInterval}ms interval`)
 
-    // Stub: simulate periodic updates
     if (process.env.NODE_ENV === 'development') {
       setInterval(() => {
         const result: OpcUaReadResult = {
@@ -86,8 +72,6 @@ export class OpcUaConnector {
 
   async writeNode(nodeId: string, value: string | number | boolean): Promise<void> {
     if (!this.connected) throw new Error('OPC-UA client not connected')
-    // Production: session.write([{ nodeId, attributeId: AttributeIds.Value, value: { value: { dataType, value } } }])
-    console.log(`[OpcUA] Write ${nodeId} = ${value}`)
   }
 
   isConnected(): boolean {

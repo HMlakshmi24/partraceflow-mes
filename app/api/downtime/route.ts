@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { DowntimeService } from '@/lib/services/DowntimeService'
 import { prisma } from '@/lib/services/database'
+import { requireRole } from '@/lib/api-auth'
 
 export async function GET(request: NextRequest) {
+  const authError = requireRole(request, ['ADMIN', 'SUPERVISOR', 'OPERATOR', 'PLANNER', 'MAINTENANCE', 'QC', 'QUALITY']);
+  if (authError) return authError;
   try {
     const { searchParams } = new URL(request.url)
     const machineId = searchParams.get('machineId')
@@ -16,8 +19,8 @@ export async function GET(request: NextRequest) {
 
     // History: return recent downtime events with reason names for pareto charts
     if (action === 'history') {
-      const limit = parseInt(searchParams.get('limit') ?? '100')
-      const hours = parseInt(searchParams.get('hours') ?? '168')
+      const limit = Math.min(500, Math.max(1, parseInt(searchParams.get('limit') ?? '100') || 100))
+      const hours = Math.max(1, parseInt(searchParams.get('hours') ?? '168') || 168)
       const fromDate = new Date(Date.now() - hours * 3600000)
       const events = await prisma.downtimeEvent.findMany({
         where: { startTime: { gte: fromDate } },
@@ -29,7 +32,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (machineId) {
-      const hours = parseInt(searchParams.get('hours') ?? '24')
+      const hours = Math.max(1, parseInt(searchParams.get('hours') ?? '24') || 24)
       const toDate = new Date()
       const fromDate = new Date(toDate.getTime() - hours * 3600000)
       const kpis = await DowntimeService.getKPIs(machineId, fromDate, toDate)
@@ -43,6 +46,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const authError = requireRole(request, ['ADMIN', 'SUPERVISOR', 'OPERATOR', 'MAINTENANCE']);
+  if (authError) return authError;
+
   try {
     const body = await request.json()
     const { action, ...data } = body
@@ -71,7 +77,7 @@ export async function POST(request: NextRequest) {
       // Log system event for visibility
       await prisma.systemEvent.create({
         data: { eventType: 'DOWNTIME_START', details: `Downtime started on ${data.machineId}: ${data.notes || 'No notes'}` }
-      }).catch(() => {});
+      }).catch((e) => { console.warn('[downtime] systemEvent.create failed (non-fatal):', e?.message); });
       return NextResponse.json({ success: true, downtimeEvent: event })
     }
 

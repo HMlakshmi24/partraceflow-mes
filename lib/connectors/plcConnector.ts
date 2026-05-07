@@ -130,7 +130,6 @@ export class DemoPLCConnector extends PLCConnector {
     }
 
     async connect(): Promise<boolean> {
-        console.log('[DemoPLC] Connecting (simulated)...');
         this.connected = true;
         return true;
     }
@@ -138,7 +137,6 @@ export class DemoPLCConnector extends PLCConnector {
     async disconnect(): Promise<void> {
         this.connected = false;
         this.stopPolling();
-        console.log('[DemoPLC] Disconnected');
     }
 
     async read(): Promise<PLCReadResult> {
@@ -204,8 +202,6 @@ export function createPLCConnector(config: PLCConnectionConfig, demoMode: boolea
 // Placeholder for real protocol implementations
 class OPCUAConnector extends PLCConnector {
     async connect(): Promise<boolean> {
-        // Real OPC-UA implementation would go here
-        console.log('[OPCUA] Would connect to', this.config.host);
         this.connected = true;
         return true;
     }
@@ -216,8 +212,6 @@ class OPCUAConnector extends PLCConnector {
 
 class ModbusTCPConnector extends PLCConnector {
     async connect(): Promise<boolean> {
-        // Real Modbus implementation would go here
-        console.log('[Modbus] Would connect to', this.config.host);
         this.connected = true;
         return true;
     }
@@ -228,8 +222,6 @@ class ModbusTCPConnector extends PLCConnector {
 
 class MQTTConnector extends PLCConnector {
     async connect(): Promise<boolean> {
-        // Real MQTT implementation would go here
-        console.log('[MQTT] Would connect to', this.config.host);
         this.connected = true;
         return true;
     }

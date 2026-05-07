@@ -1,7 +1,11 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
+import { requireRole } from '@/lib/api-auth';
 
 export async function POST(req: NextRequest) {
+    const authError = requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR']);
+    if (authError) return authError as NextResponse;
+
     try {
         const body = await req.json();
         const { name } = body;

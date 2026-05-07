@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { SchedulingEngine } from '@/lib/engines/SchedulingEngine'
+import { requireRole } from '@/lib/api-auth'
 
 export async function POST(request: NextRequest) {
+  const authError = requireRole(request, ['ADMIN', 'PLANNER', 'SUPERVISOR']);
+  if (authError) return authError;
+
   try {
     const body = await request.json()
     const {

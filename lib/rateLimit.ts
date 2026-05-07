@@ -1,29 +1,10 @@
 /**
- * In-memory rate limiter — suitable for single-instance deployments.
- * For multi-node deployments, replace with a Redis-backed store (e.g., @upstash/ratelimit).
- *
- * Usage:
- *   const result = rateLimit(ip, { limit: 30, windowMs: 60_000 });
- *   if (!result.allowed) return Response.json({ error: 'Too many requests' }, { status: 429 });
+ * Distributed rate limiter — Redis/Upstash backed for serverless deployments.
  */
 
-interface Entry { count: number; resetAt: number; }
-
-const store = new Map<string, Entry>();
-
-// Clean up old entries every 5 minutes to prevent memory leak
-if (typeof setInterval !== 'undefined') {
-    setInterval(() => {
-        const now = Date.now();
-        for (const [key, entry] of store) {
-            if (entry.resetAt < now) store.delete(key);
-        }
-    }, 5 * 60 * 1000);
-}
-
 export interface RateLimitOptions {
-    limit: number;      // max requests per window
-    windowMs: number;   // window in milliseconds
+    limit: number;
+    windowMs: number;
 }
 
 export interface RateLimitResult {
@@ -33,28 +14,66 @@ export interface RateLimitResult {
     retryAfterMs: number;
 }
 
-export function rateLimit(key: string, opts: RateLimitOptions): RateLimitResult {
+export async function rateLimit(key: string, opts: RateLimitOptions, increment: boolean = true): Promise<RateLimitResult> {
+    const url = process.env.UPSTASH_REDIS_REST_URL;
+    const token = process.env.UPSTASH_REDIS_REST_TOKEN;
     const now = Date.now();
-    let entry = store.get(key);
 
-    if (!entry || entry.resetAt < now) {
-        entry = { count: 0, resetAt: now + opts.windowMs };
-        store.set(key, entry);
+    try {
+        if (!url || !token) {
+            console.warn('[RateLimiter] Missing Upstash Redis credentials. Using dummy passthrough.');
+            return { allowed: true, remaining: opts.limit, resetAt: now + opts.windowMs, retryAfterMs: 0 };
+        }
+
+        if (!increment) {
+            // Just fetch the current value
+            const getRes = await fetch(`${url}/get/${key}`, { headers: { Authorization: `Bearer ${token}` } });
+            const getBody = await getRes.json();
+            const currentCount = parseInt(getBody.result ?? '0', 10);
+            const allowed = currentCount < opts.limit;
+            return {
+                allowed,
+                remaining: Math.max(0, opts.limit - currentCount),
+                resetAt: now + opts.windowMs,
+                retryAfterMs: allowed ? 0 : opts.windowMs,
+            };
+        }
+
+        // Atomic INCR
+        const res = await fetch(`${url}/incr/${key}`, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = await res.json();
+        const count = body.result ? parseInt(body.result.toString(), 10) : 1;
+
+        // Set expiration if this is the first increment in the window
+        if (count === 1) {
+            await fetch(`${url}/pexpire/${key}/${opts.windowMs}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+        }
+
+        const allowed = count <= opts.limit;
+        return {
+            allowed,
+            remaining: Math.max(0, opts.limit - count),
+            resetAt: now + opts.windowMs,
+            retryAfterMs: allowed ? 0 : opts.windowMs,
+        };
+    } catch (err) {
+        console.error('[RateLimiter] Redis error:', err);
+        // Fail OPEN to avoid blocking users on cache failure
+        return { allowed: true, remaining: opts.limit, resetAt: now + opts.windowMs, retryAfterMs: 0 };
     }
-
-    entry.count++;
-    const remaining = Math.max(0, opts.limit - entry.count);
-    const allowed = entry.count <= opts.limit;
-
-    return {
-        allowed,
-        remaining,
-        resetAt: entry.resetAt,
-        retryAfterMs: allowed ? 0 : entry.resetAt - now,
-    };
 }
 
-// Preset limiters
-export const authLimiter = (ip: string) => rateLimit(`auth:${ip}`, { limit: 10, windowMs: 15 * 60 * 1000 });       // 10 per 15min
-export const apiLimiter  = (ip: string) => rateLimit(`api:${ip}`,  { limit: 300, windowMs: 60 * 1000 });             // 300 per minute
-export const demoLimiter = (ip: string) => rateLimit(`demo:${ip}`, { limit: 5, windowMs: 5 * 60 * 1000 });           // 5 per 5min (seed/tick)
+// Preset limiters focusing on username & IP explicitly combined per requirements
+export const authFailureLimiter = (ip: string, username: string) =>
+    rateLimit(`auth:${ip}:${username.toLowerCase()}`, { limit: 5, windowMs: 15 * 60 * 1000 }, true);
+
+// Pre-flight check without incrementing to block before even processing the body
+export const authCheckFailureLimiter = (ip: string, username: string) =>
+    rateLimit(`auth:${ip}:${username.toLowerCase()}`, { limit: 5, windowMs: 15 * 60 * 1000 }, false);
+
+export const apiLimiter = (ip: string) => rateLimit(`api:${ip}`, { limit: 300, windowMs: 60 * 1000 });
+export const demoLimiter = (ip: string) => rateLimit(`demo:${ip}`, { limit: 5, windowMs: 5 * 60 * 1000 });

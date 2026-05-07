@@ -13,8 +13,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { readerId, name, location } = await req.json();
+  const { readerId } = await req.json();
   if (!readerId) return NextResponse.json({ error: 'readerId required' }, { status: 400 });
-  heartbeat(readerId, name, location);
+  heartbeat(readerId);
   return NextResponse.json({ status: 'ok', readerId });
 }

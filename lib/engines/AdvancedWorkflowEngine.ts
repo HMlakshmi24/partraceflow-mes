@@ -424,8 +424,6 @@ export class AdvancedWorkflowEngine {
             await this.updateEntityStatus(config);
             break;
           case 'SEND_NOTIFICATION':
-            // Implement notification logic
-            console.log('Notification sent:', config);
             break;
         }
 

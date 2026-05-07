@@ -126,7 +126,6 @@ export class DemoRFIDConnector extends RFIDConnector {
     }
 
     async connect(): Promise<boolean> {
-        console.log('[DemoRFID] Connecting (simulated)...');
         this.connected = true;
         return true;
     }
@@ -134,7 +133,6 @@ export class DemoRFIDConnector extends RFIDConnector {
     async disconnect(): Promise<void> {
         this.connected = false;
         await this.stopScanning();
-        console.log('[DemoRFID] Disconnected');
     }
 
     async read(): Promise<RFIDReadResult> {
@@ -177,20 +175,11 @@ export class DemoRFIDConnector extends RFIDConnector {
         }
     }
 
-    async write(epc: string): Promise<RFIDWriteResult> {
+    async write(_epc: string): Promise<RFIDWriteResult> {
         if (!this.connected) {
             return { success: false, error: 'Not connected' };
         }
 
-        // Simulate writing a new tag
-        const newTag: RFIDTag = {
-            epc,
-            tid: `TID-${Date.now()}`,
-            rssi: -45,
-            scannedAt: new Date()
-        };
-        
-        console.log('[DemoRFID] Written new tag:', epc);
         return { success: true };
     }
 
@@ -243,7 +232,6 @@ export function createRFIDConnector(config: RFIDReaderConfig, demoMode: boolean 
 // Placeholder implementations for real readers
 class SerialRFIDConnector extends RFIDConnector {
     async connect(): Promise<boolean> {
-        console.log('[SerialRFID] Would connect to', this.config.port);
         this.connected = true;
         return true;
     }
@@ -256,7 +244,6 @@ class SerialRFIDConnector extends RFIDConnector {
 
 class USBRFIDConnector extends RFIDConnector {
     async connect(): Promise<boolean> {
-        console.log('[USBRFID] Would connect to', this.config.port);
         this.connected = true;
         return true;
     }
@@ -269,7 +256,6 @@ class USBRFIDConnector extends RFIDConnector {
 
 class NetworkRFIDConnector extends RFIDConnector {
     async connect(): Promise<boolean> {
-        console.log('[NetworkRFID] Would connect to', this.config.host);
         this.connected = true;
         return true;
     }
@@ -307,7 +293,7 @@ export function getReaderHealth(): ReaderHealth[] {
     return health;
 }
 
-export function heartbeat(readerId: string, readerName?: string, location?: string): void {
+export function heartbeat(readerId: string): void {
     readers.set(readerId, { status: 'ONLINE', lastSeen: new Date() });
 }
 

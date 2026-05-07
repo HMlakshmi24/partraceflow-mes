@@ -26,12 +26,6 @@ export class ModbusConnector {
   }
 
   async connect(): Promise<void> {
-    // Production:
-    // const ModbusRTU = require('modbus-serial')
-    // this.client = new ModbusRTU()
-    // await this.client.connectTCP(this.config.host, { port: this.config.port })
-    // this.client.setID(this.config.unitId)
-    console.log(`[Modbus] Connecting to ${this.config.host}:${this.config.port}`)
     this.connected = true
   }
 
@@ -41,8 +35,6 @@ export class ModbusConnector {
 
   async readHoldingRegisters(startAddress: number, count: number): Promise<ModbusReadResult[]> {
     if (!this.connected) throw new Error('Modbus client not connected')
-    // Production: const data = await this.client.readHoldingRegisters(startAddress, count)
-    // return data.data.map((v, i) => ({ address: startAddress + i, registerType: 'HOLDING_REGISTER', value: v, timestamp: new Date() }))
     return Array.from({ length: count }, (_, i) => ({
       address: startAddress + i,
       registerType: 'HOLDING_REGISTER' as ModbusRegisterType,
@@ -73,12 +65,10 @@ export class ModbusConnector {
 
   async writeHoldingRegister(address: number, value: number): Promise<void> {
     if (!this.connected) throw new Error('Modbus client not connected')
-    console.log(`[Modbus] Write HR[${address}] = ${value}`)
   }
 
   async writeCoil(address: number, value: boolean): Promise<void> {
     if (!this.connected) throw new Error('Modbus client not connected')
-    console.log(`[Modbus] Write Coil[${address}] = ${value}`)
   }
 
   isConnected(): boolean {

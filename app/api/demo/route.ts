@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { seedDemoData, runDemoTick, getDemoStatus } from '@/lib/services/DemoService';
+import { requireRole } from '@/lib/api-auth';
 
 export async function GET() {
     try {
@@ -12,6 +13,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+    const authError = requireRole(request, ['ADMIN', 'SUPERVISOR']);
+    if (authError) return authError;
+
     try {
         const body = await request.json();
         const { action } = body;

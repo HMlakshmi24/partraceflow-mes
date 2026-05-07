@@ -15,15 +15,13 @@ export const workOrderSchema = z.object({
         .int("Quantity must be an integer")
         .min(1, "Quantity must be at least 1")
         .max(10000, "Quantity too large"),
-    productId: z.string()
-        .uuid("Invalid product ID"),
+    productId: z.uuid("Invalid product ID"),
     priority: z.number()
         .int("Priority must be an integer")
         .min(1, "Priority must be between 1 and 10")
         .max(10, "Priority must be between 1 and 10")
         .optional(),
-    dueDate: z.string()
-        .datetime("Invalid due date format")
+    dueDate: z.iso.datetime("Invalid due date format")
 });
 
 // Quality Check Validation
@@ -40,8 +38,7 @@ export const qualityCheckSchema = z.object({
     result: z.enum(['PASS', 'FAIL', 'REWORK'], {
         message: "Result must be PASS, FAIL, or REWORK"
     }),
-    taskId: z.string()
-        .uuid("Invalid task ID")
+    taskId: z.uuid("Invalid task ID")
 });
 
 // Machine Validation
@@ -91,8 +88,8 @@ export const workflowDefinitionSchema = z.object({
 
 // Task Operation Validation
 export const taskOperationSchema = z.object({
-    taskId: z.string().uuid("Invalid task ID"),
-    operatorId: z.string().uuid("Invalid operator ID").optional(),
+    taskId: z.uuid("Invalid task ID"),
+    operatorId: z.uuid("Invalid operator ID").optional(),
     notes: z.string().max(500, "Notes too long").optional()
 });
 
@@ -101,7 +98,7 @@ export const apiResponseSchema = z.object({
     success: z.boolean(),
     data: z.any().optional(),
     error: z.string().optional(),
-    timestamp: z.string().datetime().optional()
+    timestamp: z.iso.datetime().optional()
 });
 
 // Validation Helper Functions
@@ -170,32 +167,6 @@ export function validateQualityGate(qualityChecks: any[]): { canProceed: boolean
         canProceed: issues.length === 0,
         issues
     };
-}
-
-export function validateMachineAvailability(machineId: string, startTime: Date, endTime: Date): Promise<boolean> {
-    // This would typically check against scheduled maintenance, other tasks, etc.
-    // For now, return true (machine is available)
-    return Promise.resolve(true);
-}
-
-export function validateWorkOrderCapacity(productId: string, quantity: number, dueDate: Date): Promise<{ canProduce: boolean; issues: string[] }> {
-    // This would typically check against production capacity, material availability, etc.
-    // For now, return a simple validation
-    const issues: string[] = [];
-    
-    if (quantity > 1000) {
-        issues.push('Quantity exceeds maximum production capacity');
-    }
-    
-    const daysUntilDue = Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-    if (daysUntilDue < 1) {
-        issues.push('Due date is too soon for production');
-    }
-    
-    return Promise.resolve({
-        canProduce: issues.length === 0,
-        issues
-    });
 }
 
 // Error Types
