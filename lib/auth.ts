@@ -9,7 +9,18 @@
 
 import crypto from 'crypto';
 
-const SESSION_SECRET = process.env.SESSION_SECRET ?? 'mes-dev-secret-CHANGE-IN-PRODUCTION';
+// Lazy getter — throws at request time (not build time) if secret is missing in production
+function getSecret(): string {
+    const secret = process.env.SESSION_SECRET ?? 'mes-dev-secret-CHANGE-IN-PRODUCTION';
+    if (process.env.NODE_ENV === 'production' && secret === 'mes-dev-secret-CHANGE-IN-PRODUCTION') {
+        throw new Error(
+            '[MES] SESSION_SECRET is not configured. Set a strong random value in Vercel › Settings › Environment Variables. ' +
+            'Generate one with: openssl rand -base64 32'
+        );
+    }
+    return secret;
+}
+
 const SESSION_EXPIRY_SECS = 8 * 60 * 60; // 8 hours
 const SCRYPT_N = 16384, SCRYPT_R = 8, SCRYPT_P = 1, KEY_LEN = 64;
 
@@ -47,7 +58,7 @@ export function createSessionToken(payload: Omit<SessionPayload, 'exp' | 'iat'>)
     const now = Math.floor(Date.now() / 1000);
     const full: SessionPayload = { ...payload, iat: now, exp: now + SESSION_EXPIRY_SECS };
     const encoded = Buffer.from(JSON.stringify(full)).toString('base64url');
-    const sig = crypto.createHmac('sha256', SESSION_SECRET).update(encoded).digest('base64url');
+    const sig = crypto.createHmac('sha256', getSecret()).update(encoded).digest('base64url');
     return `${encoded}.${sig}`;
 }
 
@@ -55,7 +66,7 @@ export function verifySessionToken(token: string): SessionPayload | null {
     try {
         const [encoded, sig] = token.split('.');
         if (!encoded || !sig) return null;
-        const expected = crypto.createHmac('sha256', SESSION_SECRET).update(encoded).digest('base64url');
+        const expected = crypto.createHmac('sha256', getSecret()).update(encoded).digest('base64url');
         if (!crypto.timingSafeEqual(Buffer.from(sig, 'base64url'), Buffer.from(expected, 'base64url'))) return null;
         const payload: SessionPayload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf-8'));
         if (payload.exp < Math.floor(Date.now() / 1000)) return null;
@@ -71,7 +82,8 @@ export const SESSION_COOKIE = 'mes_session';
 export const COOKIE_OPTIONS = {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax' as const,
+    // strict: cookies are not sent on cross-site requests, preventing CSRF
+    sameSite: 'strict' as const,
     path: '/',
     maxAge: SESSION_EXPIRY_SECS,
 };

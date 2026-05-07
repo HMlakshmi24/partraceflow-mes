@@ -2,17 +2,35 @@ import { NextRequest } from 'next/server';
 import { WorkflowEngine } from '@/lib/engines/WorkflowEngine';
 import { AuditService, EventType } from '@/lib/services/AuditService';
 import { prisma } from '@/lib/services/database';
+import { requireRole, getRequestSession } from '@/lib/api-auth';
 
 /**
  * Workflow runtime API.
  *
- * This route starts workflow instances, enforces step completion order,
- * and exposes instance/task state to the frontend.
+ * Enforces step-sequence order via WorkflowEngine (tasks must complete in
+ * defined sequence order). Role restrictions ensure only authorised roles
+ * can start instances or complete tasks.
  */
+const PLANNER_ACTIONS = ['start'];
+const OPERATOR_WORKFLOW_ROLES = ['ADMIN', 'PLANNER', 'SUPERVISOR', 'OPERATOR'];
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { action } = body;
+
+    if (!action || typeof action !== 'string') {
+      return Response.json({ error: 'action field is required', code: 'MISSING_ACTION' }, { status: 400 });
+    }
+
+    // Starting a new workflow instance is planner-level; task operations allow operators
+    if (PLANNER_ACTIONS.includes(action)) {
+      const authError = requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR']);
+      if (authError) return authError;
+    } else if (action === 'complete_task') {
+      const authError = requireRole(req, OPERATOR_WORKFLOW_ROLES);
+      if (authError) return authError;
+    }
 
     if (action === 'start') {
       const { processId } = body;
@@ -57,15 +75,35 @@ export async function POST(req: NextRequest) {
 
     if (action === 'complete_task') {
       const { taskId } = body;
-      if (!taskId) return Response.json({ error: 'taskId required' }, { status: 400 });
+      if (!taskId) return Response.json({ error: 'taskId is required', code: 'MISSING_FIELD' }, { status: 400 });
+
+      const session = getRequestSession(req);
 
       try {
         await WorkflowEngine.completeUserTask(taskId, {});
+        await AuditService.log(
+          EventType.TASK_COMPLETED,
+          `Task ${taskId} completed by ${session?.username ?? 'unknown'}`,
+          { taskId, performedBy: session?.username, role: session?.role },
+          session?.userId,
+        );
         return Response.json({ success: true });
       } catch (e) {
         const message = (e as Error).message;
-        const status = /Previous task|already completed/i.test(message) ? 422 : /not found/i.test(message) ? 404 : 500;
-        return Response.json({ error: message }, { status });
+        const isPreviousTaskBlocking = /Previous task/i.test(message);
+        const isAlreadyDone = /already completed/i.test(message);
+        const isNotFound = /not found/i.test(message);
+        const httpStatus = isPreviousTaskBlocking || isAlreadyDone ? 422 : isNotFound ? 404 : 500;
+        const code = isPreviousTaskBlocking ? 'PREVIOUS_STEP_INCOMPLETE' : isAlreadyDone ? 'ALREADY_COMPLETED' : isNotFound ? 'TASK_NOT_FOUND' : 'SERVER_ERROR';
+        if (isPreviousTaskBlocking) {
+          await AuditService.log(
+            EventType.TASK_BLOCKED,
+            `Task ${taskId} blocked — previous step incomplete. Attempted by ${session?.username ?? 'unknown'}`,
+            { taskId, performedBy: session?.username, role: session?.role, reason: message },
+            session?.userId,
+          );
+        }
+        return Response.json({ error: message, code }, { status: httpStatus });
       }
     }
 
@@ -131,6 +169,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  const authError = requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR', 'OPERATOR', 'QC', 'QUALITY']);
+  if (authError) return authError;
+
   try {
     const { searchParams } = new URL(req.url);
     const instanceId = searchParams.get('instanceId');

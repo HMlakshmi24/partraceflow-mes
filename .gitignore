@@ -69,3 +69,12 @@ spc_result.txt
 test-all-buttons.js
 ERROR_DEMO_SCRIPT.js
 verify_all.ts
+
+.vercel
+
+# ── Claude Code / Swarm local artifacts (never commit) ────────────────────────
+.claude/
+.claude-flow/
+.swarm/
+.mcp.json
+ruvector.db

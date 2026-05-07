@@ -4,34 +4,50 @@ import { validateQualityCheck } from '@/lib/utils/validation';
 import { eventBus } from '@/lib/events/EventBus';
 import { OrderLifecycleService } from '@/lib/services/OrderLifecycleService';
 import { AuditService, EventType } from '@/lib/services/AuditService';
+import { requireRole } from '@/lib/api-auth';
 
 const ORDER_QC_ROLES = ['QC', 'QUALITY', 'SUPERVISOR', 'ADMIN'];
 
 /**
  * Check if quality inspection can be submitted for a task.
- * QC PASS requires task to be COMPLETED.
+ * QC PASS requires task to be COMPLETED and no prior PASS for this task.
  * QC FAIL can be submitted anytime (defects discovered during work).
  */
-async function canSubmitQuality(taskId: string, result: string): Promise<{ allowed: boolean; reason?: string }> {
+async function canSubmitQuality(taskId: string, result: string): Promise<{ allowed: boolean; reason?: string; code?: string }> {
     const task = await prisma.workflowTask.findUnique({
         where: { id: taskId },
         select: { status: true, stepDef: { select: { name: true } } }
     });
 
     if (!task) {
-        return { allowed: false, reason: 'Task not found' };
+        return { allowed: false, reason: 'Task not found — it may have been deleted or the ID is incorrect.', code: 'TASK_NOT_FOUND' };
     }
 
-    // QC FAIL can always be submitted (discovered during work)
+    // QC FAIL can always be submitted (defects discovered during or after work)
     if (result === 'FAIL') {
         return { allowed: true };
     }
 
-    // QC PASS requires task to be COMPLETED
+    // QC PASS requires task to be COMPLETED first
     if (task.status !== 'COMPLETED') {
-        return { 
-            allowed: false, 
-            reason: `Cannot submit QC PASS - task status is "${task.status}". Complete the task first before passing quality.`
+        const stepName = task.stepDef?.name ?? 'this task';
+        return {
+            allowed: false,
+            reason: `Cannot submit QC PASS — "${stepName}" is still "${task.status}". The operator must complete the task before quality inspection can be passed.`,
+            code: 'TASK_NOT_COMPLETED',
+        };
+    }
+
+    // Prevent duplicate QC PASS for the same task
+    const existingPass = await prisma.qualityCheck.findFirst({
+        where: { taskId, result: 'PASS' },
+        select: { id: true },
+    });
+    if (existingPass) {
+        return {
+            allowed: false,
+            reason: 'A QC PASS has already been recorded for this task. Duplicate approvals are not permitted. If a re-inspection is required, raise a QC FAIL first.',
+            code: 'DUPLICATE_QC_PASS',
         };
     }
 
@@ -39,10 +55,13 @@ async function canSubmitQuality(taskId: string, result: string): Promise<{ allow
 }
 
 export async function GET(req: NextRequest) {
+  const authError = requireRole(req, ['ADMIN', 'SUPERVISOR', 'QC', 'QUALITY', 'OPERATOR', 'PLANNER']);
+  if (authError) return authError;
+
   const { searchParams } = new URL(req.url);
   const orderId = searchParams.get('orderId');
   const resultFilter = searchParams.get('result');
-  const limit = parseInt(searchParams.get('limit') ?? '50');
+  const limit = Math.min(200, Math.max(1, parseInt(searchParams.get('limit') ?? '50') || 50));
 
   try {
     if (resultFilter) {
@@ -71,7 +90,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(orders);
   } catch {
-    return NextResponse.json({ error: 'Failed' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to retrieve quality records', code: 'SERVER_ERROR' }, { status: 500 });
   }
 }
 
@@ -86,18 +105,29 @@ export async function POST(req: NextRequest) {
 
 if (action === 'task_qc') {
       const { taskId, result: qcResult } = body;
-      
+
+      // H2: task-level QC requires a QC-capable role — plain PLANNERs cannot submit results
+      const TASK_QC_ROLES = ['QC', 'QUALITY', 'SUPERVISOR', 'ADMIN', 'OPERATOR'];
+      if (!TASK_QC_ROLES.includes(role)) {
+        return NextResponse.json(
+          { error: `Role ${role} cannot submit quality results. Required: ${TASK_QC_ROLES.join(', ')}.` },
+          { status: 403 }
+        );
+      }
+
       // First check if quality can be submitted based on task status
       const qualityGate = await canSubmitQuality(taskId, qcResult);
       if (!qualityGate.allowed) {
-        // Log the rejected quality attempt
         await AuditService.log(
-            qcResult === 'PASS' ? EventType.QUALITY_FAIL : EventType.QUALITY_CHECK,
+            EventType.QUALITY_FAIL,
             `Quality ${qcResult} rejected for task ${taskId}: ${qualityGate.reason}`,
-            { taskId, result: qcResult, reason: qualityGate.reason },
+            { taskId, result: qcResult, reason: qualityGate.reason, code: qualityGate.code, performedBy },
             userId
         );
-        return NextResponse.json({ error: qualityGate.reason }, { status: 422 });
+        return NextResponse.json(
+            { error: qualityGate.reason, code: qualityGate.code ?? 'QC_GATE_BLOCKED' },
+            { status: 422 }
+        );
       }
 
       const qcPayload = {
@@ -203,7 +233,8 @@ if (action === 'task_qc') {
 
     return NextResponse.json({ success: true, record, orderStatus: nextStatus });
   } catch (e) {
-    console.error(e);
-    return NextResponse.json({ error: 'Failed to submit inspection' }, { status: 500 });
+    console.error('[quality POST]', e);
+    const message = e instanceof Error ? e.message : 'Unknown error';
+    return NextResponse.json({ error: `Failed to submit quality inspection: ${message}`, code: 'SERVER_ERROR' }, { status: 500 });
   }
 }

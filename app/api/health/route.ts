@@ -13,7 +13,7 @@ export async function GET() {
 
     try {
         const t0 = Date.now();
-        await prisma.$queryRaw`SELECT 1`;
+        await prisma.user.findFirst({ select: { id: true } });
         dbLatencyMs = Date.now() - t0;
         dbStatus = 'ok';
 
@@ -29,6 +29,13 @@ export async function GET() {
     }
 
     const healthy = dbStatus === 'ok';
+    const isProd = process.env.NODE_ENV === 'production';
+
+    // Security configuration warnings — critical for production readiness
+    const securityWarnings: string[] = [];
+    if (!process.env.SESSION_SECRET) securityWarnings.push('SESSION_SECRET not set — using insecure default');
+    if (!process.env.MES_API_KEY) securityWarnings.push('MES_API_KEY not set — machine API endpoints are unprotected');
+    if (!process.env.DATABASE_URL && !process.env.MONGODB_URI) securityWarnings.push('No database URL configured — running in demo mode');
 
     return NextResponse.json(
         {
@@ -44,6 +51,10 @@ export async function GET() {
                     status: 'ok',
                     heapUsedMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
                     heapTotalMB: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+                },
+                security: {
+                    status: securityWarnings.length === 0 ? 'ok' : isProd ? 'critical' : 'warning',
+                    warnings: securityWarnings,
                 },
             },
         },
