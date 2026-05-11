@@ -1,6 +1,6 @@
 'use client';
 
-import { CheckCircle, XCircle, Camera, Save, Clipboard, TrendingUp, ChevronDown, ShieldCheck, Award } from 'lucide-react';
+import { CheckCircle, XCircle, Camera, Save, Clipboard, TrendingUp, ChevronDown, ShieldCheck, Award, AlertTriangle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import styles from './quality.module.css';
 
@@ -167,6 +167,9 @@ export default function QualityGatePage() {
     const [history, setHistory] = useState<any[]>([]);
     const [approvalKey, setApprovalKey] = useState(0); // bump to force approval panel refresh
 
+    const selectedOrder = orders.find(o => o.id === orderId);
+    const isQCAllowed = !orderId || selectedOrder?.status === 'QC_PENDING';
+
     function reloadOrders() {
         fetch('/api/quality')
             .then(r => r.json())
@@ -324,6 +327,14 @@ export default function QualityGatePage() {
                     </div>
                 </div>
             </div>
+
+            {/* QC Gate: warn when selected order is not in QC_PENDING status */}
+            {orderId && !isQCAllowed && (
+                <div style={{ margin: '0.75rem 1rem 0', padding: '0.85rem 1.25rem', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.35)', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '0.65rem', fontSize: '0.88rem', color: '#f59e0b', fontWeight: 600 }}>
+                    <AlertTriangle size={17} style={{ flexShrink: 0 }} />
+                    Order is in <strong style={{ marginLeft: 4, marginRight: 4 }}>{selectedOrder?.status ?? 'unknown'}</strong> status — QC inspection is only allowed when status is <strong style={{ marginLeft: 4 }}>QC_PENDING</strong>.
+                </div>
+            )}
 
             {/* Toast */}
             {result && (
@@ -527,10 +538,10 @@ export default function QualityGatePage() {
                                     onClick={handleSubmit}
                                     className={styles.submitButton}
                                     style={{ width: '100%', marginTop: '1rem' }}
-                                    disabled={status === 'PENDING' || submitting || !orderId}
+                                    disabled={status === 'PENDING' || submitting || !orderId || !isQCAllowed}
                                 >
                                     <Save size={18} style={{ display: 'inline', marginRight: '6px' }} />
-                                    {submitting ? 'Submitting...' : !orderId ? 'Select an Order' : status === 'PENDING' ? 'Select Outcome' : `Submit ${status}`}
+                                    {submitting ? 'Submitting...' : !orderId ? 'Select an Order' : !isQCAllowed ? `Order not in QC_PENDING` : status === 'PENDING' ? 'Select Outcome' : `Submit ${status}`}
                                 </button>
 
                                 {/* Result summary card */}

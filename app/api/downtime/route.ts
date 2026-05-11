@@ -82,8 +82,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'end') {
-      const { downtimeEventId, ...endData } = data
-      const event = await DowntimeService.endDowntime(downtimeEventId, endData)
+      const { downtimeEventId, resolutionNotes, ...endData } = data
+      const event = await DowntimeService.endDowntime(downtimeEventId, { ...endData, resolutionNotes })
       return NextResponse.json({ success: true, downtimeEvent: event })
     }
 

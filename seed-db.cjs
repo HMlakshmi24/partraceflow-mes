@@ -22,12 +22,23 @@ async function main() {
         { username: 'operator',      role: 'OPERATOR',   employeeId: 'EMP-008' },
     ];
 
+    const crypto = require('crypto');
+    function hashPassword(password) {
+        const salt = crypto.randomBytes(16).toString('hex');
+        const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+        return `${salt}:${hash}`;
+    }
+
+    const defaultHash = hashPassword('demo');
+    const adminHash = hashPassword('admin123');
+
     const users = {};
     for (const u of userDefs) {
+        const pHash = u.role === 'ADMIN' ? adminHash : defaultHash;
         const user = await prisma.user.upsert({
             where: { username: u.username },
             update: {},
-            create: { ...u, passwordHash: null, isActive: true },
+            create: { ...u, passwordHash: pHash, isActive: true, mustChangePassword: true },
         });
         users[u.username] = user;
     }

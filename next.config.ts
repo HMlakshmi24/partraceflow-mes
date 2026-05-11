@@ -24,7 +24,7 @@ const nextConfig: NextConfig = {
                 // CORS for API routes — restrict to same origin in production
                 source: '/api/(.*)',
                 headers: [
-                    { key: 'Access-Control-Allow-Origin',  value: process.env.ALLOWED_ORIGIN ?? '*' },
+                    { key: 'Access-Control-Allow-Origin',  value: process.env.ALLOWED_ORIGIN ?? 'https://mes-app-omega.vercel.app' },
                     { key: 'Access-Control-Allow-Methods', value: 'GET,POST,PUT,DELETE,OPTIONS' },
                     { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-API-Key' },
                 ],
@@ -44,6 +44,11 @@ const nextConfig: NextConfig = {
     // ── Production logging ─────────────────────────────────────────────────────
     // Set LOG_LEVEL=debug in .env for verbose output
     // logging: { fetches: { fullUrl: process.env.LOG_LEVEL === 'debug' } },
+
+    productionBrowserSourceMaps: false,
+    compiler: {
+        removeConsole: process.env.NODE_ENV === "production" ? { exclude: ["error", "warn"] } : false,
+    },
 };
 
 export default nextConfig;

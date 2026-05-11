@@ -183,8 +183,10 @@ async function fetchLegacyDashboard(period: string): Promise<DashboardData> {
 
     const production = buildProductionTimeline(hours > 24 ? 24 : hours);
 
+    // Only show open stops from the last 24h — stale events must not flag machine as permanently DOWN
+    const DAY_MS = 24 * 60 * 60 * 1000;
     const openStops: OpenStop[] = dtEvents
-        .filter((ev: any) => !ev.endTime)
+        .filter((ev: any) => !ev.endTime && Date.now() - new Date(ev.startTime).getTime() < DAY_MS)
         .map((ev: any) => ({
             machineId: ev.machineId ?? '',
             machineName: machineMap[ev.machineId]?.name ?? machineMap[ev.machineId]?.code ?? 'Unknown Machine',
@@ -194,6 +196,7 @@ async function fetchLegacyDashboard(period: string): Promise<DashboardData> {
         }));
 
     const stops = openStops.length;
+    const runningCount = machines.filter(m => m.status === 'running').length;
 
     return {
         oee: { oee: avgOee, availability: avgAvail, performance: avgPerf, quality: avgQual, stops },
@@ -202,7 +205,14 @@ async function fetchLegacyDashboard(period: string): Promise<DashboardData> {
         scrap,
         production,
         openStops,
-        summary: { activeOrders: 0, openDowntimes: 0, failedQc: 0, runningMachines: 0, totalMachines: 0 },
+        // Populate summary from computed data instead of all-zeros
+        summary: {
+            activeOrders: 0,
+            openDowntimes: stops,
+            failedQc: 0,
+            runningMachines: runningCount,
+            totalMachines: machines.length,
+        },
         andon: { activeCount: 0, criticalCount: 0, alerts: [] },
     };
 }
@@ -935,6 +945,10 @@ function DashboardContent() {
                 @keyframes pulse-btn {
                     0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
                     50%      { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
+                }
+                @keyframes pulse-banner {
+                    0%,100% { opacity: 1; transform: scale(1); }
+                    50%     { opacity: 0.85; transform: scale(1.01); }
                 }
             `}</style>
         </div>

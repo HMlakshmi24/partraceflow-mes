@@ -50,6 +50,7 @@ export interface SessionPayload {
     userId: string;
     username: string;
     role: string;
+    mustChangePassword?: boolean;
     exp: number;
     iat: number;
 }

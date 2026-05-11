@@ -43,6 +43,27 @@ export async function middleware(request: NextRequest) {
 
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
 
+  // Strict CSRF Protection for state-changing API calls
+  if (pathname.startsWith('/api/') && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) {
+      const origin = request.headers.get('origin');
+      const referer = request.headers.get('referer');
+      const host = request.headers.get('host');
+      
+      const isPublicMutation = PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(p));
+      const apiKey = process.env.MES_API_KEY;
+      const isMachineApi = MACHINE_API_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(prefix + '/'));
+      
+      // We skip CSRF for public login/setup and machine APIs that use API keys
+      if (!isPublicMutation && !(apiKey && isMachineApi)) {
+          if ((origin && !origin.includes(host || '')) || (referer && !referer.includes(host || ''))) {
+              return new NextResponse(
+                  JSON.stringify({ error: 'CSRF validation failed', code: 'CSRF_BLOCKED' }),
+                  { status: 403, headers: { 'Content-Type': 'application/json' } }
+              );
+          }
+      }
+  }
+
   if (pathname === '/') {
     const token = request.cookies.get(SESSION_COOKIE)?.value;
     const dest = token ? '/dashboard' : '/login';
@@ -86,6 +107,18 @@ export async function middleware(request: NextRequest) {
     return addSecurityHeaders(NextResponse.redirect(loginUrl), nonce);
   }
 
+  // MUST CHANGE PASSWORD ENFORCEMENT
+  const isChangePasswordFlow = pathname === '/change-password' || pathname === '/api/auth/change-password' || pathname === '/api/auth/logout';
+  if (session.mustChangePassword && !isChangePasswordFlow) {
+    if (pathname.startsWith('/api/')) {
+        return new NextResponse(
+            JSON.stringify({ error: 'Forbidden - must change password first' }),
+            { status: 403, headers: { 'Content-Type': 'application/json' } }
+        );
+    }
+    return addSecurityHeaders(NextResponse.redirect(new URL('/change-password', request.url)), nonce);
+  }
+
   for (const [prefix, allowed] of Object.entries(ROLE_REQUIREMENTS)) {
     if (pathname === prefix || pathname.startsWith(prefix + '/')) {
       if (!allowed.includes(session.role)) {
@@ -120,6 +153,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp|woff2?)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|robots.txt|manifest.json|sw.js|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf|eot)$).*)',
   ],
 };

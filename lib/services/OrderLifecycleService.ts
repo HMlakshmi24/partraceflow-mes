@@ -98,6 +98,7 @@ export class OrderLifecycleService {
         where: { id: current.id },
         data: { status: params.newStatus },
       }),
+
       prisma.orderActivity.create({
         data: {
           orderId: current.id,

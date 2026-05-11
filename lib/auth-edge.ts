@@ -13,7 +13,7 @@ function b64urlToBytes(b64url: string): Uint8Array {
 
 export async function verifyEdgeToken(
     token: string
-): Promise<{ userId: string; username: string; role: string } | null> {
+): Promise<{ userId: string; username: string; role: string; mustChangePassword?: boolean } | null> {
     try {
         const secret = process.env.SESSION_SECRET ?? 'mes-dev-secret-CHANGE-IN-PRODUCTION';
         // H5: Reject all sessions in production if SESSION_SECRET is the insecure default
@@ -44,7 +44,7 @@ export async function verifyEdgeToken(
         const payload = JSON.parse(new TextDecoder().decode(b64urlToBytes(encoded)));
         if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
 
-        return { userId: payload.userId, username: payload.username, role: payload.role };
+        return { userId: payload.userId, username: payload.username, role: payload.role, mustChangePassword: payload.mustChangePassword };
     } catch {
         return null;
     }

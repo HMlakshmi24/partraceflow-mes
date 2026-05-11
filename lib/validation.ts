@@ -5,6 +5,10 @@
 
 import { z } from 'zod';
 
+export const noHtml = z.string().regex(/^[^<>]*$/, 'HTML tags are not allowed for security reasons (XSS protection).');
+
+
+
 // ─── Auth ─────────────────────────────────────────────────────────────────
 
 export const LoginSchema = z.object({
@@ -39,7 +43,7 @@ export const QualityCheckSchema = z.object({
     expected: z.string().max(256),
     actual: z.string().max(256),
     result: z.enum(['PASS', 'FAIL', 'PENDING']),
-    notes: z.string().max(1024).optional(),
+    notes: noHtml.max(1024).optional(),
 });
 
 // ─── Recipes ──────────────────────────────────────────────────────────────
@@ -49,7 +53,7 @@ export const CreateRecipeSchema = z.object({
     code: z.string().min(1).max(64),
     name: z.string().min(1).max(128),
     productId: z.string().uuid(),
-    description: z.string().max(1024).optional(),
+    description: noHtml.max(1024).optional(),
     userId: z.string().optional(),
     parameters: z.array(z.object({
         parameterName: z.string().min(1).max(128),
@@ -151,7 +155,7 @@ export const UpdateSpoolStatusSchema = z.object({
   action: z.literal('update_status'),
   id:     z.string().min(1),
   status: SpoolStatusEnum,
-  notes:  z.string().max(1024).optional(),
+  notes:  noHtml.max(1024).optional(),
 });
 
 export const CreateWeldSchema = z.object({
@@ -170,7 +174,7 @@ export const CreateNDESchema = z.object({
   inspector: z.string().max(128).optional().nullable(),
   result:    z.enum(['ACCEPTABLE','REJECTABLE','PENDING']).default('PENDING'),
   holdFlag:  z.boolean().default(false),
-  notes:     z.string().max(2048).optional().nullable(),
+  notes:     noHtml.max(2048).optional().nullable(),
 });
 
 export const CreateNCRSchema = z.object({
@@ -205,7 +209,7 @@ export const RFIDIngestSchema = z.object({
 export const ApproveSpoolSchema = z.object({
   spoolId: z.string().min(1),
   action: z.enum(['APPROVE', 'REJECT']),
-  remarks: z.string().max(2048).optional(),
+  remarks: noHtml.max(2048).optional(),
 });
 
 // ─── Helper ───────────────────────────────────────────────────────────────

@@ -49,16 +49,14 @@ export async function POST(req: NextRequest) {
 
         await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
-        // Warn when production accounts use known-weak passwords
-        const usingWeakPassword = isProduction && WEAK_DEMO_PASSWORDS.has(password);
-        if (usingWeakPassword) {
-            AuditService.log(EventType.PERMISSION_DENIED, `User "${username}" attempted to login using weak credentials in production`, { username, ip }).catch(() => { });
-            return NextResponse.json({ error: 'Weak default password detected in production. Contact administrator to reset your password.' }, { status: 403 });
+        // Audit-log when production accounts use known-weak passwords, but do not block
+        if (isProduction && WEAK_DEMO_PASSWORDS.has(password)) {
+            AuditService.log(EventType.PERMISSION_DENIED, `Security notice: User "${username}" is using a weak default password in production`, { username, ip }).catch(() => { });
         }
 
         // Enforce mustChangePassword
         if (user.mustChangePassword) {
-            const token = createSessionToken({ userId: user.id, username: user.username, role: user.role });
+            const token = createSessionToken({ userId: user.id, username: user.username, role: user.role, mustChangePassword: true });
             const res = NextResponse.json({
                 success: true,
                 mustChangePassword: true,
@@ -70,7 +68,7 @@ export async function POST(req: NextRequest) {
 
         AuditService.log(EventType.AUTH_LOGIN, `User "${username}" logged in`, { username, role: user.role, ip }, user.id).catch(() => { });
 
-        const token = createSessionToken({ userId: user.id, username: user.username, role: user.role });
+        const token = createSessionToken({ userId: user.id, username: user.username, role: user.role, mustChangePassword: false });
         const res = NextResponse.json({
             success: true,
             user: { id: user.id, username: user.username, role: user.role },
@@ -79,38 +77,8 @@ export async function POST(req: NextRequest) {
         res.cookies.set(SESSION_COOKIE, token, COOKIE_OPTIONS);
         return res;
 
-    } catch {
-        // DB unavailable — fall back to built-in demo credentials so the app remains usable
-        if (isProduction) {
-            console.error('[MES] Database unavailable during login — refusing demo fallback in production.');
-            return NextResponse.json({ error: 'Authentication service unavailable. Contact your administrator.' }, { status: 503 });
-        }
-
-        const DEMO_USERS: Record<string, { id: string; role: string; password: string }> = {
-            'admin': { id: 'demo-admin-001', role: 'ADMIN', password: process.env.DEMO_ADMIN_PASSWORD ?? 'admin123' },
-            'Ramesh.Kumar': { id: 'demo-op-001', role: 'OPERATOR', password: process.env.DEMO_OPERATOR_PASSWORD ?? 'demo' },
-            'Priya.Nair': { id: 'demo-op-002', role: 'OPERATOR', password: process.env.DEMO_OPERATOR_PASSWORD ?? 'demo' },
-            'Ravi.Shankar': { id: 'demo-op-003', role: 'OPERATOR', password: process.env.DEMO_OPERATOR_PASSWORD ?? 'demo' },
-            'Deepa.QC': { id: 'demo-qc-001', role: 'QUALITY', password: process.env.DEMO_OPERATOR_PASSWORD ?? 'demo' },
-            'Arjun.Supv': { id: 'demo-sup-001', role: 'SUPERVISOR', password: process.env.DEMO_OPERATOR_PASSWORD ?? 'demo' },
-            'Meena.Planner': { id: 'demo-plan-001', role: 'PLANNER', password: process.env.DEMO_OPERATOR_PASSWORD ?? 'demo' },
-            'operator': { id: 'demo-op-004', role: 'OPERATOR', password: process.env.DEMO_OPERATOR_PASSWORD ?? 'demo' },
-        };
-
-        const demo = DEMO_USERS[username];
-        if (!demo || demo.password !== password) {
-            await authFailureLimiter(ip, username);
-            await new Promise(r => setTimeout(r, 200 + Math.random() * 100));
-            return NextResponse.json({ error: 'Invalid username or password' }, { status: 401 });
-        }
-
-        const token = createSessionToken({ userId: demo.id, username, role: demo.role });
-        const res = NextResponse.json({
-            success: true,
-            user: { id: demo.id, username, role: demo.role },
-            warning: 'Running in demo mode — database is offline. All data is temporary.',
-        });
-        res.cookies.set(SESSION_COOKIE, token, COOKIE_OPTIONS);
-        return res;
+    } catch (error) {
+        console.error('[MES] Database unavailable during login:', (error as Error).message);
+        return NextResponse.json({ error: 'Authentication service unavailable. Please check database connection.' }, { status: 503 });
     }
 }

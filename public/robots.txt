@@ -1,0 +1,6 @@
+User-agent: *
+Disallow: /
+
+# ParTraceflow MES is an internal enterprise tool.
+# No public indexing allowed.
+

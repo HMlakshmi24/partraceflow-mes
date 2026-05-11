@@ -36,16 +36,27 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     });
     if (!order) return NextResponse.json({ error: 'Order not found', code: 'ORDER_NOT_FOUND' }, { status: 404 });
 
-    // IDOR Authorization Logic
+    // ── Role-Based IDOR Authorization ─────────────────────────────────────────
     if (role === 'OPERATOR') {
-      const assigned = order.workflowInstances.some((inst: any) => inst.tasks.some((t: any) => t.operatorId === userId));
+      // Operators can only view orders they are assigned to
+      const assigned = order.workflowInstances.some((inst: any) =>
+        inst.tasks.some((t: any) => t.operatorId === userId)
+      );
       if (!assigned) return deny(user, id, EventType.ORDER_ACCESS_DENIED);
-    } else if (role === 'SUPERVISOR' || role === 'QC' || role === 'QUALITY') {
-      // Logic for site/plant assignment could go here. For now, allow but log anomalies if needed.
-      // (Assuming globally allowed or implicit bounds if siteId wasn't strictly configured in req context)
+
+    } else if (role === 'QC' || role === 'QUALITY') {
+      // QC / Quality inspectors cannot access DRAFT orders
+      if (order.status === 'DRAFT') return deny(user, id, EventType.ORDER_ACCESS_DENIED);
+
+    } else if (role === 'PLANNER') {
+      // Planners can access all orders — log access for traceability
+      await AuditService.log(EventType.ORDER_ADMIN_ACCESS, `Planner ${userId} accessed order ${id}`, { orderId: id, role }, userId).catch(() => { });
+
     } else if (role === 'ADMIN') {
+      // Admins have full access — always audit
       await AuditService.log(EventType.ORDER_ADMIN_ACCESS, `Admin accessed order ${id}`, { orderId: id }, userId).catch(() => { });
     }
+    // SUPERVISOR has unrestricted access — no extra checks needed
 
     return NextResponse.json({
       ...order,
@@ -110,12 +121,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       nextActions: OrderLifecycleService.getAllowedNextStatuses(order.status, role),
     });
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : 'Status update failed';
+    const isPrismaOCC = e && typeof e === 'object' && 'code' in e && (e as any).code === 'P2025';
+    const message = isPrismaOCC ? 'Concurrent modification detected. Order was modified by another user. Refresh and try again.' : (e instanceof Error ? e.message : 'Status update failed');
     const httpStatus =
+      isPrismaOCC ? 409 :
       /Role .* cannot set order/i.test(message) ? 403 :
         /Cannot move from|Order is|no further changes/i.test(message) ? 422 :
           /not yet completed|workflow task/i.test(message) ? 422 :
             /not found/i.test(message) ? 404 : 500;
-    return NextResponse.json({ error: message, code: httpStatus === 422 ? 'TRANSITION_BLOCKED' : httpStatus === 403 ? 'FORBIDDEN' : 'SERVER_ERROR' }, { status: httpStatus });
+    
+    const errorCode = httpStatus === 409 ? 'CONCURRENCY_CONFLICT' : httpStatus === 422 ? 'TRANSITION_BLOCKED' : httpStatus === 403 ? 'FORBIDDEN' : 'SERVER_ERROR';
+    return NextResponse.json({ error: message, code: errorCode }, { status: httpStatus });
   }
 }

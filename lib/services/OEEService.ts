@@ -67,11 +67,8 @@ export class OEEService {
 
     const oee = availability * performance * qualityRate
 
-    // Update machine OEE in database
-    await prisma.machine.update({
-      where: { id: machineId },
-      data: { oee: oee * 100 }
-    })
+    // NOTE: OEE is NOT written to DB here to avoid N concurrent writes on every dashboard poll.
+    // Persist OEE periodically via a background cron job instead.
 
     return {
       machineId,

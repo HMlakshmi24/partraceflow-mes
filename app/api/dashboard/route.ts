@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
 import { OEEService } from '@/lib/services/OEEService';
+import { requireRole } from '@/lib/api-auth';
 
 type PeriodKey = 'day' | 'week' | 'shift';
 
@@ -96,12 +97,16 @@ const DEMO_DASHBOARD = {
             id: 'demo-andon-1', color: 'YELLOW', severity: 'WARNING',
             message: 'PKG-01 mechanical breakdown — maintenance required',
             reason: 'Mechanical Breakdown', boardName: 'Factory Floor',
-            timestamp: new Date(_now() - 45 * 60_000), machineId: 'd6',
+            timestamp: new Date(_now() - 45 * 60_000).toISOString(), machineId: 'd6',
         }],
     },
 };
 
 export async function GET(req: NextRequest) {
+    // Require an authenticated session with a valid role
+    const authError = requireRole(req, ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'MAINTENANCE', 'QC', 'QUALITY']);
+    if (authError) return authError;
+
     try {
         const period = (new URL(req.url).searchParams.get('period') ?? 'day') as PeriodKey;
         const { from, to } = getRange(period);
@@ -329,7 +334,11 @@ export async function GET(req: NextRequest) {
                 }))
             }
         });
-    } catch {
-        return NextResponse.json(DEMO_DASHBOARD);
+    } catch (error) {
+        console.error('[GET /api/dashboard] Error — returning 500 instead of masking with demo data:', error);
+        return NextResponse.json(
+            { error: 'Dashboard data could not be loaded. Please try again or contact your administrator.' },
+            { status: 500 }
+        );
     }
 }

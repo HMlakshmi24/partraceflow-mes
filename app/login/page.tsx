@@ -17,7 +17,7 @@ const DEMO_ACCOUNTS = [
         Icon: Crown,
     },
     {
-        username: 'SUPV-LEE',
+        username: 'Arjun.Supv',
         password: 'demo',
         role: 'Supervisor',
         description: 'Manage production floor',
@@ -27,7 +27,7 @@ const DEMO_ACCOUNTS = [
         Icon: HardHat,
     },
     {
-        username: 'OP-JOHN',
+        username: 'Ramesh.Kumar',
         password: 'demo',
         role: 'Operator / Worker',
         description: 'Log your work and tasks',
@@ -37,7 +37,7 @@ const DEMO_ACCOUNTS = [
         Icon: Wrench,
     },
     {
-        username: 'QC-SARAH',
+        username: 'Deepa.QC',
         password: 'demo',
         role: 'Quality Inspector',
         description: 'Inspect and approve work',
@@ -78,10 +78,14 @@ function LoginContent() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username: u.trim(), password: p }),
             });
-            let data: { success?: boolean; error?: string } = {};
+            let data: { success?: boolean; error?: string; mustChangePassword?: boolean } = {};
             try { data = await res.json(); } catch { /* non-JSON body, handled below */ }
             if (res.ok && data.success) {
-                router.replace(params.get('next') ?? '/dashboard');
+                if (data.mustChangePassword) {
+                    router.replace('/change-password');
+                } else {
+                    router.replace(params.get('next') ?? '/dashboard');
+                }
                 return;
             }
             if (res.status === 429) {

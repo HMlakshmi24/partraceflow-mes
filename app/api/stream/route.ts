@@ -2,6 +2,9 @@ import { NextRequest } from 'next/server';
 import { eventBus, MESEvent } from '@/lib/events/EventBus';
 import { verifySessionToken, SESSION_COOKIE } from '@/lib/auth';
 
+// Force Node.js runtime — verifySessionToken uses Node crypto (not Web Crypto API)
+export const runtime = 'nodejs';
+
 export async function GET(request: NextRequest) {
     // Require a valid session — factory event stream must not be publicly accessible
     const token = request.cookies.get(SESSION_COOKIE)?.value;

@@ -307,11 +307,176 @@ export class AdvancedWorkflowEngine {
   // Helper methods
 
   private static evaluateCondition(condition: string, context: any): any {
-    // Simple condition evaluation (could be enhanced with a proper expression engine)
+    // Safe condition evaluation.
+    // Workflow gateway `condition` must be a simple, pre-approved boolean expression.
+    // This intentionally rejects anything that could lead to code execution.
     try {
-      // Example: "qualityResult === 'PASS'" or "priority > 5"
-      const func = new Function('context', `return ${condition}`);
-      return func(context);
+      const raw = condition.trim();
+
+      // Only allow identifiers and operators for a tiny expression language.
+      // Allowed:
+      // - identifiers: [a-zA-Z_$][a-zA-Z0-9_$]* (e.g. qualityResult, priority)
+      // - string literals in single quotes: 'PASS'
+      // - numeric literals: 123, 12.5
+      // - boolean literals: true/false
+      // - comparisons: ===, !==, >, >=, <, <=
+      // - logical: &&, ||
+      // - parentheses and whitespace
+      const allowedChars = /^[a-zA-Z0-9_\s\t\n\r'"().,+\-*/<>=!&|$]+$/;
+      if (!allowedChars.test(raw)) return null;
+
+      // Hard reject common code-execution vectors.
+      const forbidden = /(new\s+Function|eval\(|Function\(|require\(|process\.|global\.|constructor\s*\(|;|`|\{\s*\w+\s*:)/;
+      if (forbidden.test(raw)) return null;
+
+      // Evaluate using a strict token-based approach by rewriting identifiers
+      // into context lookups. We avoid `eval`/`Function` entirely.
+      // Supported forms:
+      //   identifier <op> literal
+      //   combined via && / ||
+      const tokenize = (s: string) => {
+        const tokens: Array<{ type: string; value: string }> = [];
+        let i = 0;
+        const push = (type: string, value: string) => tokens.push({ type, value });
+
+        while (i < s.length) {
+          const ch = s[i];
+          if (/\s/.test(ch)) { i++; continue; }
+
+          // operators (multi-char)
+          const two = s.slice(i, i + 2);
+          const three = s.slice(i, i + 3);
+          if (['===', '!==', '>=', '<=', '&&', '||'].includes(three)) { push('op', three); i += 3; continue; }
+          if (['>=', '<=', '&&', '||', '===', '!=='].includes(two)) { push('op', two); i += 2; continue; }
+          if (['>', '<'].includes(ch)) { push('op', ch); i++; continue; }
+
+          // parentheses
+          if (ch === '(' || ch === ')') { push('paren', ch); i++; continue; }
+
+          // string literal (single quotes only)
+          if (ch === "'") {
+            let j = i + 1;
+            while (j < s.length && s[j] !== "'") j++;
+            if (j >= s.length) return [];
+            const str = s.slice(i + 1, j);
+            push('string', str);
+            i = j + 1;
+            continue;
+          }
+
+          // number literal
+          if (/[0-9]/.test(ch) || (ch === '-' && /[0-9]/.test(s[i + 1] ?? ''))) {
+            let j = i;
+            while (j < s.length && /[0-9.\-]/.test(s[j])) j++;
+            push('number', s.slice(i, j));
+            i = j;
+            continue;
+          }
+
+          // identifier / boolean literal
+          if (/[a-zA-Z_$]/.test(ch)) {
+            let j = i;
+            while (j < s.length && /[a-zA-Z0-9_$]/.test(s[j])) j++;
+            const ident = s.slice(i, j);
+            if (ident === 'true' || ident === 'false') push('bool', ident);
+            else push('ident', ident);
+            i = j;
+            continue;
+          }
+
+          // single-char operators
+          if (['!'].includes(ch)) { push('op', ch); i++; continue; }
+
+          // commas/other are not supported for this minimal grammar
+          return [];
+        }
+
+        return tokens;
+      };
+
+      const tokens = tokenize(raw);
+      if (!tokens.length) return null;
+
+      const getLiteralValue = (t: any) => {
+        if (t.type === 'string') return t.value;
+        if (t.type === 'number') return Number(t.value);
+        if (t.type === 'bool') return t.value === 'true';
+        return undefined;
+      };
+
+      const resolveIdentifier = (t: any) => {
+        if (t.type !== 'ident') return undefined;
+        return context?.[t.value];
+      };
+
+      // Very small evaluator: parse sequences like
+      //   (expr) (op logical) (expr)
+      // where expr is: ident op comparison literal
+      const evalComparison = (leftTok: any, opTok: any, rightTok: any) => {
+        const leftVal = resolveIdentifier(leftTok);
+        const rightVal = getLiteralValue(rightTok);
+        switch (opTok.value) {
+          case '===': return leftVal === rightVal;
+          case '!==': return leftVal !== rightVal;
+          case '>': return Number(leftVal) > Number(rightVal);
+          case '>=': return Number(leftVal) >= Number(rightVal);
+          case '<': return Number(leftVal) < Number(rightVal);
+          case '<=': return Number(leftVal) <= Number(rightVal);
+          default: return null;
+        }
+      };
+
+      // Shunting-yard is overkill here; implement a left-associative &&/|| evaluation
+      // with parentheses supported minimally by recursion.
+      const parseExpr = (start = 0): { value: boolean; nextIndex: number } | null => {
+        // parse a primary: either parenthesized expr or comparison expr
+        const parsePrimary = (idx: number) => {
+          const tok = tokens[idx];
+          if (!tok) return null;
+          if (tok.type === 'paren' && tok.value === '(') {
+            const inner = parseExpr(idx + 1);
+            if (!inner) return null;
+            const close = tokens[inner.nextIndex];
+            if (!close || close.type !== 'paren' || close.value !== ')') return null;
+            return { value: inner.value, nextIndex: inner.nextIndex + 1 };
+          }
+
+          // comparison: ident op literal
+          const a = tokens[idx];
+          const op = tokens[idx + 1];
+          const b = tokens[idx + 2];
+          if (!a || !op || !b) return null;
+          if (a.type !== 'ident') return null;
+          if (op.type !== 'op') return null;
+          const supportedComp = ['===', '!==', '>', '>=', '<', '<='];
+          if (!supportedComp.includes(op.value)) return null;
+          const comp = evalComparison(a, op, b);
+          if (comp === null) return null;
+          if (typeof comp !== 'boolean') return null;
+          return { value: comp, nextIndex: idx + 3 };
+        };
+
+        let left = parsePrimary(start);
+        if (!left) return null;
+
+        let idx = left.nextIndex;
+        while (idx < tokens.length) {
+          const logical = tokens[idx];
+          if (!logical || logical.type !== 'op' || !['&&', '||'].includes(logical.value)) break;
+          const rightPrimary = parsePrimary(idx + 1);
+          if (!rightPrimary) return null;
+
+          if (logical.value === '&&') left = { value: left.value && rightPrimary.value, nextIndex: rightPrimary.nextIndex };
+          else left = { value: left.value || rightPrimary.value, nextIndex: rightPrimary.nextIndex };
+          idx = left.nextIndex;
+        }
+
+        return { value: left.value, nextIndex: idx };
+      };
+
+      const res = parseExpr(0);
+      if (!res) return null;
+      return res.value;
     } catch (error) {
       console.error('Condition evaluation error:', error);
       return null;

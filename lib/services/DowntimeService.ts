@@ -48,9 +48,15 @@ export class DowntimeService {
     reasonId?: string
     rootCause?: string
     correctiveAction?: string
+    resolutionNotes?: string
   }) {
     const event = await prisma.downtimeEvent.findUnique({ where: { id: downtimeEventId } })
     if (!event) throw new Error('Downtime event not found')
+
+    // Guard: prevent double-resolving an already closed event
+    if (event.status === 'CLOSED') {
+      throw new Error('This downtime event has already been resolved.')
+    }
 
     const endTime = new Date()
     const durationMinutes = (endTime.getTime() - event.startTime.getTime()) / 60000
@@ -63,14 +69,15 @@ export class DowntimeService {
         status: 'CLOSED',
         reasonId: data.reasonId,
         rootCause: data.rootCause,
-        correctiveAction: data.correctiveAction
+        // Map resolutionNotes → correctiveAction so frontend notes are saved
+        correctiveAction: data.resolutionNotes ?? data.correctiveAction,
       }
     })
 
-    // Restore machine status
+    // Restore machine to RUNNING (not IDLE) so it shows green on the dashboard
     await prisma.machine.update({
       where: { id: event.machineId },
-      data: { status: 'IDLE' }
+      data: { status: 'RUNNING' }
     })
 
     return updated
