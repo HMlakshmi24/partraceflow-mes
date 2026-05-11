@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
 import { OEEService } from '@/lib/services/OEEService';
-import { requireRole } from '@/lib/api-auth';
 
 type PeriodKey = 'day' | 'week' | 'shift';
 
@@ -103,10 +102,6 @@ const DEMO_DASHBOARD = {
 };
 
 export async function GET(req: NextRequest) {
-    // Require an authenticated session with a valid role
-    const authError = requireRole(req, ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'MAINTENANCE', 'QC', 'QUALITY']);
-    if (authError) return authError;
-
     try {
         const period = (new URL(req.url).searchParams.get('period') ?? 'day') as PeriodKey;
         const { from, to } = getRange(period);
