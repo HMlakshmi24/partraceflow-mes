@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/services/database';
 import { OrderLifecycleService } from '@/lib/services/OrderLifecycleService';
 
@@ -279,7 +280,7 @@ export class WorkflowEngine {
   }
 
   private static async processTokenTx(
-    tx: typeof prisma,
+    tx: Prisma.TransactionClient,
     instanceId: string,
     tokenId: string,
     graph?: WorkflowGraph,
