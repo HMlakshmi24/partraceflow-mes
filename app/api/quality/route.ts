@@ -143,21 +143,56 @@ if (action === 'task_qc') {
         return NextResponse.json({ error: 'Invalid quality check', issues: parsed.error.issues }, { status: 400 });
       }
 
-      const qc = await prisma.qualityCheck.create({ data: parsed.data });
-      
-      // Log quality check with full audit trail
+      // For QC PASS: re-validate task status and duplicate check atomically inside a transaction
+      // to eliminate the race condition between canSubmitQuality() and record creation.
+      let qc;
+      if (qcResult === 'PASS') {
+        try {
+          qc = await prisma.$transaction(async (tx) => {
+            const taskNow = await tx.workflowTask.findUnique({
+              where: { id: taskId },
+              select: { status: true, stepDef: { select: { name: true } } },
+            });
+            if (!taskNow) throw new Error('Task not found');
+            if (taskNow.status !== 'COMPLETED') {
+              throw new Error(
+                `Cannot submit QC PASS — "${taskNow.stepDef?.name ?? 'task'}" status changed to "${taskNow.status}" before the record could be saved. Please refresh and retry.`,
+              );
+            }
+            const existingPass = await tx.qualityCheck.findFirst({
+              where: { taskId, result: 'PASS' },
+              select: { id: true },
+            });
+            if (existingPass) {
+              throw new Error('A QC PASS was already recorded concurrently. Duplicate approvals are not permitted.');
+            }
+            return tx.qualityCheck.create({ data: parsed.data });
+          });
+        } catch (txErr) {
+          const msg = txErr instanceof Error ? txErr.message : 'QC transaction failed';
+          return NextResponse.json({ error: msg, code: 'QC_ATOMIC_VALIDATION_FAILED' }, { status: 422 });
+        }
+      } else {
+        qc = await prisma.qualityCheck.create({ data: parsed.data });
+      }
+
       await AuditService.log(
         qcResult === 'PASS' ? EventType.QUALITY_PASS : EventType.QUALITY_FAIL,
         `Task ${taskId} quality ${qcResult} by ${performedBy} (${qc.parameter})`,
-        { 
-            taskId, 
-            result: qcResult, 
-            parameter: qc.parameter,
-            performedBy,
-            submittedAt: new Date().toISOString()
-        },
+        { taskId, result: qcResult, parameter: qc.parameter, performedBy, submittedAt: new Date().toISOString() },
         userId
       );
+      await AuditService.logDiffs({
+        entityType: 'QualityCheck',
+        entityId: qc.id,
+        before: { result: null, parameter: qc.parameter, actual: null },
+        after: { result: qc.result, parameter: qc.parameter, actual: qc.actual },
+        changedBy: performedBy,
+        changedByRole: role,
+        changedByUserId: userId,
+        eventType: qcResult === 'PASS' ? 'QUALITY_PASS' : 'QUALITY_FAIL',
+        summary: `QC ${qcResult} for task ${taskId} by ${performedBy}`,
+      });
       
       await prisma.systemEvent.create({
         data: {
@@ -199,6 +234,23 @@ if (action === 'task_qc') {
 
     if (!ORDER_QC_ROLES.includes(role)) {
       return NextResponse.json({ error: `Role ${role} cannot submit order-level QC results` }, { status: 403 });
+    }
+
+    // Guard: PASS requires order to be in QC_PENDING — all production steps must be complete
+    if (result.toUpperCase() === 'PASS') {
+      const orderForGuard = await prisma.workOrder.findUnique({
+        where: { id: workOrderId },
+        select: { status: true },
+      });
+      if (!orderForGuard) {
+        return NextResponse.json({ error: 'Work order not found', code: 'ORDER_NOT_FOUND' }, { status: 404 });
+      }
+      if (orderForGuard.status !== 'QC_PENDING') {
+        return NextResponse.json({
+          error: `Cannot submit QC PASS — order is in "${orderForGuard.status}" status. All production steps must be completed before quality can be approved.`,
+          code: 'ORDER_NOT_QC_PENDING',
+        }, { status: 422 });
+      }
     }
 
     const record = await prisma.inspectionRecord.create({

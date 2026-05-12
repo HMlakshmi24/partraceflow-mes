@@ -188,6 +188,24 @@ async function main() {
         },
     ];
 
+    // Operator assignment map per step — realistic shop floor assignment
+    const operatorForStep = [
+        users['Raj.Op'],        // Step 1: Raw Material Inspection
+        users['Ramesh.Kumar'],  // Step 2: CNC Machining
+        users['Priya.Nair'],    // Step 3: Assembly
+        users['Raj.Op'],        // Step 4: Pressure Test
+        users['Ramesh.Kumar'],  // Step 5: Final QC Inspection
+    ];
+
+    // Task-level QC parameters per step (industrial-realistic)
+    const qcParamsForStep = [
+        { parameter: 'Material Certificate',      expected: 'MTR verified, grade matches spec',  actual: 'MTR-2024-012 confirmed — CS A106 Gr.B',     result: 'PASS' },
+        { parameter: 'Dimensional Tolerance',     expected: '±0.05 mm on all critical features', actual: '±0.03 mm — all features within tolerance',  result: 'PASS' },
+        { parameter: 'Assembly Torque',           expected: '120 ± 10 Nm on body bolts',         actual: '118 Nm — within spec',                       result: 'PASS' },
+        { parameter: 'Hydrostatic Pressure Test', expected: 'Hold 75 bar for 10 min, zero leaks', actual: '75 bar held 12 min — no leaks detected',    result: 'PASS' },
+        { parameter: 'Surface Finish & Marking',  expected: 'Ra ≤ 3.2 µm, serial legible',       actual: 'Ra 1.8 µm, serial stamped correctly',        result: 'PASS' },
+    ];
+
     for (const def of orderDefs) {
         const existing = await prisma.workOrder.findFirst({ where: { orderNumber: def.orderNumber } });
         if (existing) {
@@ -224,20 +242,132 @@ async function main() {
             });
         }
 
-        // Workflow instance + tasks
+        // Workflow instance + tasks (with operators and realistic timestamps)
         const instance = await prisma.workflowInstance.create({
             data: { workOrderId: wo.id, status: 'ACTIVE' },
         });
 
+        const createdTasks = [];
         for (let i = 0; i < steps.length; i++) {
             const taskStatus = def.taskStatuses[i] ?? 'PENDING';
-            await prisma.workflowTask.create({
+            const op = operatorForStep[i];
+            // Stagger start/end times realistically across the order duration
+            const stepStartOffset = 2 + (steps.length - 1 - i) * 0.4;
+            const stepEndOffset = 1 + (steps.length - 1 - i) * 0.35;
+            const task = await prisma.workflowTask.create({
                 data: {
                     instanceId: instance.id,
                     stepDefId: steps[i].id,
                     status: taskStatus,
-                    startTime: taskStatus !== 'PENDING' ? daysAgo(2) : null,
-                    endTime: taskStatus === 'COMPLETED' ? daysAgo(1) : null,
+                    operatorId: taskStatus !== 'PENDING' ? (op?.id ?? null) : null,
+                    startTime: taskStatus !== 'PENDING' ? daysAgo(stepStartOffset) : null,
+                    endTime: taskStatus === 'COMPLETED' ? daysAgo(stepEndOffset) : null,
+                    reworkCount: def.status === 'REWORK' ? 1 : 0,
+                },
+            });
+            createdTasks.push({ task, step: steps[i], index: i, taskStatus });
+        }
+
+        // ── QualityCheck records per completed task ────────────────────────────
+        // For orders where tasks are COMPLETED, record per-step QC evidence.
+        for (const { task, index, taskStatus } of createdTasks) {
+            if (taskStatus !== 'COMPLETED') continue;
+            const qcp = qcParamsForStep[index];
+            await prisma.qualityCheck.create({
+                data: {
+                    taskId: task.id,
+                    parameter: qcp.parameter,
+                    expected: qcp.expected,
+                    actual: qcp.actual,
+                    result: qcp.result,
+                },
+            });
+        }
+
+        // ── InspectionRecord for orders that went through QC ──────────────────
+        if (['QC_PENDING', 'REWORK', 'APPROVED', 'COMPLETED'].includes(def.status)) {
+            const inspResult = def.status === 'REWORK' ? 'REWORK'
+                : def.status === 'QC_PENDING' ? 'PASS'  // QC passed per task, order awaiting supervisor APPROVED
+                : 'PASS';
+            const inspNotes = def.status === 'REWORK'
+                ? 'Surface finish defect on port face — dimensional tolerance exceeded by 0.3 mm on bore ID. Operator rework required before re-inspection.'
+                : def.status === 'QC_PENDING'
+                ? 'All 5 production steps passed in-process QC. Awaiting supervisor approval before dispatch.'
+                : 'All dimensions within spec. Surface finish Ra 1.8 µm (limit 3.2). Pressure test held 12 min at 75 bar. QC PASS — approved for dispatch.';
+            await prisma.inspectionRecord.create({
+                data: {
+                    workOrderId: wo.id,
+                    inspector: 'Deepa.QC',
+                    result: inspResult,
+                    notes: inspNotes,
+                    defectType: def.status === 'REWORK' ? 'Dimensional Out-of-Tolerance' : null,
+                    measurements: JSON.stringify({
+                        boreID:        { value: def.status === 'REWORK' ? 50.32 : 50.02, unit: 'mm',  limit: '50.00 ± 0.05', status: def.status === 'REWORK' ? 'FAIL' : 'PASS' },
+                        flangeFaceRa:  { value: def.status === 'REWORK' ? 4.1   : 1.8,   unit: 'µm',  limit: '≤ 3.2',        status: def.status === 'REWORK' ? 'FAIL' : 'PASS' },
+                        bodyBoltTorque:{ value: 118,                                     unit: 'Nm',  limit: '120 ± 10',     status: 'PASS' },
+                        testPressure:  { value: 75,                                      unit: 'bar', limit: '75 min',        status: 'PASS' },
+                        testDuration:  { value: def.status === 'REWORK' ? 12 : 12,      unit: 'min', limit: '10 min',        status: 'PASS' },
+                    }),
+                    visualChecks: JSON.stringify({
+                        surfaceFinish: def.status === 'REWORK' ? 'FAIL — visible machining chatter marks on port face' : 'PASS — smooth finish, no chatter or burrs',
+                        serialMarking: 'PASS — stamp legible and correctly positioned',
+                        paintCoating:  'PASS — uniform coverage, no holidays or runs',
+                        labelAlignment:'PASS — nameplate aligned and fully legible',
+                    }),
+                },
+            });
+        }
+
+        // ── AuditDiff records for REWORK order — preserved operational evidence ─
+        // Demonstrates immutable traceability: the audit trail shows that tasks WERE
+        // completed (with timestamps and operators) before the QC failure reset them.
+        if (def.status === 'REWORK') {
+            const reworkTxId = `rework-${wo.id}-cycle1-seed`;
+            const completedBeforeRework = createdTasks; // all tasks are now PENDING (post-rework)
+            // The seed records what was recorded before rework: tasks had been completed
+            const preReworkData = [
+                { startOffset: 12.5, endOffset: 11.2, operatorIdx: 0 },
+                { startOffset: 11.0, endOffset: 9.8,  operatorIdx: 1 },
+                { startOffset: 9.5,  endOffset: 8.1,  operatorIdx: 2 },
+                { startOffset: 8.0,  endOffset: 6.5,  operatorIdx: 3 },
+                { startOffset: 6.2,  endOffset: 4.8,  operatorIdx: 4 },
+            ];
+            for (let i = 0; i < completedBeforeRework.length; i++) {
+                const { task } = completedBeforeRework[i];
+                const prev = preReworkData[i];
+                const prevOp = operatorForStep[prev.operatorIdx];
+                const evidenceFields = [
+                    { fieldName: 'status',     oldValue: 'COMPLETED', newValue: 'PENDING' },
+                    { fieldName: 'startTime',  oldValue: daysAgo(prev.startOffset).toISOString(), newValue: null },
+                    { fieldName: 'endTime',    oldValue: daysAgo(prev.endOffset).toISOString(),   newValue: null },
+                    { fieldName: 'operatorId', oldValue: prevOp?.id ?? null,                       newValue: null },
+                ];
+                for (const f of evidenceFields) {
+                    await prisma.auditDiff.create({
+                        data: {
+                            entityType: 'WorkflowTask',
+                            entityId: task.id,
+                            fieldName: f.fieldName,
+                            oldValue: f.oldValue,
+                            newValue: f.newValue,
+                            changedBy: 'Deepa.QC',
+                            changedByRole: 'QUALITY',
+                            changedByUserId: users['Deepa.QC']?.id ?? null,
+                            transactionId: reworkTxId,
+                            eventType: 'REWORK_RESET',
+                            summary: `Rework cycle #1: evidence preserved before reset (step ${i + 1})`,
+                        },
+                    });
+                }
+            }
+            // Also record what the failed QC inspection found
+            await prisma.qualityCheck.create({
+                data: {
+                    taskId: completedBeforeRework[4].task.id, // Final QC step failure
+                    parameter: 'Dimensional Tolerance — Bore ID',
+                    expected: '50.00 ± 0.05 mm',
+                    actual: '50.32 mm — exceeds tolerance by 0.27 mm',
+                    result: 'FAIL',
                 },
             });
         }
@@ -245,13 +375,40 @@ async function main() {
         console.log(`  ✅ Order ${def.orderNumber} (${def.status})`);
     }
 
+    // ── InspectionRecord for COMPLETED order (WO-2026-006) already created above.
+    // ── SystemEvents for key lifecycle moments ─────────────────────────────────
+    console.log('  Seeding lifecycle system events...');
+    const workOrders = await prisma.workOrder.findMany({
+        where: { orderNumber: { in: ['WO-2026-004', 'WO-2026-005', 'WO-2026-006'] } },
+        select: { id: true, orderNumber: true },
+    });
+    for (const wo of workOrders) {
+        const existing = await prisma.systemEvent.findFirst({
+            where: { eventType: 'WORKFLOW_SEED', details: { contains: wo.orderNumber } },
+        });
+        if (existing) continue;
+        await prisma.systemEvent.create({
+            data: {
+                eventType: 'WORKFLOW_SEED',
+                details: `Demo lifecycle event for ${wo.orderNumber} — seeded for industrial-ready demonstration`,
+            },
+        });
+    }
+
     console.log('\n✅ Seeding complete! MES is ready.');
     console.log('\nLogin credentials (any password works for demo):');
-    console.log('  admin       / admin123   → ADMIN');
-    console.log('  Arjun.Supv  / demo       → SUPERVISOR');
+    console.log('  admin         / admin123 → ADMIN');
+    console.log('  Arjun.Supv    / demo     → SUPERVISOR');
     console.log('  Meena.Planner / demo     → PLANNER');
-    console.log('  Raj.Op      / demo       → OPERATOR');
-    console.log('  Deepa.QC    / demo       → QUALITY');
+    console.log('  Raj.Op        / demo     → OPERATOR');
+    console.log('  Deepa.QC      / demo     → QUALITY');
+    console.log('\nDemo orders show the full MES lifecycle:');
+    console.log('  WO-2026-001  PLANNED     → queued, awaiting release');
+    console.log('  WO-2026-002  RELEASED    → on shop floor, tasks pending');
+    console.log('  WO-2026-003  IN_PROGRESS → 1 step done, 4 remaining');
+    console.log('  WO-2026-004  QC_PENDING  → all 5 steps done, awaiting supervisor approval');
+    console.log('  WO-2026-005  REWORK      → QC failed, tasks reset (audit trail preserved)');
+    console.log('  WO-2026-006  COMPLETED   → fully approved and dispatched');
 }
 
 main()

@@ -424,6 +424,20 @@ export default function ClientOperatorView({
                                             <div className={styles.statusDot}></div> In Progress
                                         </div>
                                     </div>
+                                    {activeTask.operatorName && (
+                                        <div className={styles.orderField}>
+                                            <span className={styles.orderLabel}>Operator</span>
+                                            <span className={styles.orderValue}>{activeTask.operatorName}</span>
+                                        </div>
+                                    )}
+                                    {activeTask.startTime && (
+                                        <div className={styles.orderField}>
+                                            <span className={styles.orderLabel}>Started At</span>
+                                            <span className={styles.orderValue}>
+                                                {new Date(activeTask.startTime).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                            </span>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Context info row */}
@@ -583,7 +597,7 @@ export default function ClientOperatorView({
                                             {getActivityLabel(act.action)}
                                         </span>
                                         <span className={styles.eventTime} style={{ fontSize: '0.72rem', whiteSpace: 'nowrap' }}>
-                                            {new Date(act.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                            {new Date(act.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                                         </span>
                                     </div>
                                     {act.performedBy && (

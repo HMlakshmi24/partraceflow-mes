@@ -64,6 +64,59 @@ export class AuditService {
         }
     }
 
+    static computeDiffs(
+        before: Record<string, unknown>,
+        after: Record<string, unknown>,
+    ): Array<{ fieldName: string; oldValue: string | null; newValue: string | null }> {
+        const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+        const diffs: Array<{ fieldName: string; oldValue: string | null; newValue: string | null }> = [];
+        for (const key of keys) {
+            const oldStr = before[key] == null ? null : String(before[key]);
+            const newStr = after[key] == null ? null : String(after[key]);
+            if (oldStr !== newStr) diffs.push({ fieldName: key, oldValue: oldStr, newValue: newStr });
+        }
+        return diffs;
+    }
+
+    static async logDiffs(params: {
+        entityType: string;
+        entityId: string;
+        before: Record<string, unknown>;
+        after: Record<string, unknown>;
+        changedBy: string;
+        changedByRole?: string;
+        changedByUserId?: string;
+        transactionId?: string;
+        eventType?: string;
+        summary?: string;
+    }) {
+        const diffs = this.computeDiffs(params.before, params.after);
+        if (diffs.length === 0) return;
+        try {
+            await Promise.all(
+                diffs.map(d =>
+                    prisma.auditDiff.create({
+                        data: {
+                            entityType: params.entityType,
+                            entityId: params.entityId,
+                            fieldName: d.fieldName,
+                            oldValue: d.oldValue,
+                            newValue: d.newValue,
+                            changedBy: params.changedBy,
+                            changedByRole: params.changedByRole ?? null,
+                            changedByUserId: params.changedByUserId ?? null,
+                            transactionId: params.transactionId ?? null,
+                            eventType: params.eventType ?? null,
+                            summary: params.summary ?? null,
+                        },
+                    }),
+                ),
+            );
+        } catch (e) {
+            console.error('[AuditService] Failed to write audit diffs:', e);
+        }
+    }
+
     static async logChange(params: {
         action: string;
         entity: string;
@@ -74,7 +127,7 @@ export class AuditService {
         performedBy?: string;
         role?: string;
     }) {
-        return AuditService.log(
+        await AuditService.log(
             EventType.AUDIT_CHANGE,
             `${params.action} on ${params.entity} ${params.entityId}`,
             {
@@ -88,6 +141,18 @@ export class AuditService {
             },
             params.userId,
         );
+        if (params.before && typeof params.before === 'object' && params.after && typeof params.after === 'object') {
+            await AuditService.logDiffs({
+                entityType: params.entity,
+                entityId: params.entityId,
+                before: params.before as Record<string, unknown>,
+                after: params.after as Record<string, unknown>,
+                changedBy: params.performedBy ?? 'system',
+                changedByRole: params.role,
+                changedByUserId: params.userId,
+                eventType: params.action,
+            });
+        }
     }
 
     static async logPermissionDenied(params: { userId?: string; username?: string; role?: string; resource: string; action: string }) {

@@ -127,70 +127,224 @@ export class WorkflowEngine {
     }
   }
 
-  static async completeUserTask(taskId: string, outputData: unknown) {
+  static async completeUserTask(taskId: string, outputData: unknown, externalActor?: { userId?: string; username?: string; role?: string }) {
     void outputData;
-    const task = await prisma.workflowTask.findUnique({
-      where: { id: taskId },
-      include: {
-        operator: true,
-        stepDef: true,
-        instance: {
-          include: {
-            definition: true,
-            workOrder: true,
-            tasks: {
-              include: { stepDef: true },
+
+    const now = new Date();
+
+    return prisma.$transaction(async (tx) => {
+      const task = await tx.workflowTask.findUnique({
+        where: { id: taskId },
+        include: {
+          operator: true,
+          stepDef: true,
+          instance: {
+            include: {
+              definition: true,
+              workOrder: true,
+              tasks: {
+                include: { stepDef: true },
+              },
             },
           },
         },
-      },
-    });
-    if (!task) throw new Error('Task not found');
-    if (task.status === 'COMPLETED') throw new Error('Task is already completed');
+      });
 
-    const orderedTasks = [...task.instance.tasks].sort((a, b) => {
-      const seqA = a.stepDef?.sequence ?? Number.MAX_SAFE_INTEGER;
-      const seqB = b.stepDef?.sequence ?? Number.MAX_SAFE_INTEGER;
-      if (seqA !== seqB) return seqA - seqB;
-      return a.id.localeCompare(b.id);
+      if (!task) throw new Error('Task not found');
+      if (task.status === 'COMPLETED') throw new Error('Task is already completed');
+
+      const orderedTasks = [...task.instance.tasks].sort((a, b) => {
+        const seqA = a.stepDef?.sequence ?? Number.MAX_SAFE_INTEGER;
+        const seqB = b.stepDef?.sequence ?? Number.MAX_SAFE_INTEGER;
+        if (seqA !== seqB) return seqA - seqB;
+        return a.id.localeCompare(b.id);
+      });
+
+      const thisIndex = orderedTasks.findIndex(t => t.id === taskId);
+      const blockedBy = orderedTasks.slice(0, thisIndex).find(t => t.status !== 'COMPLETED');
+      if (blockedBy) {
+        throw new Error(`Previous task '${blockedBy.stepDef?.name ?? blockedBy.id}' is still '${blockedBy.status}'.`);
+      }
+
+      // Optimistic concurrency: only update if version matches.
+      const updated = await tx.workflowTask.updateMany({
+        where: { id: taskId, version: task.version },
+        data: {
+          status: 'COMPLETED',
+          endTime: now,
+          version: { increment: 1 },
+        },
+      });
+
+      if (updated.count === 0) {
+        throw new Error('Concurrency conflict: task was updated by another operator');
+      }
+
+      const actor = {
+        userId: externalActor?.userId ?? task.operatorId ?? undefined,
+        username: externalActor?.username ?? task.operator?.username ?? 'system',
+        role: externalActor?.role ?? task.operator?.role ?? 'OPERATOR',
+      };
+
+      // Audit diff + system event within the same transaction.
+      const before = { status: task.status, endTime: task.endTime ? task.endTime.toISOString() : null };
+      const after = { status: 'COMPLETED', endTime: now.toISOString() };
+
+      const diffs: Array<{ fieldName: string; oldValue: string | null; newValue: string | null }> = [];
+      for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+        const oldStr = (before as Record<string, unknown>)[key] == null ? null : String((before as Record<string, unknown>)[key]);
+        const newStr = (after as Record<string, unknown>)[key] == null ? null : String((after as Record<string, unknown>)[key]);
+        if (oldStr !== newStr) diffs.push({ fieldName: key, oldValue: oldStr, newValue: newStr });
+      }
+
+      const transactionId = `${task.id}-${now.getTime()}`;
+
+      await Promise.all(
+        diffs.map(d =>
+          tx.auditDiff.create({
+            data: {
+              entityType: 'WorkflowTask',
+              entityId: task.id,
+              fieldName: d.fieldName,
+              oldValue: d.oldValue,
+              newValue: d.newValue,
+              changedBy: actor.username,
+              changedByRole: actor.role,
+              changedByUserId: actor.userId,
+              transactionId,
+              eventType: 'TASK_COMPLETED',
+              summary: `${d.fieldName}: ${d.oldValue ?? ''} → ${d.newValue ?? ''}`,
+            },
+          }),
+        ),
+      );
+
+      await tx.systemEvent.create({
+        data: {
+          eventType: 'TASK_COMPLETED',
+          details: JSON.stringify({
+            taskId: task.id,
+            instanceId: task.instanceId,
+            stepDefId: task.stepDefId,
+            performedBy: actor.username,
+            role: actor.role,
+            transactionId,
+            completedAt: now.toISOString(),
+          }),
+          userId: actor.userId,
+          timestamp: now,
+        },
+      });
+
+      // Advance workflow token/state inside the same transaction.
+      const context = (task.instance.context ? JSON.parse(task.instance.context) : {}) as WorkflowContext;
+      const nodeStepMap = context.nodeStepMap ?? {};
+      const nodeId = Object.entries(nodeStepMap).find(([, stepDefId]) => stepDefId === task.stepDefId)?.[0];
+      if (nodeId) {
+        const token = await tx.workflowToken.findFirst({
+          where: { instanceId: task.instanceId, nodeId, status: 'ACTIVE' },
+        });
+
+        if (token) {
+          await this.processTokenTx(
+            tx,
+            task.instanceId,
+            token.id,
+            task.instance.definition ? (JSON.parse(task.instance.definition.payload) as WorkflowGraph) : undefined,
+            context,
+          );
+
+          await tx.systemEvent.create({
+            data: {
+              eventType: 'WORKFLOW_PROGRESSION',
+              details: JSON.stringify({
+                instanceId: task.instanceId,
+                taskId: task.id,
+                nodeId,
+                transactionId,
+              }),
+              userId: actor.userId,
+              timestamp: now,
+            },
+          });
+        }
+      }
+
+      // Order lifecycle side-effects: do NOT call OrderLifecycleService here because it uses
+      // its own transactions and emits activity/events outside this boundary.
+      // This Phase focuses on WorkflowEngine atomicity.
+
+      return { taskId: task.id, transactionId };
     });
-    const thisIndex = orderedTasks.findIndex(t => t.id === taskId);
-    const blockedBy = orderedTasks.slice(0, thisIndex).find(t => t.status !== 'COMPLETED');
-    if (blockedBy) {
-      throw new Error(`Previous task '${blockedBy.stepDef?.name ?? blockedBy.id}' is still '${blockedBy.status}'.`);
+  }
+
+  private static async processTokenTx(
+    tx: typeof prisma,
+    instanceId: string,
+    tokenId: string,
+    graph?: WorkflowGraph,
+    context?: WorkflowContext,
+  ) {
+    const token = await tx.workflowToken.findUnique({ where: { id: tokenId } });
+    if (!token || token.status !== 'ACTIVE') return;
+
+    if (!graph || !context) {
+      const instance = await tx.workflowInstance.findUnique({
+        where: { id: instanceId },
+        include: { definition: true },
+      });
+      if (!instance?.definition) throw new Error('Instance/Definition missing');
+      if (!graph) graph = JSON.parse(instance.definition.payload) as WorkflowGraph;
+      if (!context) context = (instance.context ? JSON.parse(instance.context) : {}) as WorkflowContext;
     }
 
-    await prisma.workflowTask.update({
-      where: { id: taskId },
-      data: {
-        status: 'COMPLETED',
-        endTime: new Date(),
-      },
-    });
+    const currentNode = graph.nodes.find(n => n.id === token.nodeId);
+    if (!currentNode) {
+      console.error(`Node ${token.nodeId} not found in graph`);
+      return;
+    }
 
-    await OrderLifecycleService.onTaskCompleted(taskId, {
-      userId: task.operatorId ?? undefined,
-      username: task.operator?.username ?? 'system',
-      role: task.operator?.role ?? 'OPERATOR',
-    });
+    if (currentNode.type === 'task') {
+      const stepDefId = context.nodeStepMap?.[currentNode.id];
+      if (!stepDefId) throw new Error(`Workflow task node ${currentNode.id} is missing a step definition mapping`);
 
-    const context = (task.instance.context ? JSON.parse(task.instance.context) : {}) as WorkflowContext;
-    const nodeStepMap = context.nodeStepMap ?? {};
-    const nodeId = Object.entries(nodeStepMap).find(([, stepDefId]) => stepDefId === task.stepDefId)?.[0];
-    if (!nodeId) return;
+      const existingTask = await tx.workflowTask.findFirst({
+        where: { instanceId, stepDefId },
+      });
 
-    const token = await prisma.workflowToken.findFirst({
-      where: { instanceId: task.instanceId, nodeId, status: 'ACTIVE' },
-    });
-    if (!token) return;
+      if (!existingTask) {
+        await tx.workflowTask.create({
+          data: {
+            instanceId,
+            stepDefId,
+            status: 'PENDING',
+            version: 0,
+          },
+        });
+      }
+      return;
+    }
 
-    await this.processToken(
-      task.instanceId,
-      token.id,
-      task.instance.definition ? (JSON.parse(task.instance.definition.payload) as WorkflowGraph) : undefined,
-      context,
-    );
+    await tx.workflowToken.update({ where: { id: tokenId }, data: { status: 'CONSUMED' } });
+
+    if (currentNode.type === 'end') {
+      await tx.workflowInstance.update({ where: { id: instanceId }, data: { status: 'COMPLETED' } });
+      return;
+    }
+
+    const nextNodes = this.calculateNextNodes(currentNode, graph, context);
+    for (const nextId of nextNodes) {
+      const newToken = await tx.workflowToken.create({
+        data: {
+          instanceId,
+          nodeId: nextId,
+          status: 'ACTIVE',
+        },
+      });
+      await this.processTokenTx(tx, instanceId, newToken.id, graph, context);
+    }
   }
+
 
   private static calculateNextNodes(node: NodeData, graph: WorkflowGraph, context: WorkflowContext): string[] {
     if (!node.next || node.next.length === 0) return [];

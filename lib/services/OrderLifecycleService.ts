@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/services/database';
 import { canTransition, getTransitionError, STATUS_LABELS, getNextActions, ORDER_ROLE_ACTION_MAP } from '@/lib/orderStateMachine';
 import { NotificationService } from '@/lib/services/NotificationService';
+import { AuditService } from '@/lib/services/AuditService';
 
 export { ORDER_ROLE_ACTION_MAP };
 
@@ -51,25 +52,25 @@ export class OrderLifecycleService {
       }
     }
 
-    // Block QC_PENDING if any workflow tasks are still incomplete.
-    // Applies to both manual "Send to QC" and QC PASS submissions from the quality page.
-    // Only enforced when a workflow instance exists — demo orders without workflows are unaffected.
+    // Block QC_PENDING unless the workflow is fully completed for *every* active instance.
+    // This is the system-wide source of truth for "work still in progress".
     if (params.newStatus === 'QC_PENDING') {
-      const hasInstance = await prisma.workflowInstance.count({
+      const activeInstances = await prisma.workflowInstance.findMany({
         where: { workOrderId: current.id, status: { not: 'CANCELLED' } },
+        select: { id: true },
       });
-      if (hasInstance > 0) {
-        const activeInstances = await prisma.workflowInstance.findMany({
-          where: { workOrderId: current.id, status: { not: 'CANCELLED' } },
-          select: { id: true },
-        });
+
+      if (activeInstances.length > 0) {
         const activeInstanceIds = activeInstances.map(i => i.id);
+
+        // Consider any task NOT COMPLETED as in-progress for QC gating.
         const incompleteTasks = await prisma.workflowTask.count({
           where: {
             instanceId: { in: activeInstanceIds },
-            status: { notIn: ['COMPLETED', 'SKIPPED'] },
+            status: { not: 'COMPLETED' },
           },
         });
+
         if (incompleteTasks > 0) {
           throw new Error(
             `Cannot move to QC — ${incompleteTasks} workflow task(s) are not yet completed.`,
@@ -77,6 +78,7 @@ export class OrderLifecycleService {
         }
       }
     }
+
 
     const details = {
       orderId: current.id,
@@ -93,13 +95,17 @@ export class OrderLifecycleService {
       changedAt: new Date().toISOString(),
     };
 
-    const [order] = await prisma.$transaction([
-      prisma.workOrder.update({
+    const transactionId = `${current.id}-${Date.now()}`;
+
+    const [order] = await prisma.$transaction(async (tx) => {
+      // 1) Update primary state
+      const updatedOrder = await tx.workOrder.update({
         where: { id: current.id },
         data: { status: params.newStatus },
-      }),
+      });
 
-      prisma.orderActivity.create({
+      // 2) Activity log
+      await tx.orderActivity.create({
         data: {
           orderId: current.id,
           action: params.action ?? (params.newStatus === 'REWORK' ? 'QC_RESULT' : 'STATUS_CHANGE'),
@@ -113,16 +119,49 @@ export class OrderLifecycleService {
             params.notes ??
             `Status changed from ${STATUS_LABELS[current.status] ?? current.status} to ${STATUS_LABELS[params.newStatus] ?? params.newStatus}`,
         },
-      }),
-      prisma.systemEvent.create({
+      });
+
+      // 3) System event
+      await tx.systemEvent.create({
         data: {
           eventType: 'ORDER_STATUS_CHANGE',
           details: JSON.stringify(details),
           userId: params.userId,
         },
-      }),
-    ]);
+      });
 
+      // 4) Audit diffs (inside same transaction boundary)
+      const before = { status: current.status };
+      const after = { status: params.newStatus };
+      const diffs = AuditService.computeDiffs(before, after);
+
+      if (diffs.length > 0) {
+        await Promise.all(
+          diffs.map(d =>
+            tx.auditDiff.create({
+              data: {
+                entityType: 'WorkOrder',
+                entityId: current.id,
+                fieldName: d.fieldName,
+                oldValue: d.oldValue,
+                newValue: d.newValue,
+                changedBy: params.performedBy,
+                changedByRole: params.role,
+                changedByUserId: params.userId,
+                transactionId,
+                eventType: 'ORDER_STATUS_CHANGE',
+                summary: `${STATUS_LABELS[current.status] ?? current.status} → ${STATUS_LABELS[params.newStatus] ?? params.newStatus}`,
+              },
+            }),
+          ),
+        );
+      }
+
+
+      return [updatedOrder];
+    });
+
+    // Side-effects that must not be transaction-coupled remain outside
     await this.emitStatusSideEffects(current.orderNumber, params.newStatus, params.performedBy);
 
     return order;
@@ -289,7 +328,9 @@ export class OrderLifecycleService {
       });
 
       // C1: Reset all COMPLETED workflow tasks back to PENDING so operators can re-execute them.
-      // Record how many rework cycles have occurred for traceability.
+      // AUDIT SAFETY: Snapshot operational evidence (startTime, endTime, operatorId) into
+      // AuditDiff records BEFORE the reset. These records are immutable and preserve full
+      // traceability even after the live task fields are cleared for re-execution.
       const reworkCount = await prisma.orderActivity.count({
         where: { orderId: order.id, action: 'QC_RESULT', toStatus: 'REWORK' },
       });
@@ -299,6 +340,40 @@ export class OrderLifecycleService {
         select: { id: true },
       });
       const reworkInstanceIds = reworkInstances.map(i => i.id);
+
+      const tasksToReset = await prisma.workflowTask.findMany({
+        where: { instanceId: { in: reworkInstanceIds }, status: 'COMPLETED' },
+        select: { id: true, startTime: true, endTime: true, operatorId: true },
+      });
+
+      const reworkTxId = `rework-${order.id}-cycle${reworkCount + 1}-${Date.now()}`;
+
+      for (const t of tasksToReset) {
+        const evidenceFields: Array<{ fieldName: string; oldValue: string | null }> = [
+          { fieldName: 'status',     oldValue: 'COMPLETED' },
+          { fieldName: 'startTime',  oldValue: t.startTime?.toISOString() ?? null },
+          { fieldName: 'endTime',    oldValue: t.endTime?.toISOString() ?? null },
+          { fieldName: 'operatorId', oldValue: t.operatorId ?? null },
+        ];
+        for (const f of evidenceFields) {
+          await prisma.auditDiff.create({
+            data: {
+              entityType: 'WorkflowTask',
+              entityId: t.id,
+              fieldName: f.fieldName,
+              oldValue: f.oldValue,
+              newValue: f.fieldName === 'status' ? 'PENDING' : null,
+              changedBy: params.performedBy,
+              changedByRole: params.role,
+              changedByUserId: params.userId ?? null,
+              transactionId: reworkTxId,
+              eventType: 'REWORK_RESET',
+              summary: `Rework cycle #${reworkCount + 1}: evidence preserved before reset`,
+            },
+          });
+        }
+      }
+
       await prisma.workflowTask.updateMany({
         where: {
           instanceId: { in: reworkInstanceIds },
@@ -309,6 +384,7 @@ export class OrderLifecycleService {
           startTime: null,
           endTime: null,
           operatorId: null,
+          reworkCount: { increment: 1 },
         },
       });
 
@@ -318,7 +394,7 @@ export class OrderLifecycleService {
         performedBy: 'system',
         role: 'SYSTEM',
         userId: params.userId,
-        notes: `Rework cycle #${reworkCount + 1}: all workflow tasks reset to PENDING for re-execution`,
+        notes: `Rework cycle #${reworkCount + 1}: ${tasksToReset.length} task(s) reset to PENDING. Operational evidence preserved in audit trail (txId: ${reworkTxId}).`,
       });
 
       return 'REWORK';
@@ -328,6 +404,29 @@ export class OrderLifecycleService {
       // Only allow PASS from valid production or pending states
       if (!['IN_PROGRESS', 'RELEASED', 'REWORK', 'QC_PENDING'].includes(order.status)) {
         throw new Error(`Cannot record QC pass — order is ${order.status}`);
+      }
+
+      // Single atomic authority: verify all workflow tasks are COMPLETED before accepting QC PASS.
+      // This guard closes the gap between task-level gating (canSubmitQuality) and order-level
+      // transition gating (transitionOrder), making QC correctness deterministic end-to-end.
+      if (order.status !== 'QC_PENDING') {
+        const activeInstances = await prisma.workflowInstance.findMany({
+          where: { workOrderId: order.id, status: { not: 'CANCELLED' } },
+          select: { id: true },
+        });
+        if (activeInstances.length > 0) {
+          const incompleteTasks = await prisma.workflowTask.count({
+            where: {
+              instanceId: { in: activeInstances.map(i => i.id) },
+              status: { not: 'COMPLETED' },
+            },
+          });
+          if (incompleteTasks > 0) {
+            throw new Error(
+              `Cannot record QC PASS — ${incompleteTasks} workflow task(s) are not yet completed. All production steps must finish before quality inspection can pass.`,
+            );
+          }
+        }
       }
 
       await this.transitionOrder({

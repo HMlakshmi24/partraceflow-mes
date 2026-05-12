@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Shield, Search, ChevronLeft, ChevronRight, RefreshCw, Clock, User, AlertCircle, CheckCircle, Zap, GitBranch } from 'lucide-react';
+import { Shield, Search, ChevronLeft, ChevronRight, RefreshCw, Clock, User, AlertCircle, CheckCircle, Zap, GitBranch, ArrowRight } from 'lucide-react';
 
 interface AuditEvent {
     id: string;
@@ -9,6 +9,20 @@ interface AuditEvent {
     details: string;
     userId?: string;
     timestamp: string;
+}
+
+interface AuditDiff {
+    id: string;
+    entityType: string;
+    entityId: string;
+    fieldName: string;
+    oldValue: string | null;
+    newValue: string | null;
+    changedBy: string;
+    changedByRole: string | null;
+    timestamp: string;
+    eventType: string | null;
+    summary: string | null;
 }
 
 interface EventTypeCount {
@@ -35,6 +49,9 @@ function EventBadge({ type }: { type: string }) {
 }
 
 export default function AuditPage() {
+    const [tab, setTab] = useState<'events' | 'diffs'>('events');
+
+    // Events tab state
     const [events, setEvents] = useState<AuditEvent[]>([]);
     const [total, setTotal] = useState(0);
     const [pages, setPages] = useState(1);
@@ -45,6 +62,14 @@ export default function AuditPage() {
     const [searchInput, setSearchInput] = useState('');
     const [filterType, setFilterType] = useState('');
     const [expanded, setExpanded] = useState<string | null>(null);
+
+    // Diffs tab state
+    const [diffs, setDiffs] = useState<AuditDiff[]>([]);
+    const [diffsTotal, setDiffsTotal] = useState(0);
+    const [diffsPages, setDiffsPages] = useState(1);
+    const [diffsPage, setDiffsPage] = useState(1);
+    const [diffsLoading, setDiffsLoading] = useState(false);
+    const [diffsEntityType, setDiffsEntityType] = useState('');
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -60,14 +85,27 @@ export default function AuditPage() {
         setLoading(false);
     }, [page, filterType, search]);
 
-    useEffect(() => { load(); }, [load]);
+    const loadDiffs = useCallback(async () => {
+        setDiffsLoading(true);
+        const params = new URLSearchParams({ view: 'diffs', page: String(diffsPage), limit: '50' });
+        if (diffsEntityType) params.set('entityType', diffsEntityType);
+        const r = await fetch(`/api/audit?${params}`);
+        const d = await r.json();
+        setDiffs(d.diffs ?? []);
+        setDiffsTotal(d.total ?? 0);
+        setDiffsPages(d.pages ?? 1);
+        setDiffsLoading(false);
+    }, [diffsPage, diffsEntityType]);
+
+    useEffect(() => { if (tab === 'events') load(); }, [load, tab]);
+    useEffect(() => { if (tab === 'diffs') loadDiffs(); }, [loadDiffs, tab]);
 
     const doSearch = () => { setSearch(searchInput); setPage(1); };
 
     return (
         <div style={{ padding: '1.5rem', fontFamily: 'inherit', background: 'var(--background)', minHeight: '100vh' }}>
             {/* Header */}
-            <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                     <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: 'var(--foreground)', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                         <Shield size={24} color="#6366f1" /> Audit Trail
@@ -77,7 +115,7 @@ export default function AuditPage() {
                     </p>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button onClick={load} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.65rem 1.1rem', borderRadius: '0.5rem', border: '1px solid #e5e7eb', background: 'var(--card-bg)', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
+                    <button onClick={tab === 'events' ? load : loadDiffs} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.65rem 1.1rem', borderRadius: '0.5rem', border: '1px solid #e5e7eb', background: 'var(--card-bg)', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
                         <RefreshCw size={15} /> Refresh
                     </button>
                     <button
@@ -105,6 +143,81 @@ export default function AuditPage() {
                 </div>
             </div>
 
+            {/* Tab switcher */}
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', borderBottom: '2px solid #e5e7eb', paddingBottom: '0' }}>
+                {(['events', 'diffs'] as const).map(t => (
+                    <button key={t} onClick={() => setTab(t)} style={{ padding: '0.55rem 1.25rem', border: 'none', background: 'none', cursor: 'pointer', fontWeight: tab === t ? 700 : 400, color: tab === t ? '#6366f1' : 'var(--muted-foreground)', borderBottom: tab === t ? '2px solid #6366f1' : '2px solid transparent', marginBottom: '-2px', fontSize: '0.9rem', textTransform: 'capitalize' }}>
+                        {t === 'events' ? 'System Events' : 'Field-Level Diffs'}
+                    </button>
+                ))}
+            </div>
+
+            {tab === 'diffs' && (
+                <div>
+                    <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <select value={diffsEntityType} onChange={e => { setDiffsEntityType(e.target.value); setDiffsPage(1); }} style={{ padding: '0.55rem 0.75rem', borderRadius: '0.4rem', border: '1.5px solid var(--card-border)', fontSize: '0.9rem', color: 'var(--foreground)', background: 'var(--card-bg)' }}>
+                            <option value="">All entity types</option>
+                            <option value="WorkOrder">WorkOrder</option>
+                            <option value="WorkflowTask">WorkflowTask</option>
+                            <option value="QualityCheck">QualityCheck</option>
+                        </select>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--muted-foreground)' }}>{diffsTotal.toLocaleString()} diffs total</span>
+                    </div>
+                    <div style={{ background: 'var(--card-bg)', borderRadius: '1rem', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                        {diffsLoading ? (
+                            <div style={{ padding: '3rem', textAlign: 'center', color: '#9ca3af' }}>Loading diffs…</div>
+                        ) : diffs.length === 0 ? (
+                            <div style={{ padding: '3rem', textAlign: 'center', color: '#9ca3af' }}>
+                                <ArrowRight size={40} style={{ opacity: 0.2, marginBottom: '0.75rem' }} />
+                                <div>No field-level diffs recorded yet. They will appear here as orders and tasks change state.</div>
+                            </div>
+                        ) : (
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                <thead>
+                                    <tr style={{ borderBottom: '1px solid #e5e7eb', background: '#f9fafb' }}>
+                                        {['Time', 'Entity', 'Field', 'Old Value', '', 'New Value', 'Changed By', 'Event'].map(h => (
+                                            <th key={h} style={{ padding: '0.65rem 1rem', textAlign: 'left', fontWeight: 700, color: 'var(--muted-foreground)', fontSize: '0.75rem', textTransform: 'uppercase' }}>{h}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {diffs.map(d => (
+                                        <tr key={d.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                            <td style={{ padding: '0.65rem 1rem', color: '#9ca3af', whiteSpace: 'nowrap' }}>{new Date(d.timestamp).toLocaleString()}</td>
+                                            <td style={{ padding: '0.65rem 1rem' }}>
+                                                <span style={{ fontWeight: 600, color: '#6366f1' }}>{d.entityType}</span>
+                                                <div style={{ fontSize: '0.72rem', color: '#9ca3af', fontFamily: 'monospace' }}>{d.entityId.slice(-8)}</div>
+                                            </td>
+                                            <td style={{ padding: '0.65rem 1rem', fontWeight: 600 }}>{d.fieldName}</td>
+                                            <td style={{ padding: '0.65rem 1rem' }}>
+                                                <span style={{ background: '#fee2e2', color: '#dc2626', padding: '2px 8px', borderRadius: 4, fontSize: '0.82rem' }}>{d.oldValue ?? '—'}</span>
+                                            </td>
+                                            <td style={{ padding: '0 0.25rem', color: '#9ca3af' }}><ArrowRight size={14} /></td>
+                                            <td style={{ padding: '0.65rem 1rem' }}>
+                                                <span style={{ background: '#d1fae5', color: '#059669', padding: '2px 8px', borderRadius: 4, fontSize: '0.82rem' }}>{d.newValue ?? '—'}</span>
+                                            </td>
+                                            <td style={{ padding: '0.65rem 1rem' }}>
+                                                <span style={{ fontWeight: 600 }}>{d.changedBy}</span>
+                                                {d.changedByRole && <span style={{ marginLeft: 4, fontSize: '0.72rem', color: '#9ca3af' }}>({d.changedByRole})</span>}
+                                            </td>
+                                            <td style={{ padding: '0.65rem 1rem', fontSize: '0.78rem', color: '#6b7280' }}>{d.eventType ?? '—'}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                        {diffsPages > 1 && (
+                            <div style={{ padding: '0.85rem 1.25rem', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}>
+                                <button onClick={() => setDiffsPage(p => Math.max(1, p - 1))} disabled={diffsPage === 1} style={{ padding: '0.4rem 0.75rem', borderRadius: '0.4rem', border: '1px solid #e5e7eb', background: diffsPage === 1 ? 'var(--surface-muted)' : 'var(--card-bg)', cursor: diffsPage === 1 ? 'not-allowed' : 'pointer', color: diffsPage === 1 ? '#9ca3af' : 'var(--foreground)', display: 'flex', alignItems: 'center' }}><ChevronLeft size={16} /></button>
+                                <span style={{ fontSize: '0.85rem', color: 'var(--muted-foreground)' }}>Page {diffsPage} of {diffsPages}</span>
+                                <button onClick={() => setDiffsPage(p => Math.min(diffsPages, p + 1))} disabled={diffsPage === diffsPages} style={{ padding: '0.4rem 0.75rem', borderRadius: '0.4rem', border: '1px solid #e5e7eb', background: diffsPage === diffsPages ? 'var(--surface-muted)' : 'var(--card-bg)', cursor: diffsPage === diffsPages ? 'not-allowed' : 'pointer', color: diffsPage === diffsPages ? '#9ca3af' : 'var(--foreground)', display: 'flex', alignItems: 'center' }}><ChevronRight size={16} /></button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {tab === 'events' && <>
             {/* Stats row */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
                 <div style={{ background: 'var(--card-bg)', borderRadius: '0.75rem', border: '1px solid #e5e7eb', padding: '1rem 1.25rem' }}>
@@ -214,6 +327,7 @@ export default function AuditPage() {
                     </div>
                 )}
             </div>
+            </>}
         </div>
     );
 }

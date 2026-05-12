@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { WorkflowEngine } from '@/lib/engines/WorkflowEngine';
 import { AuditService, EventType } from '@/lib/services/AuditService';
+import { OrderLifecycleService } from '@/lib/services/OrderLifecycleService';
 import { prisma } from '@/lib/services/database';
 import { requireRole, getRequestSession } from '@/lib/api-auth';
 
@@ -80,13 +81,54 @@ export async function POST(req: NextRequest) {
       const session = getRequestSession(req);
 
       try {
-        await WorkflowEngine.completeUserTask(taskId, {});
+        const taskBefore = await prisma.workflowTask.findUnique({
+          where: { id: taskId },
+          select: { status: true, operatorId: true, stepDef: { select: { name: true } } },
+        });
+
+        if (!taskBefore) {
+          return Response.json({ error: 'Task not found', code: 'TASK_NOT_FOUND' }, { status: 404 });
+        }
+
+        // Enforce: task must be IN_PROGRESS — operator must start before completing
+        if (taskBefore.status !== 'IN_PROGRESS') {
+          return Response.json({
+            error: `Task cannot be completed — current status is "${taskBefore.status}". The operator must start the task first.`,
+            code: 'TASK_NOT_IN_PROGRESS',
+          }, { status: 422 });
+        }
+
+        const actor = {
+          userId: session?.userId,
+          username: session?.username ?? 'system',
+          role: session?.role ?? 'OPERATOR',
+        };
+
+        await WorkflowEngine.completeUserTask(taskId, {}, actor);
+
         await AuditService.log(
           EventType.TASK_COMPLETED,
-          `Task ${taskId} completed by ${session?.username ?? 'unknown'}`,
-          { taskId, performedBy: session?.username, role: session?.role },
-          session?.userId,
+          `Task ${taskId} completed by ${actor.username}`,
+          { taskId, performedBy: actor.username, role: actor.role },
+          actor.userId,
         );
+        await AuditService.logDiffs({
+          entityType: 'WorkflowTask',
+          entityId: taskId,
+          before: { status: taskBefore.status },
+          after: { status: 'COMPLETED' },
+          changedBy: actor.username,
+          changedByRole: actor.role,
+          changedByUserId: actor.userId,
+          eventType: 'TASK_COMPLETED',
+          summary: `Task completed by ${actor.username}`,
+        });
+
+        // Trigger order lifecycle — auto-transition to QC_PENDING when all tasks done
+        await OrderLifecycleService.onTaskCompleted(taskId, actor).catch(err => {
+          console.error('[complete_task] onTaskCompleted failed (non-fatal):', err);
+        });
+
         return Response.json({ success: true });
       } catch (e) {
         const message = (e as Error).message;

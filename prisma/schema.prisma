@@ -145,6 +145,7 @@ model WorkflowInstance {
 model WorkflowTask {
   id             String   @id @default(cuid()) @map("_id")
   status         String   @default("PENDING")
+  version        Int      @default(0)
   instanceId     String
   instance       WorkflowInstance @relation(fields: [instanceId], references: [id])
   stepDefId      String
@@ -165,6 +166,7 @@ model WorkflowTask {
   traceabilityRecords TraceabilityRecord[]
   materialUsages MaterialUsage[]
 }
+
 
 // --------------------------------------------------------
 // 4. QUALITY & TRACEABILITY
@@ -187,6 +189,26 @@ model SystemEvent {
   details   String
   userId    String?
   user      User?    @relation(fields: [userId], references: [id])
+}
+
+model AuditDiff {
+  id              String   @id @default(cuid()) @map("_id")
+  entityType      String   // 'WorkOrder', 'WorkflowTask', 'QualityCheck'
+  entityId        String
+  fieldName       String
+  oldValue        String?
+  newValue        String?
+  changedBy       String
+  changedByRole   String?
+  changedByUserId String?
+  timestamp       DateTime @default(now())
+  transactionId   String?
+  eventType       String?
+  summary         String?
+
+  @@index([entityType, entityId])
+  @@index([timestamp])
+  @@index([changedByUserId])
 }
 
 // Persisted workflow definitions (BPMN/JSON payloads)
