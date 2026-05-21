@@ -8,16 +8,21 @@ import { AuditService, EventType } from '@/lib/services/AuditService';
 const WEAK_DEMO_PASSWORDS = new Set(['admin123', 'demo', 'password', '123456', 'admin', 'test']);
 
 function resolveDbFallbackUser(username: string, password: string) {
-    // Emergency access path for local/dev demos when database connectivity is temporarily unavailable.
-    // Disabled by default in production unless explicitly enabled.
-    const dbFallbackEnabled =
-        process.env.NODE_ENV !== 'production' || process.env.ALLOW_DBLESS_DEMO_LOGIN === 'true';
+    // Emergency access path when database connectivity is temporarily unavailable.
+    // Enabled by default for demo continuity. Set ALLOW_DBLESS_DEMO_LOGIN=false to disable.
+    const dbFallbackEnabled = process.env.ALLOW_DBLESS_DEMO_LOGIN !== 'false';
     if (!dbFallbackEnabled) return null;
 
     const adminUser = (process.env.DEMO_ADMIN_USERNAME ?? 'admin').trim();
     const adminPass = process.env.DEMO_ADMIN_PASSWORD ?? 'admin123';
     const operatorUser = (process.env.DEMO_OPERATOR_USERNAME ?? 'operator').trim();
     const operatorPass = process.env.DEMO_OPERATOR_PASSWORD ?? 'demo';
+    const supervisorUser = (process.env.DEMO_SUPERVISOR_USERNAME ?? 'Arjun.Supv').trim();
+    const supervisorPass = process.env.DEMO_SUPERVISOR_PASSWORD ?? 'demo';
+    const workerUser = (process.env.DEMO_WORKER_USERNAME ?? 'Ramesh.Kumar').trim();
+    const workerPass = process.env.DEMO_WORKER_PASSWORD ?? 'demo';
+    const qcUser = (process.env.DEMO_QC_USERNAME ?? 'Deepa.QC').trim();
+    const qcPass = process.env.DEMO_QC_PASSWORD ?? 'demo';
 
     if (username === adminUser && password === adminPass) {
         return { id: 'demo-admin-local', username: adminUser, role: 'ADMIN' as const };
@@ -25,6 +30,18 @@ function resolveDbFallbackUser(username: string, password: string) {
 
     if (username === operatorUser && password === operatorPass) {
         return { id: 'demo-operator-local', username: operatorUser, role: 'OPERATOR' as const };
+    }
+
+    if (username === supervisorUser && password === supervisorPass) {
+        return { id: 'demo-supervisor-local', username: supervisorUser, role: 'SUPERVISOR' as const };
+    }
+
+    if (username === workerUser && password === workerPass) {
+        return { id: 'demo-worker-local', username: workerUser, role: 'OPERATOR' as const };
+    }
+
+    if (username === qcUser && password === qcPass) {
+        return { id: 'demo-qc-local', username: qcUser, role: 'QUALITY' as const };
     }
 
     return null;
