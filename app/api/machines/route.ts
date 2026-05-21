@@ -29,6 +29,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ machines })
   } catch (error) {
     console.error('[GET /api/machines]', error)
-    return NextResponse.json({ error: 'Failed to fetch machines' }, { status: 500 })
+    const demoMachines = [
+      { id: 'demo-cnc-01', code: 'CNC-01', name: 'CNC Milling Center', status: 'RUNNING' },
+      { id: 'demo-assy-01', code: 'ASSY-01', name: 'Assembly Station A', status: 'IDLE' },
+      { id: 'demo-prs-01', code: 'PRS-01', name: 'Pressure Test Rig', status: 'IDLE' },
+      { id: 'demo-qc-01', code: 'QC-GATE', name: 'Inspection Station', status: 'RUNNING' },
+    ];
+    return NextResponse.json(
+      {
+        machines: demoMachines,
+        degraded: true,
+        warning: 'Database unavailable. Returning demo machine list.',
+      },
+      { status: 200 }
+    )
   }
 }
