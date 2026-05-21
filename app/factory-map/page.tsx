@@ -113,7 +113,7 @@ function buildDemoTree(): FactoryTree {
         [
             { signal: 'temperature', value: jitter(23, 0.02), unit: '°C' },
         ]);
-    const press = mk('demo-press', 'PRS-01', 'Hydraulic Press 80T', 'DOWN', 0,
+    const press = mk('demo-press', 'PRS-01', 'Hydraulic Press 80T', 'IDLE', 0,
         'Assembly Line B', 'Assembly & Welding', undefined,
         [
             { signal: 'pressure', value: '0.0', unit: 'bar' },
@@ -176,7 +176,7 @@ function buildDemoTree(): FactoryTree {
 
 async function fetchFactoryTree(): Promise<FactoryTree> {
     try {
-        const res = await fetch('/api/machines');
+        const res = await fetch('/api/machines', { credentials: 'include' });
         if (!res.ok) return buildDemoTree();
         const { machines } = await res.json();
         if (!machines || machines.length === 0) return buildDemoTree();
@@ -184,7 +184,7 @@ async function fetchFactoryTree(): Promise<FactoryTree> {
         // Get latest telemetry
         const telemetryMap: Record<string, any[]> = {};
         try {
-            const tRes = await fetch('/api/machines/telemetry');
+            const tRes = await fetch('/api/machines/telemetry', { credentials: 'include' });
             if (tRes.ok) {
                 const tData = await tRes.json();
                 for (const t of tData.telemetry ?? []) {
@@ -197,7 +197,7 @@ async function fetchFactoryTree(): Promise<FactoryTree> {
         // Fetch open downtimes
         const openDowntimeMap: Record<string, { id: string; reason: string; mins: number }> = {};
         try {
-            const dtRes = await fetch('/api/downtime?open=true');
+            const dtRes = await fetch('/api/downtime?open=true', { credentials: 'include' });
             if (dtRes.ok) {
                 const dtData = await dtRes.json();
                 for (const ev of dtData.downtimeEvents ?? []) {
@@ -222,9 +222,13 @@ async function fetchFactoryTree(): Promise<FactoryTree> {
                 unit: t.unit ?? t.signal?.unit ?? null,
             }));
 
+            const hasOpenDowntime = Boolean(openDowntimeMap[m.id]);
+            const normalizedStatus =
+                hasOpenDowntime ? 'DOWN' : ((m.status ?? 'IDLE').toUpperCase() === 'DOWN' ? 'IDLE' : (m.status ?? 'IDLE'));
+
             const machine: MachineLive = {
                 id: m.id, code: m.code, name: m.name,
-                status: m.status ?? 'IDLE',
+                status: normalizedStatus,
                 oee: Math.round(m.oee ?? 0),
                 lineName: m.productionLine?.name ?? '',
                 areaName: m.productionLine?.area?.name ?? '',
@@ -248,10 +252,14 @@ async function fetchFactoryTree(): Promise<FactoryTree> {
 
         const areas = Object.values(areaMap).map(a => ({ name: a.name, lines: Object.values(a.lines) }));
 
-        // If DB has machines but none are in lines, fall back to demo tree + show DB machines as ungrouped
+        // If DB has machines but none are in lines, keep real machines only (do not inject demo-only DOWN states)
         if (areas.length === 0) {
-            const demo = buildDemoTree();
-            return { ...demo, ungrouped };
+            return {
+                enterprise: 'ParTraceflow Manufacturing Corp',
+                plant: 'Bangalore Factory (PLANT-BLR)',
+                areas: [],
+                ungrouped,
+            };
         }
 
         return {
@@ -388,21 +396,27 @@ function DetailPanel({ machine, onClose, onResolved }: { machine: MachineLive; o
     const [resolveSuccess, setResolveSuccess] = useState(false);
 
     const handleResolve = async () => {
-        if (!machine.openDowntimeId) {
-            setResolveError('No active downtime event found for this machine.');
-            return;
-        }
         setResolving(true);
         setResolveError('');
         try {
-            const res = await fetch('/api/downtime', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+            // Normal path: close the OPEN downtime event.
+            // Fallback path: recover stale DOWN status even when no open downtime row exists.
+            const payload = machine.openDowntimeId
+                ? {
                     action: 'end',
                     downtimeEventId: machine.openDowntimeId,
                     resolutionNotes: resolveNotes || 'Issue resolved by operator',
-                }),
+                }
+                : {
+                    action: 'recover-machine',
+                    machineId: machine.id,
+                    resolutionNotes: resolveNotes || 'Recovered by operator',
+                };
+
+            const res = await fetch('/api/downtime', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
             });
             if (res.ok) {
                 setResolveSuccess(true);

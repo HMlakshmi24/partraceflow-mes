@@ -87,6 +87,61 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, downtimeEvent: event })
     }
 
+    // Recovery path for stale DOWN states where no OPEN downtime row exists.
+    if (action === 'recover-machine') {
+      const machineId = String(data.machineId ?? '').trim()
+      if (!machineId) {
+        return NextResponse.json({ error: 'machineId is required for recover-machine action' }, { status: 400 })
+      }
+
+      // Close any lingering OPEN downtime rows if they exist.
+      await prisma.downtimeEvent.updateMany({
+        where: { machineId, status: 'OPEN', endTime: null },
+        data: {
+          endTime: new Date(),
+          status: 'CLOSED',
+          correctiveAction: data.resolutionNotes ?? 'Recovered by operator (stale down state)',
+        }
+      })
+
+      // Bring machine back online + cascade resolve connected downtime.
+      // We treat the connected chain as a demo graph, so when one machine is fixed
+      // all connected DOWN machines should also recover.
+
+      const { getConnectedChain } = await import('@/lib/services/machineGraph');
+      const machine = await prisma.machine.findUnique({ where: { id: machineId }, select: { code: true } });
+      const connectedCodes = machine?.code ? getConnectedChain(machine.code as any) : [machine?.code].filter(Boolean);
+
+      // Close any lingering OPEN downtime rows for the entire connected chain.
+      // (If some machines don't have open events, updateMany is safe.)
+      if (connectedCodes.length > 0) {
+        const machines = await prisma.machine.findMany({ where: { code: { in: connectedCodes as any } }, select: { id: true } });
+        const ids = machines.map(m => m.id);
+        if (ids.length > 0) {
+          await prisma.downtimeEvent.updateMany({
+            where: { machineId: { in: ids }, status: 'OPEN', endTime: null },
+            data: {
+              endTime: new Date(),
+              status: 'CLOSED',
+              correctiveAction: data.resolutionNotes ?? 'Recovered by operator (cascade)',
+            }
+          });
+          await prisma.machine.updateMany({
+            where: { id: { in: ids } },
+            data: { status: 'RUNNING' }
+          });
+        }
+      }
+
+      // Return the primary machine for UI.
+      const updated = await prisma.machine.update({
+        where: { id: machineId },
+        data: { status: 'RUNNING' }
+      })
+
+      return NextResponse.json({ success: true, machine: updated })
+    }
+
     return NextResponse.json({ error: 'Invalid action. Use start or end' }, { status: 400 })
   } catch (error) {
     console.error('[POST /api/downtime]', error)

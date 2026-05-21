@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
 import { canTransition, VALID_TRANSITIONS } from '@/lib/orderStateMachine';
 import { requireRole } from '@/lib/api-auth';
+import { getConnectedChain, type MachineCode } from '@/lib/services/machineGraph';
 
 const OPERATORS = ['Ramesh.Kumar', 'Priya.Nair', 'Ravi.Shankar'];
 const SUPERVISORS = ['Arjun.Supv'];
@@ -123,6 +124,38 @@ export async function POST(req: NextRequest) {
             const notes = buildNotes(order.status, nextStatus, by);
             const machine = ['IN_PROGRESS', 'QC_PENDING'].includes(nextStatus) ? pick(MACHINES) : null;
 
+            // If demo hits a problem state, also inject DOWN on a connected chain
+            // so Factory Map shows red and becomes truly interconnected.
+            const shouldInjectDown = nextStatus === 'ON_HOLD' || nextStatus === 'REWORK';
+            const downSeedMachine: MachineCode = (machine && (['QC-GATE', 'WLD-01', 'CNC-02', 'ASSY-01'] as MachineCode[]).includes(machine as MachineCode))
+                ? (machine as MachineCode)
+                : 'QC-GATE';
+            const connected: MachineCode[] = shouldInjectDown ? getConnectedChain(downSeedMachine) : [];
+
+
+            // Pre-resolve downtime operations that require awaits so we can pass only PrismaPromises into $transaction.
+            let downOps: any[] = [];
+            if (shouldInjectDown) {
+                downOps = await Promise.all(
+                    connected.map(async (code) => {
+                        const m = await prisma.machine.findFirst({ where: { code } });
+                        if (!m) return null;
+                        const reason = await prisma.downtimeReason.findFirst({
+                            where: { name: { contains: 'DEMO', mode: 'insensitive' } },
+                        });
+                        return prisma.downtimeEvent.create({
+                            data: {
+                                machineId: m.id,
+                                reasonId: reason?.id,
+                                startTime: new Date(),
+                                status: 'OPEN',
+                            },
+                        });
+                    })
+                );
+                downOps = downOps.filter(Boolean);
+            }
+
             await prisma.$transaction([
                 prisma.workOrder.update({ where: { id: order.id }, data: { status: nextStatus } }),
                 prisma.orderActivity.create({
@@ -141,7 +174,9 @@ export async function POST(req: NextRequest) {
                 prisma.systemEvent.create({
                     data: { eventType: 'DEMO_SIMULATE', details: `[DEMO] ${order.orderNumber}: ${order.status} → ${nextStatus} (${by})` }
                 }),
+                ...(downOps as any[]),
             ]);
+
 
             updates.push({ orderNumber: order.orderNumber, from: order.status, to: nextStatus, notes });
         }

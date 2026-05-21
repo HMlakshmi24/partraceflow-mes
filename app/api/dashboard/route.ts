@@ -274,7 +274,13 @@ export async function GET(req: NextRequest) {
 
         const machineRows = oeeList.map((m: any) => {
             const dbStatus = (machineStatusMap.get(m.machineId) ?? 'IDLE').toLowerCase();
-            const status = dbStatus === 'running' ? 'running' : dbStatus === 'down' ? 'down' : dbStatus === 'maintenance' ? 'warning' : 'stopped';
+            // Do not trust stale persisted DOWN flags for dashboard tiles.
+            // Live DOWN state must come from active (OPEN) downtime events only.
+            const status = dbStatus === 'running'
+                ? 'running'
+                : dbStatus === 'maintenance'
+                    ? 'warning'
+                    : 'stopped';
             return {
                 id: m.machineId,
                 name: m.machineName,
@@ -293,11 +299,13 @@ export async function GET(req: NextRequest) {
             .slice(0, 6)
             .map(([id, v]) => ({ id, name: v.name, count: v.count, minutes: Math.round(v.minutes) }));
 
-        // Mark machines currently down based on real open stops
+        // Mark machines currently down based on real open stops only
         const downMachineIds = new Set(activeDown.map(m => m.id));
         machineRows.forEach(m => {
             if (downMachineIds.has(m.id)) m.status = 'down';
         });
+
+        const finalRunningMachines = machineRows.filter(m => m.status === 'running').length;
 
         return NextResponse.json({
             oee: { ...avg, stops: activeDown.length },   // stops = LIVE open count
@@ -311,7 +319,7 @@ export async function GET(req: NextRequest) {
                 activeOrders,
                 openDowntimes,
                 failedQc,
-                runningMachines,
+                runningMachines: finalRunningMachines,
                 totalMachines: machines.length,
             },
             andon: {

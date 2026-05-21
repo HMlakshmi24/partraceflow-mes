@@ -59,7 +59,7 @@ export default function SettingsPage() {
         setDemoAction('seeding');
         setDemoLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] Seeding demo data...`]);
         try {
-            const res = await fetch('/api/demo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'seed' }) });
+            const res = await fetch('/api/demo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'seed' }), credentials: 'include' });
             const data = await res.json();
             if (data.success) {
                 setDemoLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ✅ ${data.message}`]);

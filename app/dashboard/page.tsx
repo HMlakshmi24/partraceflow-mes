@@ -115,6 +115,8 @@ async function fetchLegacyDashboard(period: string): Promise<DashboardData> {
 
     const machines: MachineStatus[] = (oeeData.machines ?? []).map((o: any) => {
         const m = machineMap[o.machineId] ?? {};
+        const raw = toStatusKey(m.status ?? 'IDLE');
+        const normalized = raw === 'down' ? 'stopped' : raw;
         return {
             id: o.machineId,
             name: m.name ?? m.code ?? o.machineId.slice(0, 8),
@@ -124,14 +126,15 @@ async function fetchLegacyDashboard(period: string): Promise<DashboardData> {
             quality: Math.round(o.quality ?? 0),
             goodQuantity: o.goodQuantity ?? 0,
             scrapQuantity: o.scrapQuantity ?? 0,
-            status: toStatusKey(m.status ?? 'IDLE'),
+            status: normalized,
         };
     });
 
     // If oee returned nothing but machines exist, build from machine list
     if (machines.length === 0 && (machinesData.machines ?? []).length > 0) {
         for (const m of machinesData.machines) {
-            const sk = toStatusKey(m.status ?? 'IDLE');
+            const skRaw = toStatusKey(m.status ?? 'IDLE');
+            const sk = skRaw === 'down' ? 'stopped' : skRaw;
             machines.push({
                 id: m.id, name: m.name ?? m.code,
                 oee: Math.round(m.oee ?? 0),
@@ -194,6 +197,12 @@ async function fetchLegacyDashboard(period: string): Promise<DashboardData> {
             description: ev.notes ?? '',
             startTime: ev.startTime ?? '',
         }));
+
+    // DOWN is driven by currently open stops only; ignore stale DB machine DOWN flags.
+    const downIds = new Set(openStops.map(s => s.machineId).filter(Boolean));
+    machines.forEach(m => {
+        if (downIds.has(m.id)) m.status = 'down';
+    });
 
     const stops = openStops.length;
     const runningCount = machines.filter(m => m.status === 'running').length;
@@ -271,6 +280,7 @@ function DashboardContent() {
     const [resolveError, setResolveError] = useState('');
     const [resolveSuccess, setResolveSuccess] = useState(false);
     const [triggeringDemo, setTriggeringDemo] = useState(false);
+    const [actionMessage, setActionMessage] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
     const [currentTime, setCurrentTime] = useState(new Date());
     const [plcTelemetry, setPlcTelemetry] = useState<Record<string, { temp: number; cycleTime: number; vibration: number }>>({});
     const eventSourceRef = useRef<EventSource | null>(null);
@@ -421,11 +431,24 @@ function DashboardContent() {
                         <button
                             onClick={async () => {
                                 setTriggeringDemo(true);
+                                setActionMessage(null);
                                 try {
-                                    // Find first available machine
-                                    const firstMachine = data.machines[0];
+                                    // Find first available machine from current payload.
+                                    // If dashboard payload has none, fall back to direct machine lookup.
+                                    let firstMachine = data.machines[0];
+                                    if (!firstMachine) {
+                                        const mRes = await fetch('/api/machines');
+                                        if (mRes.ok) {
+                                            const mData = await mRes.json();
+                                            const raw = (mData?.machines ?? [])[0];
+                                            if (raw?.id) {
+                                                firstMachine = { id: raw.id, name: raw.name ?? raw.code } as any;
+                                            }
+                                        }
+                                    }
+
                                     if (firstMachine) {
-                                        await fetch('/api/downtime', {
+                                        const dtRes = await fetch('/api/downtime', {
                                             method: 'POST',
                                             headers: { 'Content-Type': 'application/json' },
                                             body: JSON.stringify({
@@ -435,9 +458,20 @@ function DashboardContent() {
                                                 notes: 'Demo stop — triggered for demonstration',
                                             }),
                                         });
-                                        await refresh();
+                                        if (!dtRes.ok) {
+                                            const err = await dtRes.json().catch(() => ({}));
+                                            setActionMessage({ type: 'error', text: err.error ?? 'Demo stop trigger failed.' });
+                                        } else {
+                                            await refresh();
+                                            setActionMessage({ type: 'ok', text: `Demo stop created on ${firstMachine.name ?? 'machine'}.` });
+                                            setShowStopsPanel(true);
+                                        }
+                                    } else {
+                                        setActionMessage({ type: 'error', text: 'No machines found to trigger demo stop.' });
                                     }
-                                } catch { /* ignore */ }
+                                } catch {
+                                    setActionMessage({ type: 'error', text: 'Network/server error while triggering demo stop.' });
+                                }
                                 finally { setTriggeringDemo(false); }
                             }}
                             disabled={triggeringDemo}
@@ -478,6 +512,21 @@ function DashboardContent() {
                     )}
                 </div>
             </div>
+
+            {actionMessage && (
+                <div style={{
+                    marginTop: '0.65rem',
+                    padding: '0.65rem 0.8rem',
+                    borderRadius: '8px',
+                    border: `1px solid ${actionMessage.type === 'ok' ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                    background: actionMessage.type === 'ok' ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+                    color: actionMessage.type === 'ok' ? '#10b981' : '#ef4444',
+                    fontSize: '0.84rem',
+                    fontWeight: 600,
+                }}>
+                    {actionMessage.text}
+                </div>
+            )}
 
             {/* ── Critical Alert Banner — only when machines are REALLY down ── */}
             {!loading && liveDownCount > 0 && (

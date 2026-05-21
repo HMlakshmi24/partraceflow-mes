@@ -7,13 +7,21 @@ export default function PwaRegistrar() {
     if (typeof window === 'undefined') return;
     if (!('serviceWorker' in navigator)) return;
 
-    // Register service worker for offline/PWA.
-    // Note: SW file lives in /public/sw.js -> reachable at /sw.js.
-    navigator.serviceWorker
-      .register('/sw.js')
-      .catch(() => {
-        // Keep silent to avoid breaking app boot.
-      });
+    const enablePwa = process.env.NEXT_PUBLIC_ENABLE_PWA === 'true';
+
+    // Fail-safe default: do not run PWA SW unless explicitly enabled.
+    // This avoids stale SW/navigation-cache issues that can break routed pages.
+    if (!enablePwa) {
+      navigator.serviceWorker.getRegistrations()
+        .then((regs) => Promise.all(regs.map((r) => r.unregister())))
+        .catch(() => { /* noop */ });
+      return;
+    }
+
+    // Register service worker for offline/PWA when explicitly enabled.
+    navigator.serviceWorker.register('/sw.js').catch(() => {
+      // Keep silent to avoid breaking app boot.
+    });
   }, []);
 
   return null;

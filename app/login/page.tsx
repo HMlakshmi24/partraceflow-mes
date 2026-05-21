@@ -63,10 +63,26 @@ function LoginContent() {
     const denied = params.get('denied') === '1';
     const expired = params.get('expired') === '1';
 
-    useEffect(() => {
+  useEffect(() => {
         if (denied) setError('You do not have permission to view that page. Please log in with the correct account.');
         if (expired) setError('Your session has expired. Please sign in again.');
-    }, [denied, expired]);
+  }, [denied, expired]);
+
+  async function clearStaleClientCaches() {
+    if (typeof window === 'undefined') return;
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister().catch(() => false)));
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k).catch(() => false)));
+      }
+    } catch {
+      // best-effort cleanup only
+    }
+  }
 
     async function doLogin(u: string, p: string) {
         setLoading(true);
@@ -81,6 +97,7 @@ function LoginContent() {
             let data: { success?: boolean; error?: string; mustChangePassword?: boolean } = {};
             try { data = await res.json(); } catch { /* non-JSON body, handled below */ }
             if (res.ok && data.success) {
+                await clearStaleClientCaches();
                 if (data.mustChangePassword) {
                     router.replace('/change-password');
                 } else {
@@ -193,7 +210,7 @@ function LoginContent() {
                     ParTraceflow MES
                 </div>
                 <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: '1rem', marginTop: '0.5rem', fontWeight: 500 }}>
-                    Manufacturing Management System
+                    Manufacturing Execution System
                 </div>
             </div>
 

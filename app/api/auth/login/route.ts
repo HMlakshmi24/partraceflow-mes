@@ -7,6 +7,29 @@ import { AuditService, EventType } from '@/lib/services/AuditService';
 
 const WEAK_DEMO_PASSWORDS = new Set(['admin123', 'demo', 'password', '123456', 'admin', 'test']);
 
+function resolveDbFallbackUser(username: string, password: string) {
+    // Emergency access path for local/dev demos when database connectivity is temporarily unavailable.
+    // Disabled by default in production unless explicitly enabled.
+    const dbFallbackEnabled =
+        process.env.NODE_ENV !== 'production' || process.env.ALLOW_DBLESS_DEMO_LOGIN === 'true';
+    if (!dbFallbackEnabled) return null;
+
+    const adminUser = (process.env.DEMO_ADMIN_USERNAME ?? 'admin').trim();
+    const adminPass = process.env.DEMO_ADMIN_PASSWORD ?? 'admin123';
+    const operatorUser = (process.env.DEMO_OPERATOR_USERNAME ?? 'operator').trim();
+    const operatorPass = process.env.DEMO_OPERATOR_PASSWORD ?? 'demo';
+
+    if (username === adminUser && password === adminPass) {
+        return { id: 'demo-admin-local', username: adminUser, role: 'ADMIN' as const };
+    }
+
+    if (username === operatorUser && password === operatorPass) {
+        return { id: 'demo-operator-local', username: operatorUser, role: 'OPERATOR' as const };
+    }
+
+    return null;
+}
+
 export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => null);
     if (!body) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
@@ -79,6 +102,26 @@ export async function POST(req: NextRequest) {
 
     } catch (error) {
         console.error('[MES] Database unavailable during login:', (error as Error).message);
+
+        const fallbackUser = resolveDbFallbackUser(username, password);
+        if (fallbackUser) {
+            const token = createSessionToken({
+                userId: fallbackUser.id,
+                username: fallbackUser.username,
+                role: fallbackUser.role,
+                mustChangePassword: false,
+            });
+
+            const res = NextResponse.json({
+                success: true,
+                degradedAuth: true,
+                user: { id: fallbackUser.id, username: fallbackUser.username, role: fallbackUser.role },
+                warning: 'Signed in using emergency demo mode because the database is currently unreachable.',
+            });
+            res.cookies.set(SESSION_COOKIE, token, COOKIE_OPTIONS);
+            return res;
+        }
+
         return NextResponse.json({ error: 'Authentication service unavailable. Please check database connection.' }, { status: 503 });
     }
 }
