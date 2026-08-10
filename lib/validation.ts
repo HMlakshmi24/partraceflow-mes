@@ -16,6 +16,18 @@ export const LoginSchema = z.object({
     password: z.string().min(1).max(128),
 });
 
+// MEDIUM fix: previously only self-service change-password enforced this —
+// admin-driven user creation and password reset (and initial /api/setup
+// bootstrap) accepted any 8-character string, so a weaker policy applied
+// depending on which path set a password. Reused everywhere a password is
+// set, not just changed.
+export const StrongPasswordSchema = z.string()
+    .min(12, 'Password must be at least 12 characters')
+    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+    .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
+    .regex(/[0-9]/, 'Password must contain at least one number')
+    .regex(/[\W_]/, 'Password must contain at least one symbol');
+
 // ─── Work Orders ─────────────────────────────────────────────────────────
 
 export const CreateWorkOrderSchema = z.object({
@@ -24,7 +36,12 @@ export const CreateWorkOrderSchema = z.object({
     priority: z.number().int().min(1).max(5),
     status: z.enum(['PLANNED', 'RELEASED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED']).default('PLANNED'),
     dueDate: z.string().datetime(),
-    productId: z.string().uuid(),
+    productId: z.string().min(1),
+    machineId:  z.string().min(1).optional(),
+    shiftId:    z.string().min(1).optional(),
+    operatorId: z.string().min(1).optional(),
+    scheduledStart: z.string().datetime().optional(),
+    scheduledEnd:   z.string().datetime().optional(),
 });
 
 export const UpdateWorkOrderSchema = z.object({
@@ -110,6 +127,37 @@ export const ClockInSchema = z.object({
     role: z.enum(['PRIMARY_OPERATOR', 'BACKUP', 'SUPERVISOR']).default('PRIMARY_OPERATOR'),
 });
 
+// ─── Shift Templates ──────────────────────────────────────────────────────
+
+// HH:MM format, 00:00–23:59
+const timeString = z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Time must be in HH:MM format (e.g. 06:00)');
+
+export const CreateShiftTemplateSchema = z.object({
+    name: z.string().min(1, 'Name is required').max(80),
+    startTime: timeString,
+    endTime: timeString,
+    targetQuantity: z.number().int().positive('Target quantity must be greater than 0').optional(),
+}).refine(
+    (d) => d.startTime !== d.endTime,
+    { message: 'End time must differ from start time', path: ['endTime'] },
+);
+
+export const UpdateShiftTemplateSchema = z.object({
+    name: z.string().min(1).max(80).optional(),
+    startTime: timeString.optional(),
+    endTime: timeString.optional(),
+    targetQuantity: z.number().int().positive().nullable().optional(),
+    isActive: z.boolean().optional(),
+}).refine(
+    (d) => {
+        if (d.startTime && d.endTime) return d.startTime !== d.endTime;
+        return true;
+    },
+    { message: 'End time must differ from start time', path: ['endTime'] },
+);
+
 // ─── SPC ─────────────────────────────────────────────────────────────────
 
 export const SPCRecordSchema = z.object({
@@ -140,15 +188,18 @@ export const JointStatusEnum = z.enum([
 export const CreateSpoolSchema = z.object({
   spoolId:      z.string().min(1).max(64),
   lineId:       z.string().min(1),
+  workOrderId:  z.string().min(1).optional().nullable(),
   status:       SpoolStatusEnum.default('FABRICATING'),
   rfidTag1:     z.string().max(64).optional().nullable(),
   rfidTag2:     z.string().max(64).optional().nullable(),
   barcode:      z.string().max(128).optional().nullable(),
   material:     z.string().max(128).optional().nullable(),
   size:         z.string().max(64).optional().nullable(),
+  schedule:     z.string().max(64).optional().nullable(),
   heatNumber:   z.string().max(64).optional().nullable(),
   certNumber:   z.string().max(64).optional().nullable(),
   fabricatedBy: z.string().max(128).optional().nullable(),
+  notes:        z.string().max(1024).optional().nullable(),
 });
 
 export const UpdateSpoolStatusSchema = z.object({
@@ -172,6 +223,7 @@ export const CreateNDESchema = z.object({
   ndeType:   z.string().min(1).max(32),
   ndeNumber: z.string().max(64).optional().nullable(),
   inspector: z.string().max(128).optional().nullable(),
+  technique: z.string().max(128).optional().nullable(),
   result:    z.enum(['ACCEPTABLE','REJECTABLE','PENDING']).default('PENDING'),
   holdFlag:  z.boolean().default(false),
   notes:     noHtml.max(2048).optional().nullable(),
@@ -180,7 +232,10 @@ export const CreateNDESchema = z.object({
 export const CreateNCRSchema = z.object({
   spoolId:          z.string().optional().nullable(),
   jointId:          z.string().optional().nullable(),
-  ncrNumber:        z.string().min(1).max(64),
+  // ncrNumber is server-generated (see the NCR-YYYY-NNNN sequence in the
+  // route handler) — never supplied by the client, so it must not be
+  // required here.
+  relatedType:      z.string().max(64).optional().nullable(),
   issueDescription: z.string().min(1).max(2048),
   severity:         z.enum(['MINOR','MAJOR','CRITICAL']),
   detectedBy:       z.string().max(128).optional().nullable(),
@@ -195,6 +250,24 @@ export const CreatePressureTestSchema = z.object({
   witnessedBy:  z.string().max(128).optional().nullable(),
   result:       z.enum(['PASS','FAIL','PENDING']).optional().nullable(),
   testDate:     z.string().datetime().optional().nullable(),
+});
+
+export const CreateJointSchema = z.object({
+  jointId:       z.string().min(1).max(64),
+  spoolId:       z.string().min(1),
+  jointType:     z.enum(['FIELD_WELD','SHOP_WELD','FLANGE','SCREWED','SOCKET_WELD']).default('FIELD_WELD'),
+  rfidTag1:      z.string().max(64).optional().nullable(),
+  rfidTag2:      z.string().max(64).optional().nullable(),
+  barcode:       z.string().max(128).optional().nullable(),
+  size:          z.string().max(64).optional().nullable(),
+  material:      z.string().max(128).optional().nullable(),
+  weldProcedure: z.string().max(64).optional().nullable(),
+  welderId:      z.string().max(128).optional().nullable(),
+  pipeFitter:    z.string().max(128).optional().nullable(),
+  ndeRequired:   z.boolean().default(true),
+  ndeType:       z.string().max(32).optional().nullable(),
+  ndePercent:    z.number().int().min(0).max(100).optional().nullable(),
+  status:        JointStatusEnum.default('PENDING'),
 });
 
 export const RFIDIngestSchema = z.object({

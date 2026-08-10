@@ -17,10 +17,9 @@ interface Joint {
   rfidTag1?: string;
   rfidTag2?: string;
   barcode?: string;
-  nominalSize?: string;
-  wallThickness?: string;
+  size?: string;
   material?: string;
-  weldingProcess?: string;
+  weldProcedure?: string;
   spool?: { spoolId: string };
   _count?: { weldRecords: number; ndeRecords: number; ncrs: number };
 }
@@ -199,10 +198,9 @@ function JointsContent() {
                 { key: 'rfidTag1', label: 'RFID Tag 1', placeholder: 'Primary RFID' },
                 { key: 'rfidTag2', label: 'RFID Tag 2', placeholder: 'Secondary RFID' },
                 { key: 'barcode', label: 'Barcode', placeholder: 'Barcode value' },
-                { key: 'nominalSize', label: 'Nominal Size', placeholder: 'e.g. 6"' },
-                { key: 'wallThickness', label: 'Wall Thickness', placeholder: 'e.g. SCH40' },
+                { key: 'size', label: 'Nominal Size', placeholder: 'e.g. 6"' },
                 { key: 'material', label: 'Material', placeholder: 'e.g. CS A106' },
-                { key: 'weldingProcess', label: 'Welding Process', placeholder: 'e.g. SMAW, GTAW' },
+                { key: 'weldProcedure', label: 'Welding Process', placeholder: 'e.g. SMAW, GTAW' },
               ].map(f => (
                 <div key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                   <label style={{ fontSize: 12, color: 'var(--muted-foreground)', fontWeight: 600 }}>{f.label}</label>
@@ -270,7 +268,7 @@ function JointsContent() {
                   <td style={{ padding: '11px 14px', fontSize: 11 }}>
                     {j.rfidTag1 ? <span style={{ color: '#8b5cf6' }}><Tag size={9} style={{ verticalAlign: 'middle', marginRight: 3 }} />{j.rfidTag1}</span> : '—'}
                   </td>
-                  <td style={{ padding: '11px 14px' }}>{j.nominalSize ?? '—'}</td>
+                  <td style={{ padding: '11px 14px' }}>{j.size ?? '—'}</td>
                   <td style={{ padding: '11px 14px' }}>
                     <Link href={`/pipe-spool/joints?jointId=${j.id}#welds`} style={{ color: '#3b82f6', textDecoration: 'none', fontWeight: 600 }}>
                       <Wrench size={11} style={{ verticalAlign: 'middle', marginRight: 3 }} />{j._count?.weldRecords ?? 0}

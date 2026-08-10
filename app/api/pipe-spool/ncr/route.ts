@@ -4,8 +4,14 @@ import { requireSpoolAction } from '@/lib/spoolRBAC';
 import { CreateNCRSchema, validationError } from '@/lib/validation';
 import { apiError, apiSuccess } from '@/lib/apiResponse';
 import { AuditService } from '@/lib/services/AuditService';
+import { requireRole } from '@/lib/api-auth';
+
+const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
 export async function GET(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
@@ -50,6 +56,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const body = await req.json();
     const { action, id, ...data } = body;
@@ -84,6 +93,11 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'update_status' && id) {
+      // CRIT-3 fix: closing an NCR through this branch must require the same
+      // CLOSE_NCR permission as the dedicated `close` action above; any other
+      // status change requires at least RAISE_NCR (OPERATOR has neither).
+      const guard = await requireSpoolAction(data.status === 'CLOSED' ? 'CLOSE_NCR' : 'RAISE_NCR');
+      if (guard instanceof NextResponse) return guard;
       const ncr = await prisma.nCRRecord.update({
         where: { id },
         data: { status: data.status },
@@ -92,9 +106,17 @@ export async function POST(req: NextRequest) {
     }
 
     if (id) {
-      const ncr = await prisma.nCRRecord.update({ where: { id }, data });
+      // Bare-id patch: strip status so closing/reopening can't bypass the guards above.
+      const guard = await requireSpoolAction('RAISE_NCR');
+      if (guard instanceof NextResponse) return guard;
+      const { status: _status, ...safeData } = data;
+      const ncr = await prisma.nCRRecord.update({ where: { id }, data: safeData });
       return apiSuccess({ ncr });
     }
+
+    // Raising an NCR requires RAISE_NCR (OPERATOR cannot raise NCRs).
+    const guard = await requireSpoolAction('RAISE_NCR');
+    if (guard instanceof NextResponse) return guard;
 
     // Validate create payload
     const parsed = CreateNCRSchema.safeParse(data);
@@ -105,7 +127,15 @@ export async function POST(req: NextRequest) {
     const count = await prisma.nCRRecord.count({ where: { ncrNumber: { startsWith: `NCR-${year}-` } } });
     const ncrNumber = `NCR-${year}-${String(count + 1).padStart(4, '0')}`;
 
-    const ncr = await prisma.nCRRecord.create({ data: { ...data, ncrNumber } });
+    // title is a required field with no client-facing input for it (the
+    // "Raise NCR" form only collects a free-form description) — derive a
+    // short headline from the description rather than adding a redundant
+    // field to a form meant for fast shop-floor reporting.
+    const title = parsed.data.issueDescription.length > 100
+      ? `${parsed.data.issueDescription.slice(0, 97)}...`
+      : parsed.data.issueDescription;
+
+    const ncr = await prisma.nCRRecord.create({ data: { ...parsed.data, ncrNumber, title } as any });
 
     // Fire alert
     await prisma.spoolAlert.create({

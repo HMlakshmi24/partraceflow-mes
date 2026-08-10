@@ -24,7 +24,7 @@ function NCRContent() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [showClose, setShowClose] = useState<any>(null);
-  const [editing, setEditing] = useState<any>({ spoolId: spoolIdFilter ?? '', jointId: jointIdFilter ?? '', severity: 'MINOR', relatedType: 'WELD', description: '', raisedBy: '' });
+  const [editing, setEditing] = useState<any>({ spoolId: spoolIdFilter ?? '', jointId: jointIdFilter ?? '', severity: 'MINOR', relatedType: 'WELD', issueDescription: '', detectedBy: '' });
   const [closeData, setCloseData] = useState({ closedBy: '', rootCause: '', disposition: '', correctiveAction: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -50,13 +50,13 @@ function NCRContent() {
 
   const filtered = ncrs.filter(n =>
     (n.ncrNumber ?? '').toLowerCase().includes(search.toLowerCase()) ||
-    (n.description ?? '').toLowerCase().includes(search.toLowerCase()) ||
+    (n.issueDescription ?? '').toLowerCase().includes(search.toLowerCase()) ||
     (n.spool?.spoolId ?? '').toLowerCase().includes(search.toLowerCase()) ||
     (n.joint?.jointId ?? '').toLowerCase().includes(search.toLowerCase())
   );
 
   const handleSave = async () => {
-    if (!editing.description || !editing.raisedBy) { setError('Description and Raised By are required.'); return; }
+    if (!editing.issueDescription || !editing.detectedBy) { setError('Description and Raised By are required.'); return; }
     setSaving(true); setError('');
     const payload: any = { ...editing };
     if (!payload.spoolId) delete payload.spoolId;
@@ -148,7 +148,7 @@ function NCRContent() {
             {error && <div style={{ background: '#ef444422', color: '#ef4444', padding: '8px 12px', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>{error}</div>}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
               {[
-                { key: 'raisedBy', label: 'Raised By *', placeholder: 'Full name', colSpan: false },
+                { key: 'detectedBy', label: 'Raised By *', placeholder: 'Full name', colSpan: false },
                 { key: 'relatedType', label: 'Related To', placeholder: 'e.g. WELD, MATERIAL, DIMENSION', colSpan: false },
               ].map(f => (
                 <div key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -183,7 +183,7 @@ function NCRContent() {
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5, gridColumn: '1/-1' }}>
                 <label style={{ fontSize: 12, color: 'var(--muted-foreground)', fontWeight: 600 }}>Description of Non-Conformance *</label>
-                <textarea value={editing.description ?? ''} onChange={e => setEditing((p: any) => ({ ...p, description: e.target.value }))}
+                <textarea value={editing.issueDescription ?? ''} onChange={e => setEditing((p: any) => ({ ...p, issueDescription: e.target.value }))}
                   rows={3} placeholder="Describe the non-conformance in detail…"
                   style={{ padding: '8px 10px', background: 'var(--surface-muted)', border: '1px solid var(--card-border)', borderRadius: 7, fontSize: 13, color: 'var(--foreground)', outline: 'none', resize: 'vertical' }} />
               </div>
@@ -247,15 +247,15 @@ function NCRContent() {
                 return (
                   <tr key={ncr.id} style={{ borderTop: '1px solid var(--border)', background: ncr.severity === 'CRITICAL' && ncr.status !== 'CLOSED' ? '#ef444408' : 'transparent' }}>
                     <td style={{ padding: '11px 14px', fontWeight: 700, color: '#ef4444' }}>{ncr.ncrNumber}</td>
-                    <td style={{ padding: '11px 14px' }}>{new Date(ncr.raisedAt).toLocaleDateString()}</td>
+                    <td style={{ padding: '11px 14px' }}>{new Date(ncr.detectedAt).toLocaleDateString()}</td>
                     <td style={{ padding: '11px 14px' }}>{ncr.spool?.spoolId ?? ncr.joint?.jointId ?? '—'}</td>
                     <td style={{ padding: '11px 14px' }}>
                       <span style={{ padding: '2px 8px', borderRadius: 99, fontSize: 11, fontWeight: 700, background: sev + '22', color: sev }}>{ncr.severity}</span>
                     </td>
                     <td style={{ padding: '11px 14px', maxWidth: 240 }}>
-                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ncr.description}</div>
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ncr.issueDescription}</div>
                     </td>
-                    <td style={{ padding: '11px 14px', color: 'var(--muted-foreground)' }}>{ncr.raisedBy}</td>
+                    <td style={{ padding: '11px 14px', color: 'var(--muted-foreground)' }}>{ncr.detectedBy}</td>
                     <td style={{ padding: '11px 14px' }}>
                       <span style={{ padding: '3px 10px', borderRadius: 99, fontSize: 11, fontWeight: 700, background: sc + '22', color: sc }}>{ncr.status.replace('_', ' ')}</span>
                     </td>

@@ -10,10 +10,9 @@ const CHECK_COLORS: Record<string, string> = { REVIEW: '#3b82f6', WITNESS: '#f59
 
 interface ITPStep {
   id?: string;
-  stepName: string;
+  description: string;
   checkType: string;
   inspectorRole: string;
-  description?: string;
   mandatory: boolean;
   sequence: number;
 }
@@ -27,7 +26,7 @@ interface ITPTemplate {
   _count?: { inspections: number };
 }
 
-const EMPTY_STEP = (): ITPStep => ({ stepName: '', checkType: 'REVIEW', inspectorRole: 'QC_INSPECTOR', mandatory: true, sequence: 1 });
+const EMPTY_STEP = (): ITPStep => ({ description: '', checkType: 'REVIEW', inspectorRole: 'QC_INSPECTOR', mandatory: true, sequence: 1 });
 
 export default function ITPBuilderPage() {
   const [templates, setTemplates] = useState<ITPTemplate[]>([]);
@@ -210,7 +209,7 @@ export default function ITPBuilderPage() {
                   )}
                 </div>
 
-                {steps.length === 0 && <div style={{ color: 'var(--muted-foreground)', fontSize: 13, textAlign: 'center', padding: 20 }}>No steps yet — click "Add Step"</div>}
+                {steps.length === 0 && <div style={{ color: 'var(--muted-foreground)', fontSize: 13, textAlign: 'center', padding: 20 }}>No steps yet — click &quot;Add Step&quot;</div>}
 
                 {steps.map((step, idx) => (
                   <div key={idx} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 10, padding: '14px', background: 'var(--surface-muted)', borderRadius: 10, border: '1px solid var(--card-border)' }}>
@@ -219,7 +218,7 @@ export default function ITPBuilderPage() {
                       <span style={{ fontSize: 11, fontWeight: 700 }}>{idx + 1}</span>
                     </div>
                     <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: 8 }}>
-                      <input value={step.stepName} onChange={e => updateStep(idx, 'stepName', e.target.value)}
+                      <input value={step.description} onChange={e => updateStep(idx, 'description', e.target.value)}
                         placeholder="Step name (e.g. Weld Fit-Up Inspection)"
                         style={{ padding: '7px 10px', background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 7, fontSize: 13, color: 'var(--foreground)', outline: 'none' }} />
                       <select value={step.checkType} onChange={e => updateStep(idx, 'checkType', e.target.value)}

@@ -2,7 +2,7 @@
 
 import { startTask, completeTask } from '@/lib/actions/workflow';
 import { useRouter } from 'next/navigation';
-import { useTransition, useState } from 'react';
+import { useTransition, useState, useEffect } from 'react';
 import { CheckCircle, Play, Clock, AlertTriangle, Workflow, ListTodo, X, User, Cpu, Lock, Info } from 'lucide-react';
 import styles from './operator.module.css';
 
@@ -112,6 +112,12 @@ export default function ClientOperatorView({
     const activeMachine = machines.find(m => m.id === issueMachine) ?? machines[0];
     const [showQcFail, setShowQcFail] = useState(false);
     const [qcSubmitting, setQcSubmitting] = useState(false);
+
+    // Deferred to after mount: new Date() evaluated during SSR and again during
+    // the client's pre-hydration render won't reliably agree on toLocaleTimeString()'s
+    // AM/PM casing (server vs. browser Intl), which throws a hydration mismatch.
+    const [now, setNow] = useState<Date | null>(null);
+    useEffect(() => { setNow(new Date()); }, []);
     const [qcParam, setQcParam] = useState('Visual Inspection');
     const [qcDefect, setQcDefect] = useState('Dimensional Error');
     const [qcNotes, setQcNotes] = useState('');
@@ -363,8 +369,8 @@ export default function ClientOperatorView({
                 </div>
                 <div className={styles.statusTile}>
                     <div className={styles.statusLabel}>Shift</div>
-                    <div className={styles.statusValue}>{getShiftLabel(new Date())}</div>
-                    <div className={styles.statusMeta}>{new Date().toLocaleTimeString()}</div>
+                    <div className={styles.statusValue}>{now ? getShiftLabel(now) : ''}</div>
+                    <div className={styles.statusMeta}>{now ? now.toLocaleTimeString() : ''}</div>
                 </div>
             </div>
 
@@ -382,7 +388,7 @@ export default function ClientOperatorView({
                 ) : (
                     <span style={{ fontSize: '0.9rem', color: '#e2e8f0', fontWeight: 600 }}>operator</span>
                 )}
-                <span style={{ marginLeft: 'auto', fontSize: '0.8rem', color: '#64748b' }}>Seed demo data in Settings to populate operators</span>
+                <span style={{ marginLeft: 'auto', fontSize: '0.8rem', color: '#64748b' }}>Operator Terminal</span>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 380px', gap: '2rem', height: 'calc(100vh - 170px)' }}>
@@ -462,7 +468,7 @@ export default function ClientOperatorView({
 
                                 {/* Action buttons — QC PASS is NOT shown here; task must be completed first */}
                                 <div style={{ marginTop: '0.75rem', padding: '0.6rem 0.9rem', background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: '0.5rem', fontSize: '0.8rem', color: '#93c5fd', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <Info size={14} /> QC inspection is done <strong>after</strong> completing this step. Click "Complete Step" first, then a QC inspector will approve via the Quality page.
+                                    <Info size={14} /> QC inspection is done <strong>after</strong> completing this step. Click &quot;Complete Step&quot; first, then a QC inspector will approve via the Quality page.
                                 </div>
 
                                 <div className={styles.queueActions} style={{ marginTop: '1.5rem' }}>

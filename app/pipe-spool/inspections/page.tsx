@@ -2,8 +2,9 @@
 
 import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Plus, Search, ChevronRight, ClipboardCheck, AlertTriangle } from 'lucide-react';
+import { Plus, Search, ChevronRight, ClipboardCheck, AlertTriangle, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
+import { SignatureModal } from '@/components/SignatureModal';
 
 interface Inspection {
   id: string;
@@ -23,18 +24,20 @@ interface Inspection {
   spool?: { spoolId: string };
   joint?: { jointId: string };
   itpTemplate?: { name: string };
-  itpStep?: { stepName: string; checkType: string; sequence: number };
+  itpStep?: { description: string; checkType: string; sequence: number };
 }
 
 interface ITPTemplate {
   id: string;
   name: string;
-  steps: { id: string; stepName: string; sequence: number; checkType: string; inspectorRole: string }[];
+  steps: { id: string; description: string; sequence: number; checkType: string; inspectorRole: string }[];
 }
 
 const RESULT_COLORS: Record<string, string> = {
   PASS: '#10b981', FAIL: '#ef4444', HOLD: '#f59e0b', PENDING: '#94a3b8',
 };
+
+const CHECK_TYPE_COLOR: Record<string, string> = { REVIEW: '#3b82f6', WITNESS: '#f59e0b', HOLD: '#ef4444' };
 
 function InspectionsContent() {
   const searchParams = useSearchParams();
@@ -50,12 +53,64 @@ function InspectionsContent() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<any>({
     spoolId: spoolIdFilter ?? '', jointId: '', itpTemplateId: '', itpStepId: '',
-    inspectorName: '', inspectorRole: 'QC_INSPECTOR', result: 'PENDING',
+    inspectionType: 'FIT_UP', inspectorName: '', inspectorRole: 'QC_INSPECTOR', result: 'PENDING',
     holdFlag: false, clientPresent: false, clientApproved: false,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<ITPTemplate | null>(null);
+  const [role, setRole] = useState('');
+
+  // Recording a PASS/FAIL/HOLD result on an existing PENDING inspection —
+  // a separate flow from "New Inspection" above, since it's an approval act
+  // (electronic-signature-gated, see requireSignature/verifySignatureForEntity)
+  // rather than free-form record creation.
+  const [recordingResult, setRecordingResult] = useState<Inspection | null>(null);
+  const [resultDraft, setResultDraft] = useState<{ result: string; notes: string; clientApproved: boolean }>({ result: 'PASS', notes: '', clientApproved: false });
+  const [signingResult, setSigningResult] = useState(false);
+  const [resultError, setResultError] = useState('');
+  const [submittingResult, setSubmittingResult] = useState(false);
+  const [toast, setToast] = useState('');
+
+  const flash = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3500); };
+
+  const openRecordResult = (ins: Inspection) => {
+    setRecordingResult(ins);
+    setResultDraft({ result: 'PASS', notes: '', clientApproved: ins.clientApproved ?? false });
+    setResultError('');
+  };
+
+  const submitResult = async (signatureId: string) => {
+    if (!recordingResult) return;
+    setSubmittingResult(true);
+    setResultError('');
+    try {
+      const res = await fetch('/api/pipe-spool/inspections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          action: 'update_result',
+          id: recordingResult.id,
+          result: resultDraft.result,
+          notes: resultDraft.notes,
+          clientApproved: resultDraft.clientApproved,
+          signatureId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setResultError(data.error ?? 'Failed to record result'); setSigningResult(false); return; }
+      flash(`Result recorded: ${resultDraft.result}`);
+      setRecordingResult(null);
+      setSigningResult(false);
+      load();
+    } catch {
+      setResultError('Network error');
+      setSigningResult(false);
+    } finally {
+      setSubmittingResult(false);
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -75,11 +130,18 @@ function InspectionsContent() {
     fetch('/api/pipe-spool/joints').then(r => r.json()).then(d => setJoints(d.joints ?? []));
   }, [spoolIdFilter, resultFilter]);
 
+  useEffect(() => {
+    fetch('/api/session', { credentials: 'include' }).then(r => r.json()).then(d => setRole(d.role ?? '')).catch(() => {});
+  }, []);
+
+  // Mirrors requireSpoolAction('APPROVE_INSPECTION') in the inspections API route.
+  const canApprove = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'QC'].includes(role);
+
   const filtered = inspections.filter(i =>
     (i.spool?.spoolId ?? '').toLowerCase().includes(search.toLowerCase()) ||
     (i.joint?.jointId ?? '').toLowerCase().includes(search.toLowerCase()) ||
     i.inspectorName.toLowerCase().includes(search.toLowerCase()) ||
-    (i.itpStep?.stepName ?? '').toLowerCase().includes(search.toLowerCase())
+    (i.itpStep?.description ?? '').toLowerCase().includes(search.toLowerCase())
   );
 
   const handleTemplateChange = (templateId: string) => {
@@ -104,14 +166,17 @@ function InspectionsContent() {
     const data = await res.json();
     if (data.error) { setError(data.error); setSaving(false); return; }
     setSaving(false); setShowForm(false);
-    setEditing({ spoolId: spoolIdFilter ?? '', jointId: '', itpTemplateId: '', itpStepId: '', inspectorName: '', inspectorRole: 'QC_INSPECTOR', result: 'PENDING', holdFlag: false, clientPresent: false, clientApproved: false });
+    setEditing({ spoolId: spoolIdFilter ?? '', jointId: '', itpTemplateId: '', itpStepId: '', inspectionType: 'FIT_UP', inspectorName: '', inspectorRole: 'QC_INSPECTOR', result: 'PENDING', holdFlag: false, clientPresent: false, clientApproved: false });
     load();
   };
 
-  const CHECK_TYPE_COLOR: Record<string, string> = { REVIEW: '#3b82f6', WITNESS: '#f59e0b', HOLD: '#ef4444' };
-
   return (
     <div style={{ padding: 32, maxWidth: 1300, margin: '0 auto' }}>
+      {toast && (
+        <div style={{ position: 'fixed', top: '1.5rem', right: '1.5rem', zIndex: 9999, background: '#1e293b', color: '#fff', padding: '0.75rem 1.25rem', borderRadius: '0.75rem', fontWeight: 600, fontSize: '0.9rem', boxShadow: '0 4px 20px rgba(0,0,0,0.25)' }}>
+          {toast}
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--muted-foreground)', fontSize: 13, marginBottom: 4 }}>
@@ -181,7 +246,7 @@ function InspectionsContent() {
                   style={{ padding: '8px 10px', background: 'var(--surface-muted)', border: '1px solid var(--card-border)', borderRadius: 7, fontSize: 13, color: 'var(--foreground)', outline: 'none' }}>
                   <option value="">Select step…</option>
                   {selectedTemplate?.steps.map(s => (
-                    <option key={s.id} value={s.id}>{s.sequence}. {s.stepName} [{s.checkType}]</option>
+                    <option key={s.id} value={s.id}>{s.sequence}. {s.description} [{s.checkType}]</option>
                   ))}
                 </select>
               </div>
@@ -214,6 +279,13 @@ function InspectionsContent() {
                     style={{ padding: '8px 10px', background: 'var(--surface-muted)', border: '1px solid var(--card-border)', borderRadius: 7, fontSize: 13, color: 'var(--foreground)', outline: 'none' }} />
                 </div>
               ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                <label style={{ fontSize: 12, color: 'var(--muted-foreground)', fontWeight: 600 }}>Inspection Type *</label>
+                <select value={editing.inspectionType} onChange={e => setEditing((p: any) => ({ ...p, inspectionType: e.target.value }))}
+                  style={{ padding: '8px 10px', background: 'var(--surface-muted)', border: '1px solid var(--card-border)', borderRadius: 7, fontSize: 13, color: 'var(--foreground)', outline: 'none' }}>
+                  {['FIT_UP', 'VISUAL', 'DIMENSIONAL', 'NDE', 'PWHT', 'FINAL'].map(t => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
+                </select>
+              </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                 <label style={{ fontSize: 12, color: 'var(--muted-foreground)', fontWeight: 600 }}>Inspector Role</label>
                 <select value={editing.inspectorRole} onChange={e => setEditing((p: any) => ({ ...p, inspectorRole: e.target.value }))}
@@ -265,7 +337,7 @@ function InspectionsContent() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead style={{ background: 'var(--surface-muted)' }}>
               <tr>
-                {['Date', 'Spool / Joint', 'ITP Step', 'Check Type', 'Inspector', 'Client', 'Result', 'Hold'].map(h => (
+                {['Date', 'Spool / Joint', 'ITP Step', 'Check Type', 'Inspector', 'Client', 'Result', 'Hold', ''].map(h => (
                   <th key={h} style={{ padding: '11px 14px', textAlign: 'left', color: 'var(--muted-foreground)', fontWeight: 600, fontSize: 12 }}>{h}</th>
                 ))}
               </tr>
@@ -278,7 +350,7 @@ function InspectionsContent() {
                   <tr key={ins.id} style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={{ padding: '11px 14px' }}>{new Date(ins.inspectedAt).toLocaleDateString()}</td>
                     <td style={{ padding: '11px 14px' }}>{ins.spool?.spoolId ?? ins.joint?.jointId ?? '—'}</td>
-                    <td style={{ padding: '11px 14px' }}>{ins.itpStep?.stepName ?? '—'}</td>
+                    <td style={{ padding: '11px 14px' }}>{ins.itpStep?.description ?? '—'}</td>
                     <td style={{ padding: '11px 14px' }}>
                       {ct && <span style={{ padding: '2px 8px', borderRadius: 99, fontSize: 10, fontWeight: 700, background: (CHECK_TYPE_COLOR[ct] ?? '#64748b') + '22', color: CHECK_TYPE_COLOR[ct] ?? '#64748b' }}>{ct}</span>}
                     </td>
@@ -292,6 +364,20 @@ function InspectionsContent() {
                     <td style={{ padding: '11px 14px' }}>
                       {ins.holdFlag && <AlertTriangle size={14} color="#f59e0b" />}
                     </td>
+                    <td style={{ padding: '11px 14px' }}>
+                      {ins.result === 'PENDING' && canApprove && (
+                        <button
+                          onClick={() => openRecordResult(ins)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px',
+                            background: '#2563eb', color: '#fff', border: 'none', borderRadius: 7,
+                            cursor: 'pointer', fontWeight: 600, fontSize: 12,
+                          }}
+                        >
+                          <ShieldCheck size={13} /> Record Result
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -299,11 +385,58 @@ function InspectionsContent() {
           </table>
         )}
       </div>
+
+      {/* Record Result modal */}
+      {recordingResult && !signingResult && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--card-bg)', borderRadius: 16, padding: 28, width: 440 }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 17 }}>Record Inspection Result</h3>
+            <p style={{ margin: '0 0 18px', fontSize: 13, color: 'var(--muted-foreground)' }}>
+              {recordingResult.spool?.spoolId ?? recordingResult.joint?.jointId ?? '—'} · {recordingResult.itpStep?.description ?? 'Inspection'}
+            </p>
+            {resultError && <div style={{ background: '#ef444422', color: '#ef4444', padding: '8px 12px', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>{resultError}</div>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                <label style={{ fontSize: 12, color: 'var(--muted-foreground)', fontWeight: 600 }}>Result</label>
+                <select value={resultDraft.result} onChange={e => setResultDraft(p => ({ ...p, result: e.target.value }))}
+                  style={{ padding: '8px 10px', background: 'var(--surface-muted)', border: '1px solid var(--card-border)', borderRadius: 7, fontSize: 13, color: 'var(--foreground)', outline: 'none' }}>
+                  {['PASS', 'FAIL', 'HOLD'].map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                <label style={{ fontSize: 12, color: 'var(--muted-foreground)', fontWeight: 600 }}>Notes</label>
+                <textarea value={resultDraft.notes} onChange={e => setResultDraft(p => ({ ...p, notes: e.target.value }))}
+                  rows={3} placeholder="Findings, references, remarks…"
+                  style={{ padding: '8px 10px', background: 'var(--surface-muted)', border: '1px solid var(--card-border)', borderRadius: 7, fontSize: 13, color: 'var(--foreground)', outline: 'none', resize: 'vertical' }} />
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={resultDraft.clientApproved} onChange={e => setResultDraft(p => ({ ...p, clientApproved: e.target.checked }))} />
+                Client Approved
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 22, justifyContent: 'flex-end' }}>
+              <button onClick={() => { setRecordingResult(null); setResultError(''); }} style={{ padding: '8px 18px', background: 'var(--surface-muted)', border: '1px solid var(--card-border)', borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>Cancel</button>
+              <button onClick={() => setSigningResult(true)} disabled={submittingResult} style={{ padding: '8px 18px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <ShieldCheck size={14} /> Sign &amp; Record
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {recordingResult && signingResult && (
+        <SignatureModal
+          entityType="SpoolInspection"
+          entityId={recordingResult.id}
+          title={`Record ${resultDraft.result} result for ${recordingResult.spool?.spoolId ?? recordingResult.joint?.jointId ?? 'inspection'}`}
+          payload={{ result: resultDraft.result, notes: resultDraft.notes ?? null, clientApproved: !!resultDraft.clientApproved }}
+          onCancel={() => setSigningResult(false)}
+          onSuccess={submitResult}
+        />
+      )}
     </div>
   );
 }
-
-const CHECK_TYPE_COLOR: Record<string, string> = { REVIEW: '#3b82f6', WITNESS: '#f59e0b', HOLD: '#ef4444' };
 
 export default function InspectionsPage() {
   return <Suspense><InspectionsContent /></Suspense>;

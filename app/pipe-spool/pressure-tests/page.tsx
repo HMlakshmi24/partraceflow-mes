@@ -44,7 +44,7 @@ function PressureTestsContent() {
 
   const filtered = records.filter(r =>
     (r.spool?.spoolId ?? '').toLowerCase().includes(search.toLowerCase()) ||
-    (r.testedBy ?? '').toLowerCase().includes(search.toLowerCase())
+    (r.witnessedBy ?? '').toLowerCase().includes(search.toLowerCase())
   );
 
   const handleSave = async () => {
@@ -195,7 +195,7 @@ function PressureTestsContent() {
                     <td style={{ padding: '11px 14px' }}>{rec.testPressure ?? '—'}</td>
                     <td style={{ padding: '11px 14px' }}>{rec.holdTime ? `${rec.holdTime} min` : '—'}</td>
                     <td style={{ padding: '11px 14px' }}>{rec.testMedium ?? '—'}</td>
-                    <td style={{ padding: '11px 14px', color: 'var(--muted-foreground)' }}>{rec.testedBy ?? '—'}</td>
+                    <td style={{ padding: '11px 14px', color: 'var(--muted-foreground)' }}>{rec.witnessedBy ?? '—'}</td>
                     <td style={{ padding: '11px 14px' }}>{rec.testDate ? new Date(rec.testDate).toLocaleDateString() : '—'}</td>
                     <td style={{ padding: '11px 14px' }}>
                       <select value={rec.result} onChange={e => handleResult(rec.id, e.target.value)}

@@ -9,10 +9,11 @@ import {
     CheckCircle, Map, Bot, Zap, Wrench, Clock, Shield, TrendingUp, BookOpen,
     Menu, X, ChevronDown, Settings, LogOut, Plug,
     Layers, Package, ShieldAlert, MapPin, BarChart3, Circle, FileSearch, Tag,
-    Timer,
+    Timer, Flame, FileCheck2,
 } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
 import SpoolAlertBell from './SpoolAlertBell';
+import { canAccessRoute } from '@/lib/pageAccessControl';
 
 const ROLE_LABELS: Record<string, string> = {
     ADMIN: 'Administrator', OPERATOR: 'Operator', PLANNER: 'Planner',
@@ -45,7 +46,7 @@ const AVATAR_COLORS: Record<string, string> = {
 // ── standalone top nav items ─────────────────────────────────────────────────
 
 const TOP_NAV_ITEMS = [
-    { href: '/dashboard', icon: LayoutDashboard, label: 'Home Dashboard' },
+    { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
 ];
 
 // ── grouped nav items ────────────────────────────────────────────────────────
@@ -58,7 +59,7 @@ const NAV_GROUPS = [
             { href: '/planner',      icon: ShoppingCart, label: 'Work Orders' },
 
             { href: '/shifts',       icon: Clock,        label: 'Shifts & Attendance' },
-            { href: '/factory-map',  icon: Map,          label: 'Live Factory Map' },
+            { href: '/factory-map',  icon: Map,          label: 'Factory Map' },
         ],
     },
     {
@@ -76,7 +77,7 @@ const NAV_GROUPS = [
         label: 'Smart Tools',
         items: [
             { href: '/copilot',            icon: Bot,       label: 'AI Assistant' },
-            { href: '/andon',              icon: Zap,       label: 'Live Factory Alerts' },
+            { href: '/andon',              icon: Zap,       label: 'Factory Alerts' },
             { href: '/maintenance',        icon: Wrench,    label: 'Machine Health' },
             { href: '/workflows/designer', icon: GitBranch, label: 'Approval Workflows' },
         ],
@@ -94,6 +95,8 @@ const NAV_GROUPS = [
             { href: '/pipe-spool/ncr',            icon: ShieldAlert, label: 'Issues & Defects' },
             { href: '/pipe-spool/yard',           icon: MapPin,      label: 'Storage Yard' },
             { href: '/pipe-spool/pressure-tests', icon: Circle,      label: 'Pressure Tests' },
+            { href: '/pipe-spool/pwht',           icon: Flame,       label: 'PWHT Cycles' },
+            { href: '/pipe-spool/mdr',            icon: FileCheck2,  label: 'MDR Dossiers' },
             { href: '/pipe-spool/reports',        icon: BarChart3,   label: 'Reports' },
             { href: '/pipe-spool/scan',           icon: Tag,         label: 'RFID Scanner' },
             { href: '/pipe-spool/itp-builder',    icon: FileSearch,  label: 'Inspection Templates' },
@@ -104,8 +107,9 @@ const NAV_GROUPS = [
         id: 'system',
         label: 'System',
         items: [
-            { href: '/reports', icon: BarChart3, label: 'Reports & Analytics' },
-            { href: '/audit',   icon: Shield,    label: 'Activity Log' },
+            { href: '/settings/connectors', icon: Plug,     label: 'Machine Connections' },
+            { href: '/reports',             icon: BarChart3, label: 'Reports & Analytics' },
+            { href: '/audit',               icon: Shield,    label: 'Activity Log' },
         ],
     },
 ];
@@ -289,28 +293,35 @@ function ProfileFooter({ role, username, exp, colors }: {
         <div style={{ borderTop: `1px solid ${colors.dividerColor}` }}>
             {expanded && (
                 <div style={{ padding: '0.6rem 0.75rem', borderBottom: `1px solid ${colors.dividerColor}` }}>
-                    <Link href="/settings" onClick={() => setExpanded(false)} style={{
-                        display: 'flex', alignItems: 'center', gap: '0.7rem',
-                        padding: '0.6rem 0.75rem', borderRadius: '7px',
-                        color: colors.footerPanelColor, textDecoration: 'none',
-                        fontSize: '0.9rem', fontWeight: 600,
-                        background: colors.footerPanelBg,
-                        marginBottom: '0.3rem',
-                        minHeight: '44px',
-                    }}>
-                        <Settings size={16} /> Configuration
-                    </Link>
-                    <Link href="/settings/connectors" onClick={() => setExpanded(false)} style={{
-                        display: 'flex', alignItems: 'center', gap: '0.7rem',
-                        padding: '0.6rem 0.75rem', borderRadius: '7px',
-                        color: colors.footerPanelColor, textDecoration: 'none',
-                        fontSize: '0.9rem', fontWeight: 600,
-                        background: colors.footerPanelBg,
-                        marginBottom: '0.3rem',
-                        minHeight: '44px',
-                    }}>
-                        <Plug size={16} /> Integrations
-                    </Link>
+                    {/* Same fix as the main nav: only show links this role can
+                        actually open (Configuration/Integrations require
+                        ADMIN/SUPERVISOR — previously shown to every role). */}
+                    {canAccessRoute(role, '/settings') && (
+                        <Link href="/settings" onClick={() => setExpanded(false)} style={{
+                            display: 'flex', alignItems: 'center', gap: '0.7rem',
+                            padding: '0.6rem 0.75rem', borderRadius: '7px',
+                            color: colors.footerPanelColor, textDecoration: 'none',
+                            fontSize: '0.9rem', fontWeight: 600,
+                            background: colors.footerPanelBg,
+                            marginBottom: '0.3rem',
+                            minHeight: '44px',
+                        }}>
+                            <Settings size={16} /> Configuration
+                        </Link>
+                    )}
+                    {canAccessRoute(role, '/settings/connectors') && (
+                        <Link href="/settings/connectors" onClick={() => setExpanded(false)} style={{
+                            display: 'flex', alignItems: 'center', gap: '0.7rem',
+                            padding: '0.6rem 0.75rem', borderRadius: '7px',
+                            color: colors.footerPanelColor, textDecoration: 'none',
+                            fontSize: '0.9rem', fontWeight: 600,
+                            background: colors.footerPanelBg,
+                            marginBottom: '0.3rem',
+                            minHeight: '44px',
+                        }}>
+                            <Plug size={16} /> Integrations
+                        </Link>
+                    )}
                     <button onClick={handleLogout} style={{
                         width: '100%', display: 'flex', alignItems: 'center', gap: '0.7rem',
                         padding: '0.6rem 0.75rem', borderRadius: '7px',
@@ -431,6 +442,10 @@ export default function GlobalSidebar() {
     const isDark = !mounted ? true : resolvedTheme !== 'light';
     const colors = getSidebarColors(isDark);
 
+    const visibleNavGroups = NAV_GROUPS
+        .map(group => ({ ...group, items: group.items.filter(item => canAccessRoute(role, item.href)) }))
+        .filter(group => group.items.length > 0);
+
     const sidebarContent = (
         <div style={{
             width: isMobile ? '280px' : '264px',
@@ -478,7 +493,7 @@ export default function GlobalSidebar() {
             </div>
             {!isMobile && (
                 <div style={{ padding: '2px 1.25rem 0.9rem', fontSize: '0.73rem', color: colors.taglineColor, letterSpacing: '0.02em', fontWeight: 500 }}>
-                    Manufacturing Management System
+                    Manufacturing Execution System
                 </div>
             )}
 
@@ -491,8 +506,11 @@ export default function GlobalSidebar() {
                     ))}
                 </div>
 
-                {/* Grouped items */}
-                {NAV_GROUPS.map(group => (
+                {/* Grouped items — filtered to what this role can actually
+                    open. Previously every role saw every link (e.g. an
+                    OPERATOR saw "Approval Workflows"/"Activity Log"), so
+                    clicking one just bounced straight to /unauthorized. */}
+                {visibleNavGroups.map(group => (
                     <NavGroup key={group.id} group={group} pathname={pathname} colors={colors} />
                 ))}
 

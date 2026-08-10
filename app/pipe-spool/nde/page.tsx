@@ -47,8 +47,8 @@ function NDEContent() {
 
   const filtered = records.filter(r =>
     (r.joint?.jointId ?? '').toLowerCase().includes(search.toLowerCase()) ||
-    (r.reportNumber ?? '').toLowerCase().includes(search.toLowerCase()) ||
-    (r.ndeContractor ?? '').toLowerCase().includes(search.toLowerCase())
+    (r.ndeNumber ?? '').toLowerCase().includes(search.toLowerCase()) ||
+    (r.inspector ?? '').toLowerCase().includes(search.toLowerCase())
   );
 
   const handleSave = async () => {
@@ -151,11 +151,8 @@ function NDEContent() {
               </div>
               {[
                 { key: 'reportNumber', label: 'Report Number', placeholder: 'RT-001' },
-                { key: 'ndeContractor', label: 'NDE Contractor', placeholder: 'Company name' },
                 { key: 'ndeOperator', label: 'NDE Operator', placeholder: 'Operator name' },
                 { key: 'technique', label: 'Technique', placeholder: 'e.g. SWSI, DWSI' },
-                { key: 'acceptance', label: 'Acceptance Code', placeholder: 'e.g. ASME B31.3' },
-                { key: 'filmDensity', label: 'Film Density', placeholder: '2.0 - 4.0' },
               ].map(f => (
                 <div key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                   <label style={{ fontSize: 12, color: 'var(--muted-foreground)', fontWeight: 600 }}>{f.label}</label>

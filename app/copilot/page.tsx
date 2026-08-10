@@ -46,6 +46,17 @@ export default function CopilotPage() {
     const [sessionId, setSessionId] = useState<string | undefined>();
     const bottomRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
+    // The welcome message's timestamp is captured at SSR render time and again
+    // at the client's pre-hydration render — toLocaleTimeString()'s AM/PM
+    // casing isn't guaranteed to match between the server's and browser's Intl
+    // implementation, which throws a hydration mismatch. Deferring the text to
+    // after mount (client-only) sidesteps the diff entirely, same pattern as
+    // dashboard/page.tsx's currentTime.
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -163,7 +174,7 @@ export default function CopilotPage() {
                                 </div>
                             )}
                             <div style={{ fontSize: '0.7rem', color: '#9ca3af', textAlign: msg.role === 'user' ? 'right' : 'left' }}>
-                                {msg.timestamp.toLocaleTimeString()}
+                                {mounted ? msg.timestamp.toLocaleTimeString() : ''}
                             </div>
                         </div>
                     </div>
