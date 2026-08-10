@@ -1,9 +1,17 @@
-import { NextRequest, NextResponse } from 'next/server'
+﻿import { NextRequest, NextResponse } from 'next/server'
+import { handleApiError } from '@/lib/apiResponse';
 import { AndonService } from '@/lib/services/AndonService'
 import { prisma } from '@/lib/services/database'
 import { requireRole } from '@/lib/api-auth'
 
+const ALL_ROLES = ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'QUALITY', 'QC', 'MAINTENANCE'];
+
 export async function GET(request: NextRequest) {
+  // MEDIUM fix: this GET had no role check at all (only POST did) —
+  // inconsistent with sibling read endpoints elsewhere in the app.
+  const authError = await requireRole(request, ALL_ROLES);
+  if (authError) return authError;
+
   try {
     const { searchParams } = new URL(request.url)
     const boardId = searchParams.get('boardId')
@@ -24,13 +32,13 @@ export async function GET(request: NextRequest) {
       where: { isActive: true }
     })
     return NextResponse.json({ boards })
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: 'Failed to fetch andon data' }, { status: 500 })
   }
 }
 
 export async function POST(request: NextRequest) {
-  const authError = requireRole(request, ['ADMIN', 'SUPERVISOR']);
+  const authError = await requireRole(request, ['ADMIN', 'SUPERVISOR']);
   if (authError) return authError;
 
   try {
@@ -77,7 +85,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
   } catch (error) {
-    console.error('[POST /api/andon]', error)
-    return NextResponse.json({ error: 'Andon action failed' }, { status: 500 })
+        return handleApiError('[POST /api/andon]', error);
   }
 }

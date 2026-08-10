@@ -3,6 +3,9 @@ import { prisma } from '@/lib/services/database';
 import { validateQualityCheck } from '@/lib/utils/validation';
 import { eventBus } from '@/lib/events/EventBus';
 import { OrderLifecycleService } from '@/lib/services/OrderLifecycleService';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('quality');
 import { AuditService, EventType } from '@/lib/services/AuditService';
 import { requireRole } from '@/lib/api-auth';
 
@@ -55,15 +58,48 @@ async function canSubmitQuality(taskId: string, result: string): Promise<{ allow
 }
 
 export async function GET(req: NextRequest) {
-  const authError = requireRole(req, ['ADMIN', 'SUPERVISOR', 'QC', 'QUALITY', 'OPERATOR', 'PLANNER']);
+  const authError = await requireRole(req, ['ADMIN', 'SUPERVISOR', 'QC', 'QUALITY', 'OPERATOR', 'PLANNER']);
   if (authError) return authError;
 
   const { searchParams } = new URL(req.url);
   const orderId = searchParams.get('orderId');
   const resultFilter = searchParams.get('result');
+  const specsForOrder = searchParams.get('specs');
   const limit = Math.min(200, Math.max(1, parseInt(searchParams.get('limit') ?? '50') || 50));
 
   try {
+    if (specsForOrder) {
+      const order = await prisma.workOrder.findUnique({
+        where: { id: specsForOrder },
+        select: { machineId: true, product: { select: { id: true, sku: true } } },
+      });
+      if (!order) return NextResponse.json({ specs: [] });
+
+      const params = await prisma.processParameter.findMany({
+        where: {
+          isActive: true,
+          OR: [
+            { machineId: order.machineId ?? '', productId: order.product.id },
+            { machineId: order.machineId ?? '', productId: null },
+          ],
+        },
+        select: { id: true, parameterName: true, unit: true, nominalValue: true, lowerSpecLimit: true, upperSpecLimit: true },
+        orderBy: { parameterName: 'asc' },
+      });
+
+      if (params.length === 0) {
+        const allParams = await prisma.processParameter.findMany({
+          where: { isActive: true },
+          select: { id: true, parameterName: true, unit: true, nominalValue: true, lowerSpecLimit: true, upperSpecLimit: true },
+          orderBy: { parameterName: 'asc' },
+          take: 20,
+        });
+        return NextResponse.json({ specs: allParams });
+      }
+
+      return NextResponse.json({ specs: params });
+    }
+
     if (resultFilter) {
       const checks = await prisma.qualityCheck.findMany({
         where: { result: resultFilter },
@@ -236,21 +272,59 @@ if (action === 'task_qc') {
       return NextResponse.json({ error: `Role ${role} cannot submit order-level QC results` }, { status: 403 });
     }
 
-    // Guard: PASS requires order to be in QC_PENDING — all production steps must be complete
+    const orderForGuard = await prisma.workOrder.findUnique({
+      where: { id: workOrderId },
+      select: { status: true, orderNumber: true },
+    });
+    if (!orderForGuard) {
+      return NextResponse.json({ error: 'Work order not found', code: 'ORDER_NOT_FOUND' }, { status: 404 });
+    }
+
+    const ALLOWED_QC_STATUSES = ['QC_PENDING', 'IN_PROGRESS', 'REWORK'];
+    if (result.toUpperCase() === 'PASS' && orderForGuard.status !== 'QC_PENDING') {
+      return NextResponse.json({
+        error: `Cannot submit QC PASS — order ${orderForGuard.orderNumber} is in "${orderForGuard.status}" status. All production steps must be completed (status must be QC_PENDING) before quality can be approved.`,
+        code: 'ORDER_NOT_QC_PENDING',
+      }, { status: 422 });
+    }
+    if (!ALLOWED_QC_STATUSES.includes(orderForGuard.status) && result.toUpperCase() !== 'FAIL') {
+      return NextResponse.json({
+        error: `Cannot submit inspection — order ${orderForGuard.orderNumber} is in "${orderForGuard.status}" status. Order must be IN_PROGRESS, QC_PENDING, or REWORK for inspection.`,
+        code: 'ORDER_STATUS_INVALID',
+      }, { status: 422 });
+    }
+
     if (result.toUpperCase() === 'PASS') {
-      const orderForGuard = await prisma.workOrder.findUnique({
-        where: { id: workOrderId },
-        select: { status: true },
-      });
-      if (!orderForGuard) {
-        return NextResponse.json({ error: 'Work order not found', code: 'ORDER_NOT_FOUND' }, { status: 404 });
+      if (visualChecks) {
+        const checks = typeof visualChecks === 'object' ? visualChecks : {};
+        const allPassed = Object.values(checks).every(v => v === true);
+        if (!allPassed) {
+          const passed = Object.values(checks).filter(v => v === true).length;
+          const total = Object.keys(checks).length;
+          return NextResponse.json({
+            error: `Cannot submit QC PASS — only ${passed}/${total} visual checks completed. All mandatory checks must pass before approving.`,
+            code: 'VISUAL_CHECKS_INCOMPLETE',
+          }, { status: 422 });
+        }
       }
-      if (orderForGuard.status !== 'QC_PENDING') {
-        return NextResponse.json({
-          error: `Cannot submit QC PASS — order is in "${orderForGuard.status}" status. All production steps must be completed before quality can be approved.`,
-          code: 'ORDER_NOT_QC_PENDING',
-        }, { status: 422 });
+
+      if (measurements) {
+        const meas = typeof measurements === 'object' ? measurements : {};
+        const hasValues = Object.values(meas).some(v => v !== '' && v !== null && v !== undefined);
+        if (!hasValues && Object.keys(meas).length > 0) {
+          return NextResponse.json({
+            error: 'Cannot submit QC PASS — no measurement values recorded. Enter at least one measurement.',
+            code: 'MEASUREMENTS_EMPTY',
+          }, { status: 422 });
+        }
       }
+    }
+
+    if ((result.toUpperCase() === 'REWORK' || result.toUpperCase() === 'FAIL') && !defectType && !notes) {
+      return NextResponse.json({
+        error: 'Rework or Fail requires a defect type or inspection notes describing the issue.',
+        code: 'DEFECT_INFO_REQUIRED',
+      }, { status: 422 });
     }
 
     const record = await prisma.inspectionRecord.create({
@@ -285,8 +359,9 @@ if (action === 'task_qc') {
 
     return NextResponse.json({ success: true, record, orderStatus: nextStatus });
   } catch (e) {
-    console.error('[quality POST]', e);
-    const message = e instanceof Error ? e.message : 'Unknown error';
-    return NextResponse.json({ error: `Failed to submit quality inspection: ${message}`, code: 'SERVER_ERROR' }, { status: 500 });
+    // HIGH-11 fix: don't interpolate the raw caught error into the
+    // client-facing message — log it server-side instead.
+    log.error('quality POST error', { message: e instanceof Error ? e.message : String(e) });
+    return NextResponse.json({ error: 'Failed to submit quality inspection', code: 'SERVER_ERROR' }, { status: 500 });
   }
 }

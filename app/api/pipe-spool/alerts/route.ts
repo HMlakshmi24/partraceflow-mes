@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
 import { requireSpoolAction } from '@/lib/spoolRBAC';
+import { requireRole } from '@/lib/api-auth';
+
+const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
 export async function GET(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const { searchParams } = new URL(req.url);
     const unreadOnly = searchParams.get('unread') === 'true';
@@ -21,6 +27,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const body = await req.json();
     const { action, id, ids, ...data } = body;

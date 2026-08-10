@@ -1,21 +1,36 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Plus, Search, ChevronRight, MapPin, Package, Grid3X3 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Search, ChevronRight, MapPin, Package, Grid3X3 } from 'lucide-react';
 import Link from 'next/link';
 
+type YardLocation = {
+  id: string;
+  zone: string;
+  fullAddress: string;
+  occupied: boolean;
+  spool?: { spoolId?: string };
+};
+
+type BulkForm = {
+  zone: string;
+  rack: string;
+  rows: string;
+  positions: string;
+};
+
 export default function YardPage() {
-  const [locations, setLocations] = useState<any[]>([]);
+  const [locations, setLocations] = useState<YardLocation[]>([]);
   const [summary, setSummary] = useState({ total: 0, occupied: 0, free: 0 });
   const [search, setSearch] = useState('');
   const [zoneFilter, setZoneFilter] = useState('');
   const [occupiedFilter, setOccupiedFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [showBulkForm, setShowBulkForm] = useState(false);
-  const [bulk, setBulk] = useState({ zone: 'A', rack: 'R1', rows: '1,2,3,4,5', positions: '1,2,3,4,5,6,7,8,9,10' });
+  const [bulk, setBulk] = useState<BulkForm>({ zone: 'A', rack: 'R1', rows: '1,2,3,4,5', positions: '1,2,3,4,5,6,7,8,9,10' });
   const [saving, setSaving] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     const params = new URLSearchParams();
     if (zoneFilter) params.set('zone', zoneFilter);
@@ -25,9 +40,9 @@ export default function YardPage() {
     setLocations(data.locations ?? []);
     setSummary(data.summary ?? { total: 0, occupied: 0, free: 0 });
     setLoading(false);
-  };
+  }, [zoneFilter, occupiedFilter]);
 
-  useEffect(() => { load(); }, [zoneFilter, occupiedFilter]);
+  useEffect(() => { load(); }, [load]);
 
   const zones = [...new Set(locations.map(l => l.zone))].sort();
 
@@ -56,7 +71,7 @@ export default function YardPage() {
   };
 
   // Group by zone for visual grid
-  const byZone: Record<string, any[]> = {};
+  const byZone: Record<string, YardLocation[]> = {};
   filtered.forEach(l => { if (!byZone[l.zone]) byZone[l.zone] = []; byZone[l.zone].push(l); });
 
   return (
@@ -134,7 +149,7 @@ export default function YardPage() {
               ].map(f => (
                 <div key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                   <label style={{ fontSize: 12, color: 'var(--muted-foreground)', fontWeight: 600 }}>{f.label}</label>
-                  <input value={(bulk as any)[f.key]} onChange={e => setBulk(p => ({ ...p, [f.key]: e.target.value }))}
+                  <input value={bulk[f.key as keyof BulkForm]} onChange={e => setBulk(p => ({ ...p, [f.key]: e.target.value }))}
                     placeholder={f.placeholder}
                     style={{ padding: '8px 10px', background: 'var(--surface-muted)', border: '1px solid var(--card-border)', borderRadius: 7, fontSize: 13, color: 'var(--foreground)', outline: 'none' }} />
                 </div>
@@ -156,7 +171,7 @@ export default function YardPage() {
         <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted-foreground)' }}>Loading…</div>
       ) : Object.keys(byZone).length === 0 ? (
         <div style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 14, padding: 40, textAlign: 'center', color: 'var(--muted-foreground)' }}>
-          No yard locations defined. Click "Create Rack Grid" to set up the yard layout.
+          No yard locations defined. Click &quot;Create Rack Grid&quot; to set up the yard layout.
         </div>
       ) : (
         Object.entries(byZone).map(([zone, locs]) => (

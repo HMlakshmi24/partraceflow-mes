@@ -1,32 +1,47 @@
-// Simple logical connectivity graph used for demo cascade behavior.
-// NOTE: This is intentionally deterministic so the UI behaves consistently.
+import { prisma } from '@/lib/services/database';
 
-export type MachineCode =
-  | 'QC-GATE'
-  | 'CNC-01'
-  | 'CNC-02'
-  | 'WLD-01'
-  | 'ASSY-01';
+export async function buildMachineGraph(): Promise<Record<string, string[]>> {
+  const machines = await prisma.machine.findMany({
+    select: { id: true, code: true, productionLineId: true },
+  });
 
-// Undirected connectivity so either side can cascade.
-export const MACHINE_GRAPH: Record<MachineCode, MachineCode[]> = {
-  'QC-GATE': ['WLD-01', 'CNC-02', 'ASSY-01'],
-  'CNC-01': ['CNC-02'],
-  'CNC-02': ['CNC-01', 'WLD-01', 'QC-GATE'],
-  'WLD-01': ['CNC-02', 'ASSY-01', 'QC-GATE'],
-  'ASSY-01': ['WLD-01', 'QC-GATE'],
-};
+  const graph: Record<string, string[]> = {};
 
-export function getConnectedChain(machineCode: MachineCode): MachineCode[] {
-  // BFS to collect all nodes reachable from the provided one.
-  const visited = new Set<MachineCode>();
-  const q: MachineCode[] = [machineCode];
+  const lineGroups = new Map<string, string[]>();
+  for (const m of machines) {
+    graph[m.code] = [];
+    if (m.productionLineId) {
+      const group = lineGroups.get(m.productionLineId) ?? [];
+      group.push(m.code);
+      lineGroups.set(m.productionLineId, group);
+    }
+  }
+
+  for (const [, codes] of lineGroups) {
+    for (let i = 0; i < codes.length; i++) {
+      for (let j = i + 1; j < codes.length; j++) {
+        graph[codes[i]] = graph[codes[i]] ?? [];
+        graph[codes[j]] = graph[codes[j]] ?? [];
+        if (!graph[codes[i]].includes(codes[j])) graph[codes[i]].push(codes[j]);
+        if (!graph[codes[j]].includes(codes[i])) graph[codes[j]].push(codes[i]);
+      }
+    }
+  }
+
+  return graph;
+}
+
+export async function getConnectedChain(machineCode: string): Promise<string[]> {
+  const graph = await buildMachineGraph();
+
+  const visited = new Set<string>();
+  const q: string[] = [machineCode];
 
   while (q.length) {
     const cur = q.shift()!;
     if (visited.has(cur)) continue;
     visited.add(cur);
-    const next = MACHINE_GRAPH[cur] ?? [];
+    const next = graph[cur] ?? [];
     for (const n of next) {
       if (!visited.has(n)) q.push(n);
     }
@@ -34,4 +49,3 @@ export function getConnectedChain(machineCode: MachineCode): MachineCode[] {
 
   return Array.from(visited);
 }
-

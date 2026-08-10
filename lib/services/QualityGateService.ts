@@ -1,5 +1,5 @@
-/**
- * 🏭 Quality Gate Service
+﻿/**
+ * Quality Gate Service
  * 
  * Handles quality gates with threshold rules, supervisor approvals,
  * and digital sign-offs for manufacturing workflows
@@ -7,6 +7,9 @@
 
 import { prisma } from '@/lib/services/database';
 import { BusinessLogicError, ValidationError } from '@/lib/utils/validation';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('services.qualityGate');
 
 export interface QualityRule {
   id: string;
@@ -68,7 +71,7 @@ export class QualityGateService {
       return rule.id;
       
     } catch (error) {
-      console.error('Quality rule creation error:', error);
+      log.error('Quality rule creation error:', { message: error instanceof Error ? error.message : String(error) });
       throw new BusinessLogicError('Failed to create quality rule', 'RULE_CREATE_ERROR');
     }
   }
@@ -110,7 +113,7 @@ export class QualityGateService {
       return gate.id;
       
     } catch (error) {
-      console.error('Quality gate creation error:', error);
+      log.error('Quality gate creation error:', { message: error instanceof Error ? error.message : String(error) });
       throw new BusinessLogicError('Failed to create quality gate', 'GATE_CREATE_ERROR');
     }
   }
@@ -215,7 +218,7 @@ export class QualityGateService {
       };
       
     } catch (error) {
-      console.error('Quality gate evaluation error:', error);
+      log.error('Quality gate evaluation error:', { message: error instanceof Error ? error.message : String(error) });
       throw new BusinessLogicError('Failed to evaluate quality gate', 'GATE_EVALUATION_ERROR');
     }
   }
@@ -272,7 +275,7 @@ export class QualityGateService {
         });
         
         // Continue workflow
-        await this.continueWorkflowAfterApproval(gate.task.instanceId);
+        await this.continueWorkflowAfterApproval(gate.task);
       } else if (status === 'REJECTED') {
         await prisma.qualityGate.update({
           where: { id: gateId },
@@ -284,17 +287,20 @@ export class QualityGateService {
       }
       
       // Log approval
+      // MEDIUM fix: the two `details:` keys used to collide (the second
+      // object-spread entry silently overwrote the first whenever comments
+      // were provided), discarding the gate name/approver info instead of
+      // combining it with the comment.
       await prisma.systemEvent.create({
         data: {
           eventType: 'QUALITY_GATE_APPROVAL',
-          details: `Quality gate ${gate.name} ${status.toLowerCase()} by ${user.username}`,
+          details: `Quality gate ${gate.name} ${status.toLowerCase()} by ${user.username}${comments ? ` — ${comments}` : ''}`,
           userId,
-          ...(comments && { details: `${status}: ${comments}` })
         }
       });
       
     } catch (error) {
-      console.error('Quality gate approval error:', error);
+      log.error('Quality gate approval error:', { message: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   }
@@ -416,7 +422,7 @@ export class QualityGateService {
       try {
         await this.createQualityRule(ruleData.name, ruleData.description, ruleData.logic);
       } catch (error) {
-        console.error(`Failed to create quality rule ${ruleData.name}:`, error);
+        log.error(`Failed to create quality rule ${ruleData.name}:`, { message: error instanceof Error ? error.message : String(error) });
       }
     }
   }
@@ -470,13 +476,47 @@ export class QualityGateService {
     }
   }
   
-  private static async continueWorkflowAfterApproval(instanceId: string): Promise<void> {
-    // This would integrate with the workflow engine
+  /**
+   * HIGH-10 fix: this previously only logged a SystemEvent claiming the
+   * workflow "continued" without touching WorkflowToken/WorkflowInstance at
+   * all — approving a quality gate had no actual effect on workflow
+   * progression. It now finds the graph node mapped (via
+   * WorkflowInstance.context.nodeStepMap, populated by
+   * WorkflowEngine.startInstance) to this task's step definition, and
+   * advances that node's active token through the real WorkflowEngine —
+   * the same mechanism WorkflowEngine.completeUserTask uses.
+   */
+  private static async continueWorkflowAfterApproval(task: {
+    id: string;
+    instanceId: string;
+    stepDefId: string;
+    instance: { context: string | null };
+  }): Promise<void> {
+    const context = task.instance.context ? JSON.parse(task.instance.context) : {};
+    const nodeStepMap: Record<string, string> = context.nodeStepMap ?? {};
+    const nodeId = Object.entries(nodeStepMap).find(([, stepDefId]) => stepDefId === task.stepDefId)?.[0];
+
+    if (!nodeId) {
+      log.warn('continueWorkflowAfterApproval: no graph node mapped to this task\'s step definition — cannot advance token', { taskId: task.id, instanceId: task.instanceId });
+      return;
+    }
+
+    const token = await prisma.workflowToken.findFirst({
+      where: { instanceId: task.instanceId, nodeId, status: 'ACTIVE' },
+    });
+    if (!token) {
+      log.warn('continueWorkflowAfterApproval: no active token at the mapped node', { taskId: task.id, instanceId: task.instanceId, nodeId });
+      return;
+    }
+
+    const { WorkflowEngine } = await import('@/lib/engines/WorkflowEngine');
+    await WorkflowEngine.processToken(task.instanceId, token.id);
+
     await prisma.systemEvent.create({
       data: {
         eventType: 'WORKFLOW_CONTINUED',
-        details: `Workflow continued after quality gate approval for instance ${instanceId}`
-      }
+        details: `Workflow continued after quality gate approval for instance ${task.instanceId} (node ${nodeId})`,
+      },
     });
   }
   
@@ -495,3 +535,4 @@ export class QualityGateService {
     });
   }
 }
+

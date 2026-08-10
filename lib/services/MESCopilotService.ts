@@ -1,8 +1,12 @@
 import { prisma } from '@/lib/services/database'
+import { createLogger } from '@/lib/logger'
 
-// Rule-based MES intelligence engine — no external AI API required
-// Uses database analysis + pattern matching + natural language template responses
-// Future: replace with hybrid approach (this analysis + LLM for formatting)
+const log = createLogger('MESCopilotService')
+
+// Hybrid MES intelligence engine:
+//   1. Always fetches structured context from the database (RAG retrieval)
+//   2. If OPENAI_API_KEY or GEMINI_API_KEY is present → passes context to LLM for natural-language formatting
+//   3. Falls back to rule-based template responses if no API key is configured
 
 type CopilotIntent =
   | 'MACHINE_STOP_ANALYSIS'
@@ -39,7 +43,7 @@ export class MESCopilotService {
 
   // Extract machine code or ID from question
   private static async extractMachineFromQuestion(question: string): Promise<string | null> {
-    const machines = await prisma.machine.findMany()
+    const machines = await prisma.machine.findMany({ take: 200 })
     for (const machine of machines) {
       if (question.toLowerCase().includes(machine.code.toLowerCase()) ||
           question.toLowerCase().includes(machine.name.toLowerCase())) {
@@ -113,7 +117,8 @@ export class MESCopilotService {
     if (affectedTasks.length > 0) dataUsed.push('WorkflowTask')
 
     const machineName = machine?.name ?? 'Unknown machine'
-    const status = machine?.status ?? 'UNKNOWN'
+    const rawStatus = machine?.status ?? 'UNKNOWN'
+    const status = rawStatus === 'ACTIVE' ? 'IDLE' : rawStatus
 
     if (!lastDowntime) {
       return {
@@ -194,7 +199,7 @@ export class MESCopilotService {
         `• OEE: ${machine?.oee.toFixed(1) ?? 'N/A'}%\n` +
         `• Availability: ${availability.toFixed(1)}%\n` +
         `• Total downtime: ${Math.round(downtimeMin)} minutes\n` +
-        `• Current status: ${machine?.status}\n\n` +
+        `• Current status: ${machine?.status === 'ACTIVE' ? 'IDLE' : machine?.status}\n\n` +
         `Target OEE: 85%`,
       dataUsed: ['Machine', 'DowntimeEvent'],
       confidence: 0.88
@@ -316,7 +321,7 @@ export class MESCopilotService {
       prisma.qualityCheck.count({ where: { result: 'FAIL' } })
     ])
 
-    const machines = await prisma.machine.findMany()
+    const machines = await prisma.machine.findMany({ take: 200 })
     const running = machines.filter(m => m.status === 'RUNNING').length
     const down = machines.filter(m => m.status === 'DOWN').length
 
@@ -338,10 +343,72 @@ export class MESCopilotService {
     }
   }
 
-  // Main query entry point
+  // ── LLM enhancement (RAG) ──────────────────────────────────────────────────
+
+  private static async enhanceWithLLM(question: string, structuredAnswer: string): Promise<string | null> {
+    const openaiKey = process.env.OPENAI_API_KEY
+    const geminiKey = process.env.GEMINI_API_KEY
+
+    if (!openaiKey && !geminiKey) return null
+
+    const systemPrompt =
+      'You are a manufacturing operations assistant. ' +
+      'You are given structured MES data retrieved from the production database. ' +
+      'Rewrite it as a clear, concise, professional response for a factory supervisor. ' +
+      'Keep all numbers and facts exactly as given. Do not invent data. ' +
+      'Use plain text with minimal markdown.'
+
+    const userPrompt = `User question: ${question}\n\nMES data:\n${structuredAnswer}`
+
+    try {
+      if (openaiKey) {
+        const res = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openaiKey}` },
+          body: JSON.stringify({
+            model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user',   content: userPrompt },
+            ],
+            max_tokens: 600,
+            temperature: 0.3,
+          }),
+        })
+        if (!res.ok) throw new Error(`OpenAI ${res.status}`)
+        const json = await res.json() as { choices: Array<{ message: { content: string } }> }
+        return json.choices[0]?.message?.content?.trim() ?? null
+      }
+
+      if (geminiKey) {
+        const model = process.env.GEMINI_MODEL ?? 'gemini-1.5-flash'
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
+              generationConfig: { maxOutputTokens: 600, temperature: 0.3 },
+            }),
+          },
+        )
+        if (!res.ok) throw new Error(`Gemini ${res.status}`)
+        const json = await res.json() as { candidates: Array<{ content: { parts: Array<{ text: string }> } }> }
+        return json.candidates[0]?.content?.parts[0]?.text?.trim() ?? null
+      }
+    } catch (err) {
+      log.warn('LLM enhancement failed, using rule-based answer', { message: (err as Error).message })
+    }
+
+    return null
+  }
+
+  // ── Main query entry point ─────────────────────────────────────────────────
+
   static async query(sessionId: string, question: string): Promise<CopilotResponse> {
-    const intent = this.classifyIntent(question)
-    const machineId = await this.extractMachineFromQuestion(question)
+    const intent      = this.classifyIntent(question)
+    const machineId   = await this.extractMachineFromQuestion(question)
     const workOrderId = await this.extractWorkOrderFromQuestion(question)
 
     let response: CopilotResponse
@@ -361,7 +428,7 @@ export class MESCopilotService {
           intent: 'BOTTLENECK_QUERY',
           answer: 'Use the Bottleneck Analysis page for detailed line analysis. Run `GET /api/bottleneck/scan` for current bottlenecks.',
           dataUsed: [],
-          confidence: 0.7
+          confidence: 0.7,
         }
         break
       case 'ORDER_STATUS':
@@ -375,27 +442,30 @@ export class MESCopilotService {
           intent: 'MAINTENANCE_QUERY',
           answer: 'Check the Predictive Maintenance dashboard for machine health scores and failure predictions.',
           dataUsed: ['MachineHealthScore', 'HealthPrediction'],
-          confidence: 0.75
+          confidence: 0.75,
         }
         break
       default:
-        response = await this.analyzeShiftSummary() // fallback
-        response.intent = 'UNKNOWN'
-        response.answer = `I'm not sure I understood your question. Here's the current shift status:\n\n${response.answer}`
+        response = await this.analyzeShiftSummary()
+        response.intent    = 'UNKNOWN'
+        response.answer    = `I'm not sure I understood your question. Here's the current shift status:\n\n${response.answer}`
         response.confidence = 0.4
     }
 
-    // Persist query to DB
+    // Attempt LLM enhancement (RAG) — silently falls back if no key or network error
+    const llmAnswer = await this.enhanceWithLLM(question, response.answer)
+    if (llmAnswer) response.answer = llmAnswer
+
     await prisma.copilotQuery.create({
       data: {
         sessionId,
         question,
         intent,
-        answer: response.answer,
-        dataUsed: JSON.stringify(response.dataUsed),
+        answer:     response.answer,
+        dataUsed:   JSON.stringify(response.dataUsed),
         confidence: response.confidence,
-        timestamp: new Date()
-      }
+        timestamp:  new Date(),
+      },
     })
 
     return response

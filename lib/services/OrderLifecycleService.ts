@@ -40,7 +40,7 @@ export class OrderLifecycleService {
     }
 
     if (!canTransition(current.status, params.newStatus)) {
-      throw new Error(getTransitionError(current.status, params.newStatus));
+      throw new Error(`Invalid workflow transition: ${getTransitionError(current.status, params.newStatus)}`);
     }
 
     if (params.enforceRole !== false) {
@@ -52,18 +52,22 @@ export class OrderLifecycleService {
       }
     }
 
-    // Block QC_PENDING unless the workflow is fully completed for *every* active instance.
-    // This is the system-wide source of truth for "work still in progress".
     if (params.newStatus === 'QC_PENDING') {
       const activeInstances = await prisma.workflowInstance.findMany({
         where: { workOrderId: current.id, status: { not: 'CANCELLED' } },
         select: { id: true },
       });
 
-      if (activeInstances.length > 0) {
+      if (activeInstances.length === 0) {
+        if (!params.notes || params.notes.trim().length < 5) {
+          throw new Error(
+            'Cannot move to QC — no production workflow steps found for this order. ' +
+            'Either create workflow steps via the Operator Terminal, or provide confirmation notes ' +
+            '(minimum 5 characters) to manually advance to QC.'
+          );
+        }
+      } else {
         const activeInstanceIds = activeInstances.map(i => i.id);
-
-        // Consider any task NOT COMPLETED as in-progress for QC gating.
         const incompleteTasks = await prisma.workflowTask.count({
           where: {
             instanceId: { in: activeInstanceIds },
@@ -73,7 +77,8 @@ export class OrderLifecycleService {
 
         if (incompleteTasks > 0) {
           throw new Error(
-            `Cannot move to QC — ${incompleteTasks} workflow task(s) are not yet completed.`,
+            `Cannot move to QC — ${incompleteTasks} workflow task(s) are not yet completed. ` +
+            'All production steps must be finished before quality inspection.',
           );
         }
       }
@@ -98,11 +103,19 @@ export class OrderLifecycleService {
     const transactionId = `${current.id}-${Date.now()}`;
 
     const [order] = await prisma.$transaction(async (tx) => {
-      // 1) Update primary state
-      const updatedOrder = await tx.workOrder.update({
-        where: { id: current.id },
+      // 1) Update primary state — HIGH-2 fix: conditional update scoped to
+      // the status we validated against, instead of an unconditional write.
+      // If another writer changed the status between our read (above) and
+      // this transaction, `count` is 0 and we abort rather than silently
+      // overwriting a status the validation above never actually checked.
+      const guarded = await tx.workOrder.updateMany({
+        where: { id: current.id, status: current.status },
         data: { status: params.newStatus },
       });
+      if (guarded.count === 0) {
+        throw new Error('Order status changed concurrently — please retry.');
+      }
+      const updatedOrder = await tx.workOrder.findUniqueOrThrow({ where: { id: current.id } });
 
       // 2) Activity log
       await tx.orderActivity.create({

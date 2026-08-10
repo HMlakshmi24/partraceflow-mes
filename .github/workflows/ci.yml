@@ -1,0 +1,42 @@
+name: CI
+
+# HIGH-13 fix: mes-app had no CI at all — lint, type errors, and test
+# failures could merge silently with nothing gating a push/PR. This runs the
+# checks that don't need a live database or any secrets (all persistence in
+# the unit-test suite is mocked — see lib/__tests__/), so it needs no
+# repository secrets to run. A `next build` step needing DATABASE_URL/
+# SESSION_SECRET/etc. as real GitHub Actions secrets can be added once those
+# are provisioned for this repo.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test

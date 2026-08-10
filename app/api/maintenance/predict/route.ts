@@ -1,8 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server'
+﻿import { NextRequest, NextResponse } from 'next/server'
+import { handleApiError } from '@/lib/apiResponse';
 import { PredictiveMaintenanceService } from '@/lib/services/PredictiveMaintenanceService'
 import { prisma } from '@/lib/services/database'
+import { requireRole } from '@/lib/api-auth';
+
+const MAINTENANCE_ROLES = ['ADMIN', 'SUPERVISOR', 'MAINTENANCE', 'OPERATOR'];
 
 export async function GET(request: NextRequest) {
+  const authError = await requireRole(request, MAINTENANCE_ROLES);
+  if (authError) return authError;
+
   try {
     const { searchParams } = new URL(request.url)
     const machineId = searchParams.get('machineId')
@@ -48,7 +55,7 @@ export async function GET(request: NextRequest) {
         return {
           ...p,
           machineName: machine?.name ?? p.machineId,
-          machineCode: machine?.code ?? '—',
+          machineCode: machine?.code ?? 'â€”',
           healthScore: Math.round(score),
           failureProbability: failProb,
           riskLevel,
@@ -69,7 +76,6 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ machineId, health, prediction })
   } catch (error) {
-    console.error('[GET /api/maintenance/predict]', error)
-    return NextResponse.json({ error: 'Prediction failed' }, { status: 500 })
+        return handleApiError('[GET /api/maintenance/predict]', error);
   }
 }

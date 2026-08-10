@@ -1,18 +1,34 @@
 /**
  * Pipe Spool Flow Engine
  *
- * Enforces the state-machine transitions from the process flow diagram:
  * FABRICATING → RECEIVED → IN_STORAGE → ISSUED → FIT_UP → WELDED
- *   → NDE_PENDING → NDE_CLEAR → PRESSURE_TESTED → COMPLETE
+ *   → [PWHT] → NDE_PENDING → NDE_CLEAR → PRESSURE_TESTED
+ *   → COATING → MARKING → COMPLETE
+ *
+ * PWHT, COATING, and MARKING are spool-level manual gates — they are NOT
+ * auto-advanced by joint status recalculation. Use the dedicated event
+ * handlers (onPWHTComplete, onCoatingComplete, onMarkingComplete) instead.
  *
  * Joints follow their own sub-flow that feeds into the spool flow.
+ * Every auto-advance writes a status history entry via StatusHistoryService.
+ *
+ * HIGH-3 fix: every status write below is a conditional `updateMany` scoped
+ * to the status it was validated against (read earlier in the same
+ * function), not a bare `update`. If another writer already changed the
+ * status in between, `count` is 0 and the write is skipped with a warning
+ * instead of silently clobbering a concurrent transition — this is a
+ * compliance-critical flow (weld/NDE/pressure-test/PWHT gating) where a lost
+ * update could make a non-conforming spool appear to have passed a gate.
  */
 
 import { prisma } from '@/lib/services/database';
 import { SPOOL_TRANSITIONS, canTransition } from '@/lib/spoolTransitions';
+import { recordStatusChange, SYSTEM_ACTOR } from '@/lib/services/StatusHistoryService';
+import { createLogger } from '@/lib/logger';
 
-// ── Spool auto-advance logic ──────────────────────────────────────────────────
-// Called after a joint status changes to see if the parent spool should advance.
+const log = createLogger('spoolFlow');
+
+// ── Spool auto-advance ────────────────────────────────────────────────────────
 
 export async function recalcSpoolStatus(spoolId: string): Promise<void> {
   const spool = await prisma.pipeSpool.findUnique({
@@ -21,33 +37,44 @@ export async function recalcSpoolStatus(spoolId: string): Promise<void> {
   });
   if (!spool || spool.joints.length === 0) return;
 
-  const statuses = spool.joints.map(j => j.status);
+  const statuses: string[] = spool.joints.map((j: { status: string }) => j.status);
   const current = spool.status;
 
   let next: string | null = null;
 
-  const allMatch = (...allowed: string[]) =>
-    statuses.every(s => allowed.includes(s));
+  // PWHT, COATING, MARKING are manual gates — never auto-skipped by joint recalc.
+  const MANUAL_GATES = ['PWHT', 'COATING', 'MARKING', 'PRESSURE_TESTED'];
 
-  if (allMatch('COMPLETE') && current !== 'COMPLETE') {
+  const allMatch = (...allowed: string[]) =>
+    statuses.every((s: string) => allowed.includes(s));
+
+  if (MANUAL_GATES.includes(current)) {
+    // Spool is parked at a manual gate; joint recalc cannot advance it further.
+    next = null;
+  } else if (allMatch('COMPLETE') && current !== 'COMPLETE') {
     next = 'COMPLETE';
-  } else if (allMatch('NDE_CLEAR', 'COMPLETE') && !['PRESSURE_TESTED', 'COMPLETE'].includes(current)) {
+  } else if (allMatch('NDE_CLEAR', 'COMPLETE') && !['NDE_CLEAR', 'PRESSURE_TESTED', 'COATING', 'MARKING', 'COMPLETE'].includes(current)) {
     next = 'NDE_CLEAR';
-  } else if (allMatch('NDE_PENDING', 'NDE_CLEAR', 'REPAIR', 'COMPLETE') && !['NDE_CLEAR', 'PRESSURE_TESTED', 'COMPLETE'].includes(current)) {
+  } else if (allMatch('NDE_PENDING', 'NDE_CLEAR', 'REPAIR', 'COMPLETE') && !['NDE_PENDING', 'NDE_CLEAR', 'PRESSURE_TESTED', 'COATING', 'MARKING', 'COMPLETE'].includes(current)) {
     next = 'NDE_PENDING';
-  } else if (allMatch('WELDED', 'NDE_PENDING', 'NDE_CLEAR', 'REPAIR', 'COMPLETE') && !['NDE_PENDING', 'NDE_CLEAR', 'PRESSURE_TESTED', 'COMPLETE'].includes(current)) {
+  } else if (allMatch('WELDED', 'NDE_PENDING', 'NDE_CLEAR', 'REPAIR', 'COMPLETE') && !['WELDED', 'PWHT', 'NDE_PENDING', 'NDE_CLEAR', 'PRESSURE_TESTED', 'COATING', 'MARKING', 'COMPLETE'].includes(current)) {
     next = 'WELDED';
-  } else if (statuses.some(s => ['FIT_UP', 'WELDED', 'NDE_PENDING', 'NDE_CLEAR', 'REPAIR', 'COMPLETE'].includes(s))
-    && !['FIT_UP', 'WELDED', 'NDE_PENDING', 'NDE_CLEAR', 'PRESSURE_TESTED', 'COMPLETE', 'HOLD'].includes(current)) {
+  } else if (statuses.some((s: string) => ['FIT_UP', 'WELDED', 'NDE_PENDING', 'NDE_CLEAR', 'REPAIR', 'COMPLETE'].includes(s))
+    && !['FIT_UP', 'WELDED', 'PWHT', 'NDE_PENDING', 'NDE_CLEAR', 'PRESSURE_TESTED', 'COATING', 'MARKING', 'COMPLETE', 'HOLD'].includes(current)) {
     next = 'FIT_UP';
   }
 
   if (next && canTransition(SPOOL_TRANSITIONS, current, next)) {
-    await prisma.pipeSpool.update({ where: { id: spoolId }, data: { status: next } });
+    const result = await prisma.pipeSpool.updateMany({ where: { id: spoolId, status: current }, data: { status: next } });
+    if (result.count === 0) {
+      log.warn('recalcSpoolStatus skipped — spool status changed concurrently', { spoolId, expected: current });
+      return;
+    }
+    await recordStatusChange('PipeSpool', spoolId, current, next, SYSTEM_ACTOR, 'Auto-advanced from joint status recalculation').catch((e) => { log.warn('spoolFlow side-effect write failed', { message: e instanceof Error ? e.message : String(e) }); });
   }
 }
 
-// ── Event handlers called from API routes ─────────────────────────────────────
+// ── Event handlers ────────────────────────────────────────────────────────────
 
 /** Call after creating a weld record. Advances joint to WELDED and triggers spool recalc. */
 export async function onWeldCreated(jointId: string): Promise<void> {
@@ -56,7 +83,12 @@ export async function onWeldCreated(jointId: string): Promise<void> {
 
   const advanceable = ['PENDING', 'FIT_UP'];
   if (advanceable.includes(joint.status)) {
-    await prisma.spoolJoint.update({ where: { id: jointId }, data: { status: 'WELDED' } });
+    const result = await prisma.spoolJoint.updateMany({ where: { id: jointId, status: joint.status }, data: { status: 'WELDED' } });
+    if (result.count === 0) {
+      log.warn('onWeldCreated skipped — joint status changed concurrently', { jointId, expected: joint.status });
+      return;
+    }
+    await recordStatusChange('SpoolJoint', jointId, joint.status, 'WELDED', SYSTEM_ACTOR, 'Auto-advanced on weld record creation').catch((e) => { log.warn('spoolFlow side-effect write failed', { message: e instanceof Error ? e.message : String(e) }); });
   }
   await recalcSpoolStatus(joint.spoolId);
 }
@@ -66,21 +98,30 @@ export async function onNDEResult(
   jointId: string,
   result: string,         // ACCEPTABLE | REJECTABLE
   holdFlag: boolean,
-  ndeRecordId: string,
 ): Promise<void> {
   const joint = await prisma.spoolJoint.findUnique({ where: { id: jointId } });
   if (!joint) return;
 
   if (result === 'ACCEPTABLE' && !holdFlag) {
-    await prisma.spoolJoint.update({
-      where: { id: jointId },
+    const updated = await prisma.spoolJoint.updateMany({
+      where: { id: jointId, status: joint.status },
       data: { status: 'NDE_CLEAR', holdFlag: false },
     });
+    if (updated.count === 0) {
+      log.warn('onNDEResult (ACCEPTABLE) skipped — joint status changed concurrently', { jointId, expected: joint.status });
+      return;
+    }
+    await recordStatusChange('SpoolJoint', jointId, joint.status, 'NDE_CLEAR', SYSTEM_ACTOR, `NDE result: ACCEPTABLE`).catch((e) => { log.warn('spoolFlow side-effect write failed', { message: e instanceof Error ? e.message : String(e) }); });
   } else if (result === 'REJECTABLE') {
-    await prisma.spoolJoint.update({
-      where: { id: jointId },
+    const updated = await prisma.spoolJoint.updateMany({
+      where: { id: jointId, status: joint.status },
       data: { status: 'REPAIR', holdFlag: true },
     });
+    if (updated.count === 0) {
+      log.warn('onNDEResult (REJECTABLE) skipped — joint status changed concurrently', { jointId, expected: joint.status });
+      return;
+    }
+    await recordStatusChange('SpoolJoint', jointId, joint.status, 'REPAIR', SYSTEM_ACTOR, 'NDE result: REJECTABLE — repair required').catch((e) => { log.warn('spoolFlow side-effect write failed', { message: e instanceof Error ? e.message : String(e) }); });
     await prisma.spoolAlert.create({
       data: {
         type: 'HOLD_PLACED',
@@ -91,12 +132,17 @@ export async function onNDEResult(
         jointId: joint.id,
         ncrId: null,
       },
-    }).catch(() => {});
+    }).catch((e) => { log.warn('spoolFlow side-effect write failed', { message: e instanceof Error ? e.message : String(e) }); });
   } else if (holdFlag) {
-    await prisma.spoolJoint.update({
-      where: { id: jointId },
+    const updated = await prisma.spoolJoint.updateMany({
+      where: { id: jointId, status: joint.status },
       data: { status: 'NDE_PENDING', holdFlag: true },
     });
+    if (updated.count === 0) {
+      log.warn('onNDEResult (hold) skipped — joint status changed concurrently', { jointId, expected: joint.status });
+      return;
+    }
+    await recordStatusChange('SpoolJoint', jointId, joint.status, 'NDE_PENDING', SYSTEM_ACTOR, 'NDE hold placed — pending review').catch((e) => { log.warn('spoolFlow side-effect write failed', { message: e instanceof Error ? e.message : String(e) }); });
     await prisma.spoolAlert.create({
       data: {
         type: 'NDE_HOLD',
@@ -107,7 +153,7 @@ export async function onNDEResult(
         jointId: joint.id,
         ncrId: null,
       },
-    }).catch(() => {});
+    }).catch((e) => { log.warn('spoolFlow side-effect write failed', { message: e instanceof Error ? e.message : String(e) }); });
   }
 
   await recalcSpoolStatus(joint.spoolId);
@@ -125,10 +171,15 @@ export async function onPressureTestResult(spoolId: string, result: string): Pro
         ? 'COMPLETE'
         : null;
     if (target) {
-      await prisma.pipeSpool.update({ where: { id: spoolId }, data: { status: target } });
+      const updated = await prisma.pipeSpool.updateMany({ where: { id: spoolId, status: spool.status }, data: { status: target } });
+      if (updated.count === 0) {
+        log.warn('onPressureTestResult skipped — spool status changed concurrently', { spoolId, expected: spool.status });
+        return;
+      }
+      await recordStatusChange('PipeSpool', spoolId, spool.status, target, SYSTEM_ACTOR, 'Pressure test PASSED').catch((e) => { log.warn('spoolFlow side-effect write failed', { message: e instanceof Error ? e.message : String(e) }); });
       await prisma.spoolAlert.create({
         data: {
-          type: 'INSPECTION_FAILED',   // reuse type — pressure test PASS
+          type: 'INSPECTION_FAILED',
           severity: 'INFO',
           title: `Pressure Test PASSED — ${spool.spoolId}`,
           message: `Spool ${spool.spoolId} pressure test passed → status: ${target}`,
@@ -136,7 +187,7 @@ export async function onPressureTestResult(spoolId: string, result: string): Pro
           spoolId: spool.id,
           ncrId: null,
         },
-      }).catch(() => {});
+      }).catch((e) => { log.warn('spoolFlow side-effect write failed', { message: e instanceof Error ? e.message : String(e) }); });
     }
   } else if (result === 'FAIL') {
     await prisma.spoolAlert.create({
@@ -149,7 +200,7 @@ export async function onPressureTestResult(spoolId: string, result: string): Pro
         spoolId: spool.id,
         ncrId: null,
       },
-    }).catch(() => {});
+    }).catch((e) => { log.warn('spoolFlow side-effect write failed', { message: e instanceof Error ? e.message : String(e) }); });
   }
 }
 
@@ -158,7 +209,54 @@ export async function onFitUpInspectionPass(jointId: string): Promise<void> {
   const joint = await prisma.spoolJoint.findUnique({ where: { id: jointId } });
   if (!joint) return;
   if (joint.status === 'PENDING') {
-    await prisma.spoolJoint.update({ where: { id: jointId }, data: { status: 'FIT_UP' } });
+    const updated = await prisma.spoolJoint.updateMany({ where: { id: jointId, status: 'PENDING' }, data: { status: 'FIT_UP' } });
+    if (updated.count === 0) {
+      log.warn('onFitUpInspectionPass skipped — joint status changed concurrently', { jointId });
+      return;
+    }
+    await recordStatusChange('SpoolJoint', jointId, 'PENDING', 'FIT_UP', SYSTEM_ACTOR, 'Fit-up inspection passed').catch((e) => { log.warn('spoolFlow side-effect write failed', { message: e instanceof Error ? e.message : String(e) }); });
     await recalcSpoolStatus(joint.spoolId);
+  }
+}
+
+/** Call after a PWHT cycle is approved/completed. Advances spool PWHT → NDE_PENDING. */
+export async function onPWHTComplete(spoolId: string): Promise<void> {
+  const spool = await prisma.pipeSpool.findUnique({ where: { id: spoolId } });
+  if (!spool || spool.status !== 'PWHT') return;
+  if (canTransition(SPOOL_TRANSITIONS, 'PWHT', 'NDE_PENDING')) {
+    const updated = await prisma.pipeSpool.updateMany({ where: { id: spoolId, status: 'PWHT' }, data: { status: 'NDE_PENDING' } });
+    if (updated.count === 0) {
+      log.warn('onPWHTComplete skipped — spool status changed concurrently', { spoolId });
+      return;
+    }
+    await recordStatusChange('PipeSpool', spoolId, 'PWHT', 'NDE_PENDING', SYSTEM_ACTOR, 'PWHT cycle completed and approved').catch((e) => { log.warn('spoolFlow side-effect write failed', { message: e instanceof Error ? e.message : String(e) }); });
+  }
+}
+
+/** Call after coating is completed for a spool. Advances spool COATING → MARKING. */
+export async function onCoatingComplete(spoolId: string): Promise<void> {
+  const spool = await prisma.pipeSpool.findUnique({ where: { id: spoolId } });
+  if (!spool || spool.status !== 'COATING') return;
+  if (canTransition(SPOOL_TRANSITIONS, 'COATING', 'MARKING')) {
+    const updated = await prisma.pipeSpool.updateMany({ where: { id: spoolId, status: 'COATING' }, data: { status: 'MARKING' } });
+    if (updated.count === 0) {
+      log.warn('onCoatingComplete skipped — spool status changed concurrently', { spoolId });
+      return;
+    }
+    await recordStatusChange('PipeSpool', spoolId, 'COATING', 'MARKING', SYSTEM_ACTOR, 'Coating complete — spool advanced to marking').catch((e) => { log.warn('spoolFlow side-effect write failed', { message: e instanceof Error ? e.message : String(e) }); });
+  }
+}
+
+/** Call after identification marking is complete. Advances spool MARKING → COMPLETE. */
+export async function onMarkingComplete(spoolId: string): Promise<void> {
+  const spool = await prisma.pipeSpool.findUnique({ where: { id: spoolId } });
+  if (!spool || spool.status !== 'MARKING') return;
+  if (canTransition(SPOOL_TRANSITIONS, 'MARKING', 'COMPLETE')) {
+    const updated = await prisma.pipeSpool.updateMany({ where: { id: spoolId, status: 'MARKING' }, data: { status: 'COMPLETE' } });
+    if (updated.count === 0) {
+      log.warn('onMarkingComplete skipped — spool status changed concurrently', { spoolId });
+      return;
+    }
+    await recordStatusChange('PipeSpool', spoolId, 'MARKING', 'COMPLETE', SYSTEM_ACTOR, 'Marking complete — spool fabrication COMPLETE').catch((e) => { log.warn('spoolFlow side-effect write failed', { message: e instanceof Error ? e.message : String(e) }); });
   }
 }

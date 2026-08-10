@@ -448,6 +448,15 @@ export default function WorkflowDesigner() {
 
             {/* Sub-toolbar: saved workflows + export JSON */}
             <div style={{ padding: '0.5rem 1.25rem', borderBottom: '1px solid #f1f5f9', background: '#fafbff', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                <button onClick={() => {
+                    setWorkflowName('New Workflow');
+                    setNodes([{ id: 'start-1', type: 'start', title: 'Start', x: 100, y: 200 }, { id: 'end-1', type: 'end', title: 'End', x: 600, y: 200 }]);
+                    setEdges([{ from: 'start-1', to: 'end-1' }]);
+                    setSelectedId(null);
+                }} style={{ padding: '4px 10px', border: '1px solid #d1d5db', borderRadius: '0.4rem', fontSize: '0.82rem', color: '#374151', cursor: 'pointer', fontWeight: 600, background: '#fff' }}>
+                    + New Workflow
+                </button>
+                <span style={{ color: '#d1d5db' }}>|</span>
                 <label style={{ fontSize: '0.82rem', color: '#6b7280', fontWeight: 600 }}>Load:</label>
                 <select onChange={async e => {
                     const name = e.target.value;

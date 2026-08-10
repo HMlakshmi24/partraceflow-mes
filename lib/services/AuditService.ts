@@ -1,4 +1,7 @@
 import { prisma } from '@/lib/services/database';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('AuditService');
 
 export enum EventType {
     WORKFLOW_START = 'WORKFLOW_START',
@@ -20,6 +23,7 @@ export enum EventType {
     ORDER_OVERDUE = 'ORDER_OVERDUE',
     AUTH_LOGIN = 'AUTH_LOGIN',
     AUTH_LOGOUT = 'AUTH_LOGOUT',
+    SESSION_REFRESHED = 'SESSION_REFRESHED',
     AUTH_FAILED = 'AUTH_FAILED',
     AUTH_RATE_LIMITED = 'AUTH_RATE_LIMITED',
     PERMISSION_DENIED = 'PERMISSION_DENIED',
@@ -27,6 +31,19 @@ export enum EventType {
     ORDER_ADMIN_ACCESS = 'ORDER_ADMIN_ACCESS',
     SYSTEM_ERROR = 'SYSTEM_ERROR',
     AUDIT_CHANGE = 'AUDIT_CHANGE',
+    USER_CREATED = 'USER_CREATED',
+    USER_UPDATED = 'USER_UPDATED',
+    USER_DEACTIVATED = 'USER_DEACTIVATED',
+    USER_ACTIVATED = 'USER_ACTIVATED',
+    USER_PASSWORD_RESET = 'USER_PASSWORD_RESET',
+    REPORT_EXPORTED = 'REPORT_EXPORTED',
+    MFA_ENROLLED = 'MFA_ENROLLED',
+    MFA_DISABLED = 'MFA_DISABLED',
+    MFA_VERIFIED = 'MFA_VERIFIED',
+    MFA_FAILED = 'MFA_FAILED',
+    MFA_BACKUP_CODE_USED = 'MFA_BACKUP_CODE_USED',
+    MFA_BACKUP_CODES_REGENERATED = 'MFA_BACKUP_CODES_REGENERATED',
+    MFA_ADMIN_RESET = 'MFA_ADMIN_RESET',
 }
 
 interface AuditContext {
@@ -60,7 +77,7 @@ export class AuditService {
                 },
             });
         } catch (e) {
-            console.error('[AuditService] Failed to write audit log:', e);
+            log.error('failed to write audit log', { message: e instanceof Error ? e.message : String(e) });
         }
     }
 
@@ -113,7 +130,7 @@ export class AuditService {
                 ),
             );
         } catch (e) {
-            console.error('[AuditService] Failed to write audit diffs:', e);
+            log.error('failed to write audit diffs', { message: e instanceof Error ? e.message : String(e) });
         }
     }
 

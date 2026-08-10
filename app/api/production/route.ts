@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server'
+﻿import { NextRequest, NextResponse } from 'next/server'
+import { handleApiError } from '@/lib/apiResponse';
 import { prisma } from '@/lib/services/database'
 import { requireRole } from '@/lib/api-auth'
 
 export async function GET(request: NextRequest) {
-  const authError = requireRole(request, ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR']);
+  const authError = await requireRole(request, ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR']);
   if (authError) return authError;
   try {
     const { searchParams } = new URL(request.url)
@@ -31,6 +32,10 @@ export async function GET(request: NextRequest) {
       orderBy: [{ priority: 'desc' }, { dueDate: 'asc' }]
     })
 
+    if (!workOrders.length) {
+      return NextResponse.json({ success: true, message: 'No work orders configured', workOrders: [], summary: { totalOrders: 0, inProgress: 0, completedToday: 0, overdueOrders: 0 } })
+    }
+
     const summary = {
       totalOrders: workOrders.length,
       inProgress: workOrders.filter(wo =>
@@ -48,7 +53,6 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ workOrders, summary })
   } catch (error) {
-    console.error('[GET /api/production]', error)
-    return NextResponse.json({ error: 'Failed to fetch production data' }, { status: 500 })
+        return handleApiError('[GET /api/production]', error);
   }
 }

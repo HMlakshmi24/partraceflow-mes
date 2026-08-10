@@ -7,43 +7,34 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
-    "@types/qrcode": "^1.5.6",
-    "@types/uuid": "^10.0.0",
     "@vercel/blob": "^2.3.2",
     "clsx": "^2.1.1",
-    "docx": "^9.6.1",
-    "js-cookie": "^3.0.5",
     "lucide-react": "^0.562.0",
     "mqtt": "^5.15.0",
-    "next": "16.1.4",
+    "next": "16.3.0",
     "next-themes": "^0.4.6",
-    "node-fetch": "^2.7.0",
-    "otplib": "^13.4.0",
     "prisma": "^5.22.0",
     "puppeteer": "^24.37.5",
     "qrcode": "^1.5.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "recharts": "^3.6.0",
-    "uuid": "^13.0.0",
     "zod": "^4.3.5"
   },
   "devDependencies": {
     "@types/node": "^20",
-    "@types/node-fetch": "^2.6.13",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "better-sqlite3": "^12.6.2",
     "eslint": "^9",
-    "eslint-config-next": "16.1.4",
-    "ts-node": "^10.9.2",
-    "typescript": "^5"
-  },
-  "prisma": {
-    "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
+    "eslint-config-next": "16.3.0",
+    "typescript": "^5",
+    "vitest": "^4.1.7"
   }
 }

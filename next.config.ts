@@ -1,54 +1,65 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-    // Fix Turbopack root detection warning when multiple lockfiles exist
-    turbopack: {
-        root: __dirname,
-    },
+  turbopack: {
+    root: __dirname,
+  },
 
-    // ── Security headers on every response ────────────────────────────────────
-    // (Additional headers are also set in middleware.ts per-request)
-    async headers() {
-        return [
-            {
-                source: '/(.*)',
-                headers: [
-                    { key: 'X-DNS-Prefetch-Control', value: 'on' },
-                    { key: 'X-Content-Type-Options', value: 'nosniff' },
-                    { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-                    { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-                    { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
-                ],
-            },
-            {
-                // CORS for API routes — restrict to same origin in production
-                source: '/api/(.*)',
-                headers: [
-                    { key: 'Access-Control-Allow-Origin',  value: process.env.ALLOWED_ORIGIN ?? 'https://mes-app-omega.vercel.app' },
-                    { key: 'Access-Control-Allow-Methods', value: 'GET,POST,PUT,DELETE,OPTIONS' },
-                    { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-API-Key' },
-                ],
-            },
-        ];
-    },
+  async redirects() {
+    return [
+      { source: "/machine-health", destination: "/maintenance", permanent: true },
+      { source: "/product-history", destination: "/traceability", permanent: true },
+      { source: "/ai-assistant", destination: "/copilot", permanent: true },
+      { source: "/assistant", destination: "/copilot", permanent: true },
+    ];
+  },
 
-    // ── Performance ───────────────────────────────────────────────────────────
-    compress: true,
-    poweredByHeader: false,   // Don't expose X-Powered-By: Next.js
+  async headers() {
+    const headers: Array<{ source: string; headers: Array<{ key: string; value: string }> }> = [
+      {
+        source: "/(.*)",
+        headers: [
+          { key: "X-DNS-Prefetch-Control", value: "on" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+        ],
+      },
+    ];
 
-    // ── Image optimisation ─────────────────────────────────────────────────────
-    images: {
-        formats: ['image/avif', 'image/webp'],
-    },
+    // LOW fix: this used to default to a hardcoded third-party demo URL
+    // (https://mes-app-omega.vercel.app) whenever ALLOWED_ORIGIN was unset,
+    // so a self-hosted deployment that forgot to set it would advertise
+    // someone else's origin as CORS-allowed instead of its own. Only emit
+    // the CORS headers when ALLOWED_ORIGIN is explicitly configured — no
+    // header means the browser's default same-origin policy applies, which
+    // is the safe default for an unconfigured deployment.
+    if (process.env.ALLOWED_ORIGIN) {
+      headers.push({
+        source: "/api/(.*)",
+        headers: [
+          { key: "Access-Control-Allow-Origin", value: process.env.ALLOWED_ORIGIN },
+          { key: "Access-Control-Allow-Methods", value: "GET,POST,PUT,DELETE,OPTIONS" },
+          { key: "Access-Control-Allow-Headers", value: "Content-Type, Authorization, X-API-Key" },
+        ],
+      });
+    }
 
-    // ── Production logging ─────────────────────────────────────────────────────
-    // Set LOG_LEVEL=debug in .env for verbose output
-    // logging: { fetches: { fullUrl: process.env.LOG_LEVEL === 'debug' } },
+    return headers;
+  },
 
-    productionBrowserSourceMaps: false,
-    compiler: {
-        removeConsole: process.env.NODE_ENV === "production" ? { exclude: ["error", "warn"] } : false,
-    },
+  serverExternalPackages: ["puppeteer", "puppeteer-core"],
+  compress: true,
+  poweredByHeader: false,
+  images: {
+    formats: ["image/avif", "image/webp"],
+  },
+  productionBrowserSourceMaps: false,
+  compiler: {
+    removeConsole: process.env.NODE_ENV === "production" ? { exclude: ["error", "warn"] } : false,
+  },
 };
 
 export default nextConfig;
+

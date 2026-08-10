@@ -1,7 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
+import { handleApiError } from '@/lib/apiResponse';
 import { prisma } from '@/lib/services/database';
+import { requireRole } from '@/lib/api-auth';
+
+const TELEMETRY_ROLES = ['ADMIN', 'SUPERVISOR', 'OPERATOR', 'MAINTENANCE'];
 
 export async function GET(request: NextRequest) {
+    const authError = await requireRole(request, TELEMETRY_ROLES);
+    if (authError) return authError;
+
     try {
         const { searchParams } = new URL(request.url);
         const machineId = searchParams.get('machineId');
@@ -39,7 +46,6 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json({ telemetry });
     } catch (error) {
-        console.error('[GET /api/machines/telemetry]', error);
-        return NextResponse.json({ error: 'Failed to fetch telemetry' }, { status: 500 });
+                return handleApiError('[GET /api/machines/telemetry]', error);
     }
 }

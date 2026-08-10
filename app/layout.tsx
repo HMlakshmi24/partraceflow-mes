@@ -6,7 +6,6 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import SessionGuard from "@/components/SessionGuard";
 import PwaRegistrar from "@/components/PwaRegistrar";
-import ProtectedRoute from "@/src/components/ProtectedRoute";
 
 
 
@@ -40,7 +39,6 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <PwaRegistrar />
           <SessionGuard />
-          <ProtectedRoute />
 
           <PLCConnection />
           <GlobalSidebar />

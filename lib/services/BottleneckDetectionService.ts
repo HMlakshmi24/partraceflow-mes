@@ -59,9 +59,10 @@ export class BottleneckDetectionService {
           machineId,
           status: 'COMPLETED',
           startTime: { not: null },
-          endTime: { gte: fromDate, lte: toDate }
+          endTime: { gte: fromDate, lte: toDate },
         },
-        select: { startTime: true, endTime: true }
+        select: { startTime: true, endTime: true },
+        take: 1000,
       })
 
       const avgDurationMinutes = tasks.length > 0
@@ -151,7 +152,8 @@ export class BottleneckDetectionService {
     const machines = await prisma.machine.findMany({
       where: plantId
         ? { productionLine: { area: { plant: { id: plantId } } } }
-        : undefined
+        : undefined,
+      take: 200,
     })
 
     const toDate = new Date()

@@ -1,6 +1,9 @@
-import { Prisma } from '@prisma/client';
+﻿import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/services/database';
 import { OrderLifecycleService } from '@/lib/services/OrderLifecycleService';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('WorkflowEngine');
 
 type NodeType = 'start' | 'end' | 'task' | 'gateway';
 
@@ -84,7 +87,7 @@ export class WorkflowEngine {
 
     const currentNode = graph.nodes.find(n => n.id === token.nodeId);
     if (!currentNode) {
-      console.error(`Node ${token.nodeId} not found in graph`);
+      log.error(`Node ${token.nodeId} not found in graph`);
       return;
     }
 
@@ -301,7 +304,7 @@ export class WorkflowEngine {
 
     const currentNode = graph.nodes.find(n => n.id === token.nodeId);
     if (!currentNode) {
-      console.error(`Node ${token.nodeId} not found in graph`);
+      log.error(`Node ${token.nodeId} not found in graph`);
       return;
     }
 
@@ -378,3 +381,4 @@ export class WorkflowEngine {
     return true;
   }
 }
+

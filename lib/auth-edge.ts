@@ -1,6 +1,6 @@
 /**
  * Edge-compatible token verification (Web Crypto API)
- * Used by middleware.ts which runs in the Edge Runtime.
+ * Used by proxy.ts (formerly middleware.ts) which runs in the Edge Runtime.
  */
 
 export const SESSION_COOKIE = 'mes_session';
@@ -13,7 +13,15 @@ function b64urlToBytes(b64url: string): Uint8Array {
 
 export async function verifyEdgeToken(
     token: string
-): Promise<{ userId: string; username: string; role: string; mustChangePassword?: boolean } | null> {
+): Promise<{
+    userId: string;
+    username: string;
+    role: string;
+    mustChangePassword?: boolean;
+    sessionVersion?: number;
+    mfaEnabled?: boolean;
+    mfaVerified?: boolean;
+} | null> {
     try {
         const secret = process.env.SESSION_SECRET ?? 'mes-dev-secret-CHANGE-IN-PRODUCTION';
         // H5: Reject all sessions in production if SESSION_SECRET is the insecure default
@@ -44,7 +52,15 @@ export async function verifyEdgeToken(
         const payload = JSON.parse(new TextDecoder().decode(b64urlToBytes(encoded)));
         if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
 
-        return { userId: payload.userId, username: payload.username, role: payload.role, mustChangePassword: payload.mustChangePassword };
+        return {
+            userId: payload.userId,
+            username: payload.username,
+            role: payload.role,
+            mustChangePassword: payload.mustChangePassword,
+            sessionVersion: payload.sessionVersion,
+            mfaEnabled: payload.mfaEnabled,
+            mfaVerified: payload.mfaVerified,
+        };
     } catch {
         return null;
     }

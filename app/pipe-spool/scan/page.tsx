@@ -110,6 +110,7 @@ function BigButton({ label, color, onClick, disabled, icon: Icon }: {
 
 export default function MobileScanPage() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const scanSeqRef = useRef(0);
   const [rfid, setRfid] = useState('');
   const [rfid2, setRfid2] = useState('');
   const [scanMode, setScanMode] = useState<'single' | 'pair'>('single');
@@ -140,6 +141,14 @@ export default function MobileScanPage() {
 
   const scan = async (tag: string) => {
     if (!tag.trim()) return;
+    // Bug fix (found via audit): scan() has no request-cancellation guard.
+    // Scanning tag A then tag B before A's fetch resolves could let A's
+    // slower response land after B's and overwrite `result`/cache with A's
+    // data while the input still showed B. Since this screen drives weld/
+    // joint approve and HOLD actions, that could mean approving or holding
+    // the wrong joint while looking at the wrong tag's data. `seq` ensures
+    // only the most recently issued scan's response can ever apply.
+    const seq = ++scanSeqRef.current;
     setLoading(true);
     setActionMsg(null);
     setPairVerified(null);
@@ -147,8 +156,10 @@ export default function MobileScanPage() {
     if (!online) {
       const cache = readCache();
       const hit = cache.find(c => c.rfid === tag);
-      setResult(hit?.result ?? null);
-      setLoading(false);
+      if (scanSeqRef.current === seq) {
+        setResult(hit?.result ?? null);
+        setLoading(false);
+      }
       return;
     }
 
@@ -164,20 +175,24 @@ export default function MobileScanPage() {
       if (jData.joint) found = { type: 'joint', data: jData.joint };
       else if (sData.spool) found = { type: 'spool', data: sData.spool };
 
-      setResult(found);
-
-      // Cache result
+      // Cache every result regardless of staleness (history should reflect
+      // every real scan), but only apply it to the visible `result` state
+      // if nothing newer has been scanned since.
       const cache = readCache().filter(c => c.rfid !== tag);
       cache.unshift({ rfid: tag, result: found, timestamp: Date.now() });
       writeCache(cache);
+
+      if (scanSeqRef.current !== seq) return;
+      setResult(found);
       setHistory(readCache());
     } catch {
+      if (scanSeqRef.current !== seq) return;
       // Fallback to cache on network error
       const cache = readCache();
       const hit = cache.find(c => c.rfid === tag);
       setResult(hit?.result ?? null);
     }
-    setLoading(false);
+    if (scanSeqRef.current === seq) setLoading(false);
   };
 
   const verifyPair = async () => {

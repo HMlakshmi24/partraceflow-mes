@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import Link from 'next/link';
 import {
     Factory, Activity, AlertTriangle, Wrench, Power, RefreshCw,
     Wifi, WifiOff, ChevronDown, ChevronRight, Zap, Thermometer, Gauge,
-    CheckCircle, Clock,
+    CheckCircle, Clock, Plug,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -29,172 +30,47 @@ interface FactoryTree {
 // ─── Static config ────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG: Record<string, { color: string; bg: string; border: string; icon: React.ReactNode; label: string }> = {
-    RUNNING: { color: '#10b981', bg: 'rgba(16,185,129,0.12)', border: '#10b981', icon: <Activity size={14} />, label: 'Running' },
-    IDLE: { color: 'var(--muted-foreground)', bg: 'rgba(107,114,128,0.12)', border: 'var(--muted-foreground)', icon: <Power size={14} />, label: 'Idle' },
-    DOWN: { color: '#ef4444', bg: 'rgba(239,68,68,0.12)', border: '#ef4444', icon: <AlertTriangle size={14} />, label: 'Down' },
-    MAINTENANCE: { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', border: '#f59e0b', icon: <Wrench size={14} />, label: 'Maintenance' },
+    RUNNING:     { color: '#10b981', bg: 'rgba(16,185,129,0.12)',  border: '#10b981',               icon: <Activity size={14} />,      label: 'Running' },
+    IDLE:        { color: 'var(--muted-foreground)', bg: 'rgba(107,114,128,0.12)', border: 'var(--muted-foreground)', icon: <Power size={14} />,        label: 'Idle' },
+    DOWN:        { color: '#ef4444', bg: 'rgba(239,68,68,0.12)',   border: '#ef4444',               icon: <AlertTriangle size={14} />, label: 'Down' },
+    MAINTENANCE: { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)',  border: '#f59e0b',               icon: <Wrench size={14} />,        label: 'Maintenance' },
 };
 
 const SIGNAL_ICONS: Record<string, React.ReactNode> = {
-    temperature: <Thermometer size={12} />,
+    temperature:  <Thermometer size={12} />,
     spindle_speed: <Gauge size={12} />,
-    vibration: <Activity size={12} />,
+    vibration:    <Activity size={12} />,
     parts_counter: <Zap size={12} />,
-    feed_rate: <Gauge size={12} />,
-    current: <Zap size={12} />,
-    pressure: <Gauge size={12} />,
+    feed_rate:    <Gauge size={12} />,
+    current:      <Zap size={12} />,
+    pressure:     <Gauge size={12} />,
 };
 
-// ─── Demo tree generator ──────────────────────────────────────────────────────
-// Generates a realistic-looking factory map with live-jittering telemetry.
-// Called on every refresh so values drift slightly, simulating live signals.
+// ─── Data fetch ───────────────────────────────────────────────────────────────
 
-function jitter(base: number, pct = 0.04): string {
-    const v = base * (1 + (Math.random() * 2 - 1) * pct);
-    return v.toFixed(1);
-}
-
-function buildDemoTree(): FactoryTree {
-    const mk = (
-        id: string, code: string, name: string,
-        status: string, oee: number,
-        lineName: string, areaName: string,
-        job: string | undefined,
-        telemetry: TelemetryPoint[]
-    ): MachineLive => ({ id, code, name, status, oee, lineName, areaName, currentJob: job, telemetry });
-
-    // ── Area 1: CNC Machining Cell ──────────────────────────────────────────
-    const w21 = mk('demo-w21', 'W21', 'CNC Milling Center', 'RUNNING', Math.round(Number(jitter(83))),
-        'CNC Line 1', 'Machining Cell', 'WO-2026-001 · Gear Housing',
-        [
-            { signal: 'spindle_speed', value: jitter(7800, 0.03), unit: 'RPM' },
-            { signal: 'temperature', value: jitter(58, 0.05), unit: '°C' },
-            { signal: 'feed_rate', value: jitter(320, 0.06), unit: 'mm/min' },
-            { signal: 'parts_counter', value: String(Math.floor(Math.random() * 3 + 137)), unit: 'ea' },
-        ]);
-    const w22 = mk('demo-w22', 'W22', 'CNC Turning Center', 'RUNNING', Math.round(Number(jitter(91))),
-        'CNC Line 1', 'Machining Cell', 'WO-2026-003 · Shaft Assy',
-        [
-            { signal: 'spindle_speed', value: jitter(3200, 0.03), unit: 'RPM' },
-            { signal: 'temperature', value: jitter(49, 0.04), unit: '°C' },
-            { signal: 'vibration', value: jitter(2.4, 0.08), unit: 'mm/s' },
-            { signal: 'parts_counter', value: String(Math.floor(Math.random() * 3 + 214)), unit: 'ea' },
-        ]);
-    const grnd = mk('demo-grnd', 'GRD-01', 'Surface Grinder', 'IDLE', 0,
-        'CNC Line 2', 'Machining Cell', undefined,
-        [
-            { signal: 'spindle_speed', value: '0.0', unit: 'RPM' },
-            { signal: 'temperature', value: jitter(24, 0.02), unit: '°C' },
-        ]);
-    const edm = mk('demo-edm', 'EDM-01', 'EDM Wire Cut', 'MAINTENANCE', 0,
-        'CNC Line 2', 'Machining Cell', undefined,
-        [
-            { signal: 'temperature', value: jitter(30, 0.02), unit: '°C' },
-            { signal: 'current', value: '0.0', unit: 'A' },
-        ]);
-
-    // ── Area 2: Assembly & Welding ──────────────────────────────────────────
-    const asm = mk('demo-asm', 'ASM-01', 'Assembly Station A', 'RUNNING', Math.round(Number(jitter(78))),
-        'Assembly Line A', 'Assembly & Welding', 'WO-2026-002 · Motor Housing',
-        [
-            { signal: 'parts_counter', value: String(Math.floor(Math.random() * 2 + 89)), unit: 'ea' },
-            { signal: 'temperature', value: jitter(26, 0.03), unit: '°C' },
-            { signal: 'vibration', value: jitter(1.1, 0.1), unit: 'mm/s' },
-        ]);
-    const wld = mk('demo-wld', 'WLD-01', 'Welding Robot MIG-5', 'RUNNING', Math.round(Number(jitter(88))),
-        'Assembly Line A', 'Assembly & Welding', 'WO-2026-002 · Motor Housing',
-        [
-            { signal: 'temperature', value: jitter(74, 0.06), unit: '°C' },
-            { signal: 'current', value: jitter(185, 0.04), unit: 'A' },
-            { signal: 'parts_counter', value: String(Math.floor(Math.random() * 2 + 61)), unit: 'ea' },
-        ]);
-    const asm2 = mk('demo-asm2', 'ASM-02', 'Assembly Station B', 'IDLE', 0,
-        'Assembly Line B', 'Assembly & Welding', undefined,
-        [
-            { signal: 'temperature', value: jitter(23, 0.02), unit: '°C' },
-        ]);
-    const press = mk('demo-press', 'PRS-01', 'Hydraulic Press 80T', 'IDLE', 0,
-        'Assembly Line B', 'Assembly & Welding', undefined,
-        [
-            { signal: 'pressure', value: '0.0', unit: 'bar' },
-            { signal: 'temperature', value: jitter(28, 0.03), unit: '°C' },
-        ]);
-
-    // ── Area 3: Quality & Packaging ─────────────────────────────────────────
-    const cmm = mk('demo-cmm', 'QG-01', 'CMM Inspection Cell', 'RUNNING', Math.round(Number(jitter(96))),
-        'QA Station', 'Quality & Packaging', 'WO-2026-001 · Final Inspect',
-        [
-            { signal: 'parts_counter', value: String(Math.floor(Math.random() * 2 + 52)), unit: 'ea' },
-            { signal: 'temperature', value: jitter(20.2, 0.01), unit: '°C' }, // CMM needs controlled temp
-            { signal: 'vibration', value: jitter(0.3, 0.1), unit: 'mm/s' },
-        ]);
-    const vis = mk('demo-vis', 'VIS-01', 'Vision Inspection', 'RUNNING', Math.round(Number(jitter(99))),
-        'QA Station', 'Quality & Packaging', 'WO-2026-003 · Vision Check',
-        [
-            { signal: 'parts_counter', value: String(Math.floor(Math.random() * 3 + 310)), unit: 'ea' },
-            { signal: 'temperature', value: jitter(22, 0.02), unit: '°C' },
-        ]);
-    const pkg = mk('demo-pkg', 'PKG-01', 'Packaging Line 1', 'RUNNING', Math.round(Number(jitter(85))),
-        'Packaging', 'Quality & Packaging', 'WO-2026-005 · Final Pack',
-        [
-            { signal: 'parts_counter', value: String(Math.floor(Math.random() * 5 + 420)), unit: 'ea' },
-            { signal: 'feed_rate', value: jitter(22, 0.05), unit: 'units/min' },
-            { signal: 'temperature', value: jitter(25, 0.03), unit: '°C' },
-        ]);
-
-    return {
-        enterprise: 'ParTraceflow Manufacturing Corp',
-        plant: 'Bangalore Factory (PLANT-BLR)',
-        areas: [
-            {
-                name: 'Machining Cell',
-                lines: [
-                    { name: 'CNC Line 1', machines: [w21, w22] },
-                    { name: 'CNC Line 2', machines: [grnd, edm] },
-                ],
-            },
-            {
-                name: 'Assembly & Welding',
-                lines: [
-                    { name: 'Assembly Line A', machines: [asm, wld] },
-                    { name: 'Assembly Line B', machines: [asm2, press] },
-                ],
-            },
-            {
-                name: 'Quality & Packaging',
-                lines: [
-                    { name: 'QA Station', machines: [cmm, vis] },
-                    { name: 'Packaging', machines: [pkg] },
-                ],
-            },
-        ],
-        ungrouped: [],
-    };
-}
-
-// ─── Fetch live tree from DB ──────────────────────────────────────────────────
-
-async function fetchFactoryTree(): Promise<FactoryTree> {
+async function fetchFactoryTree(): Promise<FactoryTree | null> {
     try {
         const res = await fetch('/api/machines', { credentials: 'include' });
-        if (!res.ok) return buildDemoTree();
+        if (!res.ok) return null;
         const { machines } = await res.json();
-        if (!machines || machines.length === 0) return buildDemoTree();
+        if (!machines || machines.length === 0) return null;
 
-        // Get latest telemetry
-        const telemetryMap: Record<string, any[]> = {};
+        const telemetryMap: Record<string, TelemetryPoint[]> = {};
         try {
             const tRes = await fetch('/api/machines/telemetry', { credentials: 'include' });
             if (tRes.ok) {
                 const tData = await tRes.json();
                 for (const t of tData.telemetry ?? []) {
                     if (!telemetryMap[t.machineId]) telemetryMap[t.machineId] = [];
-                    telemetryMap[t.machineId].push(t);
+                    telemetryMap[t.machineId].push({
+                        signal: t.signalName ?? t.signal?.signalName ?? 'signal',
+                        value: t.value,
+                        unit: t.unit ?? t.signal?.unit ?? null,
+                    });
                 }
             }
         } catch { /* telemetry optional */ }
 
-        // Fetch open downtimes
         const openDowntimeMap: Record<string, { id: string; reason: string; mins: number }> = {};
         try {
             const dtRes = await fetch('/api/downtime?open=true', { credentials: 'include' });
@@ -216,15 +92,10 @@ async function fetchFactoryTree(): Promise<FactoryTree> {
         const ungrouped: MachineLive[] = [];
 
         for (const m of machines) {
-            const tele = (telemetryMap[m.id] ?? []).slice(0, 4).map((t: any) => ({
-                signal: t.signalName ?? t.signal?.signalName ?? 'signal',
-                value: t.value,
-                unit: t.unit ?? t.signal?.unit ?? null,
-            }));
-
+            const tele = (telemetryMap[m.id] ?? []).slice(0, 4);
             const hasOpenDowntime = Boolean(openDowntimeMap[m.id]);
-            const normalizedStatus =
-                hasOpenDowntime ? 'DOWN' : ((m.status ?? 'IDLE').toUpperCase() === 'DOWN' ? 'IDLE' : (m.status ?? 'IDLE'));
+            const rawStatus = (m.status ?? 'IDLE').toUpperCase();
+            const normalizedStatus = hasOpenDowntime ? 'DOWN' : (rawStatus === 'DOWN' ? 'IDLE' : rawStatus);
 
             const machine: MachineLive = {
                 id: m.id, code: m.code, name: m.name,
@@ -252,23 +123,25 @@ async function fetchFactoryTree(): Promise<FactoryTree> {
 
         const areas = Object.values(areaMap).map(a => ({ name: a.name, lines: Object.values(a.lines) }));
 
-        // If DB has machines but none are in lines, keep real machines only (do not inject demo-only DOWN states)
-        if (areas.length === 0) {
-            return {
-                enterprise: 'ParTraceflow Manufacturing Corp',
-                plant: 'Bangalore Factory (PLANT-BLR)',
-                areas: [],
-                ungrouped,
-            };
-        }
+        let enterprise = '';
+        let plant = '';
+        try {
+            const setupRes = await fetch('/api/pipe-spool/summary');
+            if (setupRes.ok) {
+                const setup = await setupRes.json();
+                enterprise = setup.enterprise ?? '';
+                plant = setup.plant ?? '';
+            }
+        } catch { /* use empty defaults */ }
 
         return {
-            enterprise: 'ParTraceflow Manufacturing Corp',
-            plant: 'Bangalore Factory (PLANT-BLR)',
-            areas, ungrouped,
+            enterprise: enterprise || 'Factory',
+            plant: plant || 'Production Facility',
+            areas,
+            ungrouped,
         };
     } catch {
-        return buildDemoTree();
+        return null;
     }
 }
 
@@ -279,14 +152,21 @@ function MachineCard({ machine, selected, onSelect }: { machine: MachineLive; se
     const oeeColor = machine.oee >= 85 ? '#10b981' : machine.oee >= 65 ? '#f59e0b' : machine.oee > 0 ? '#ef4444' : '#475569';
 
     return (
-        <div onClick={onSelect} style={{
-            background: selected ? cfg.bg : 'var(--card-bg)',
-            border: `2px solid ${selected ? cfg.color : 'var(--card-border)'}`,
-            borderRadius: '0.75rem', padding: '0.9rem',
-            cursor: 'pointer', transition: 'all 0.18s',
-            minWidth: '155px', maxWidth: '190px',
-            boxShadow: 'var(--shadow-soft)',
-        }}>
+        <div
+            role="button"
+            tabIndex={0}
+            onClick={onSelect}
+            onKeyDown={e => e.key === 'Enter' && onSelect()}
+            style={{
+                background: selected ? cfg.bg : 'var(--card-bg)',
+                border: `2px solid ${selected ? cfg.color : 'var(--card-border)'}`,
+                borderRadius: '0.75rem', padding: '0.9rem',
+                cursor: 'pointer', transition: 'border-color 0.15s, background 0.15s',
+                minWidth: '155px', maxWidth: '190px',
+                boxShadow: 'var(--shadow-soft)',
+                outline: 'none',
+            }}
+        >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.4rem' }}>
                 <span style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--foreground)' }}>{machine.code}</span>
                 <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.7rem', color: cfg.color, fontWeight: 600 }}>
@@ -304,20 +184,16 @@ function MachineCard({ machine, selected, onSelect }: { machine: MachineLive; se
                 </div>
             )}
 
-            {/* OEE bar */}
             <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: 'var(--muted-foreground)', marginBottom: '0.2rem' }}>
                     <span>OEE</span>
-                    <span style={{ color: oeeColor, fontWeight: 700 }}>
-                        {machine.oee > 0 ? `${machine.oee}%` : '—'}
-                    </span>
+                    <span style={{ color: oeeColor, fontWeight: 700 }}>{machine.oee > 0 ? `${machine.oee}%` : '—'}</span>
                 </div>
                 <div style={{ height: '4px', background: 'var(--card-border)', borderRadius: '2px', overflow: 'hidden' }}>
-                    <div style={{ width: `${machine.oee}%`, height: '100%', background: oeeColor, transition: 'width 0.6s' }} />
+                    <div style={{ width: `${machine.oee}%`, height: '100%', background: oeeColor, transition: 'width 0.4s' }} />
                 </div>
             </div>
 
-            {/* Telemetry chips */}
             {machine.telemetry.length > 0 && (
                 <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', marginTop: '0.55rem' }}>
                     {machine.telemetry.slice(0, 3).map((t, i) => (
@@ -347,24 +223,27 @@ function AreaSection({ area, selectedId, onSelect }: {
     const [open, setOpen] = useState(true);
     const all = area.lines.flatMap(l => l.machines);
     const running = all.filter(m => m.status === 'RUNNING').length;
-    const down = all.filter(m => m.status === 'DOWN').length;
-    const maint = all.filter(m => m.status === 'MAINTENANCE').length;
+    const down    = all.filter(m => m.status === 'DOWN').length;
+    const maint   = all.filter(m => m.status === 'MAINTENANCE').length;
 
     return (
         <div style={{ marginBottom: '1.75rem' }}>
-            {/* Area header */}
-            <button onClick={() => setOpen(!open)} style={{
-                display: 'flex', alignItems: 'center', gap: '0.5rem',
-                background: 'none', border: 'none', cursor: 'pointer',
-                color: 'var(--foreground)', fontWeight: 700, fontSize: '0.95rem',
-                marginBottom: '0.75rem', padding: 0,
-            }}>
+            <button
+                type="button"
+                onClick={() => setOpen(o => !o)}
+                style={{
+                    display: 'flex', alignItems: 'center', gap: '0.5rem',
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: 'var(--foreground)', fontWeight: 700, fontSize: '0.95rem',
+                    marginBottom: '0.75rem', padding: 0,
+                }}
+            >
                 {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                 <span>{area.name}</span>
                 <span style={{ fontSize: '0.72rem', color: 'var(--muted-foreground)', fontWeight: 400 }}>({all.length} machines)</span>
-                {running > 0 && <span style={{ fontSize: '0.68rem', background: 'rgba(16,185,129,0.2)', color: '#10b981', padding: '0.1rem 0.5rem', borderRadius: '1rem', fontWeight: 600 }}>{running} running</span>}
-                {down > 0 && <span style={{ fontSize: '0.68rem', background: 'rgba(239,68,68,0.2)', color: '#ef4444', padding: '0.1rem 0.5rem', borderRadius: '1rem', fontWeight: 600 }}>{down} down</span>}
-                {maint > 0 && <span style={{ fontSize: '0.68rem', background: 'rgba(245,158,11,0.2)', color: '#f59e0b', padding: '0.1rem 0.5rem', borderRadius: '1rem', fontWeight: 600 }}>{maint} maint</span>}
+                {running > 0 && <span style={{ fontSize: '0.68rem', background: 'rgba(16,185,129,0.2)',  color: '#10b981', padding: '0.1rem 0.5rem', borderRadius: '1rem', fontWeight: 600 }}>{running} running</span>}
+                {down > 0    && <span style={{ fontSize: '0.68rem', background: 'rgba(239,68,68,0.2)',   color: '#ef4444', padding: '0.1rem 0.5rem', borderRadius: '1rem', fontWeight: 600 }}>{down} down</span>}
+                {maint > 0   && <span style={{ fontSize: '0.68rem', background: 'rgba(245,158,11,0.2)',  color: '#f59e0b', padding: '0.1rem 0.5rem', borderRadius: '1rem', fontWeight: 600 }}>{maint} maintenance</span>}
             </button>
 
             {open && area.lines.map(line => (
@@ -391,7 +270,7 @@ function DetailPanel({ machine, onClose, onResolved }: { machine: MachineLive; o
     const oeeColor = machine.oee >= 85 ? '#10b981' : machine.oee >= 65 ? '#f59e0b' : machine.oee > 0 ? '#ef4444' : '#475569';
     const isDown = machine.status === 'DOWN';
     const [resolveNotes, setResolveNotes] = useState('');
-    const [resolving, setResolving] = useState(false);
+    const [resolving, setResolving]       = useState(false);
     const [resolveError, setResolveError] = useState('');
     const [resolveSuccess, setResolveSuccess] = useState(false);
 
@@ -399,25 +278,16 @@ function DetailPanel({ machine, onClose, onResolved }: { machine: MachineLive; o
         setResolving(true);
         setResolveError('');
         try {
-            // Normal path: close the OPEN downtime event.
-            // Fallback path: recover stale DOWN status even when no open downtime row exists.
             const payload = machine.openDowntimeId
-                ? {
-                    action: 'end',
-                    downtimeEventId: machine.openDowntimeId,
-                    resolutionNotes: resolveNotes || 'Issue resolved by operator',
-                }
-                : {
-                    action: 'recover-machine',
-                    machineId: machine.id,
-                    resolutionNotes: resolveNotes || 'Recovered by operator',
-                };
+                ? { action: 'end', downtimeEventId: machine.openDowntimeId, resolutionNotes: resolveNotes || 'Issue resolved by operator' }
+                : { action: 'recover-machine', machineId: machine.id, resolutionNotes: resolveNotes || 'Recovered by operator' };
 
             const res = await fetch('/api/downtime', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             });
+
             if (res.ok) {
                 setResolveSuccess(true);
                 setTimeout(() => { onResolved(); onClose(); }, 1800);
@@ -435,34 +305,38 @@ function DetailPanel({ machine, onClose, onResolved }: { machine: MachineLive; o
     return (
         <div style={{
             width: '300px', flexShrink: 0,
-            background: 'var(--card-bg)', border: `1px solid ${isDown ? 'rgba(220,38,38,0.4)' : 'var(--card-border)'}`,
+            background: 'var(--card-bg)',
+            border: `1px solid ${isDown ? 'rgba(220,38,38,0.4)' : 'var(--card-border)'}`,
             borderRadius: '1rem', padding: '1.5rem', overflowY: 'auto',
         }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
                 <h3 style={{ margin: 0, color: 'var(--foreground)', fontSize: '1rem' }}>{machine.code}</h3>
-                <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', fontSize: '1.1rem' }}>✕</button>
+                <button
+                    type="button"
+                    onClick={onClose}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', fontSize: '1.1rem', padding: '0.25rem 0.5rem', borderRadius: '0.25rem' }}
+                >
+                    ✕
+                </button>
             </div>
 
             <div style={{ fontSize: '0.82rem', color: 'var(--muted-foreground)', marginBottom: '1rem' }}>{machine.name}</div>
 
-            {/* Status badge */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.55rem 1rem', background: cfg.bg, border: `1px solid ${cfg.border}`, borderRadius: '0.5rem', marginBottom: '1.25rem' }}>
                 {cfg.icon}
                 <span style={{ color: cfg.color, fontWeight: 700, fontSize: '0.85rem' }}>{cfg.label}</span>
             </div>
 
-            {/* OEE */}
             <div style={{ marginBottom: '1.25rem' }}>
                 <div style={{ fontSize: '0.72rem', color: 'var(--muted-foreground)', marginBottom: '0.4rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>OEE</div>
                 <div style={{ fontSize: '1.9rem', fontWeight: 800, color: oeeColor }}>
                     {machine.oee > 0 ? `${machine.oee}%` : '—'}
                 </div>
                 <div style={{ height: '5px', background: 'var(--surface-muted)', borderRadius: '3px', marginTop: '0.4rem' }}>
-                    <div style={{ width: `${machine.oee}%`, height: '100%', background: oeeColor, borderRadius: '3px', transition: 'width 0.8s' }} />
+                    <div style={{ width: `${machine.oee}%`, height: '100%', background: oeeColor, borderRadius: '3px', transition: 'width 0.6s' }} />
                 </div>
             </div>
 
-            {/* Current job */}
             {machine.currentJob && (
                 <div style={{ marginBottom: '1.25rem', padding: '0.65rem', background: 'rgba(103,232,249,0.06)', border: '1px solid rgba(103,232,249,0.15)', borderRadius: '0.5rem' }}>
                     <div style={{ fontSize: '0.68rem', color: 'var(--muted-foreground)', marginBottom: '0.2rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Active Job</div>
@@ -472,7 +346,6 @@ function DetailPanel({ machine, onClose, onResolved }: { machine: MachineLive; o
                 </div>
             )}
 
-            {/* Location */}
             {machine.lineName && (
                 <div style={{ marginBottom: '1.25rem', padding: '0.65rem', background: 'var(--surface-muted)', borderRadius: '0.5rem' }}>
                     <div style={{ fontSize: '0.68rem', color: 'var(--muted-foreground)', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Location</div>
@@ -481,19 +354,18 @@ function DetailPanel({ machine, onClose, onResolved }: { machine: MachineLive; o
                 </div>
             )}
 
-            {/* ── RESOLVE SECTION for DOWN machines ── */}
             {isDown && (
                 <div style={{ marginBottom: '1.25rem', padding: '1rem', background: resolveSuccess ? 'rgba(16,185,129,0.08)' : 'rgba(220,38,38,0.06)', border: `1px solid ${resolveSuccess ? '#10b981' : 'rgba(220,38,38,0.3)'}`, borderRadius: '0.75rem' }}>
                     {resolveSuccess ? (
                         <div style={{ textAlign: 'center', padding: '0.5rem 0' }}>
-                            <div style={{ fontSize: '1.5rem', marginBottom: '0.3rem' }}>✅</div>
-                            <div style={{ fontWeight: 800, color: '#10b981', fontSize: '0.95rem' }}>Machine Resolved!</div>
+                            <CheckCircle size={28} color="#10b981" style={{ marginBottom: '0.5rem' }} />
+                            <div style={{ fontWeight: 800, color: '#10b981', fontSize: '0.95rem' }}>Machine Resolved</div>
                             <div style={{ fontSize: '0.78rem', color: 'var(--muted-foreground)', marginTop: '4px' }}>Closing panel...</div>
                         </div>
                     ) : (
                         <>
                             <div style={{ fontSize: '0.72rem', color: '#dc2626', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.6rem', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#dc2626', display: 'inline-block', animation: 'pulse 1.5s infinite' }} />
+                                <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#dc2626', display: 'inline-block' }} />
                                 Machine Stopped
                             </div>
                             <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--foreground)', marginBottom: '2px' }}>
@@ -511,28 +383,28 @@ function DetailPanel({ machine, onClose, onResolved }: { machine: MachineLive; o
                                 onChange={e => setResolveNotes(e.target.value)}
                                 placeholder="What was done to fix it? (optional)"
                                 rows={2}
-                                style={{ width: '100%', borderRadius: '8px', border: '1px solid var(--card-border)', background: 'var(--surface-muted)', padding: '6px 8px', fontSize: '0.82rem', color: 'var(--foreground)', resize: 'none', marginBottom: '0.6rem' }}
+                                style={{ width: '100%', boxSizing: 'border-box', borderRadius: '8px', border: '1px solid var(--card-border)', background: 'var(--surface-muted)', padding: '6px 8px', fontSize: '0.82rem', color: 'var(--foreground)', resize: 'none', marginBottom: '0.6rem' }}
                             />
                             {resolveError && (
                                 <div style={{ color: '#dc2626', fontSize: '0.78rem', marginBottom: '0.5rem' }}>{resolveError}</div>
                             )}
                             <button
+                                type="button"
                                 disabled={resolving}
                                 onClick={handleResolve}
                                 style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: resolving ? '#9ca3af' : '#10b981', color: '#fff', fontWeight: 800, fontSize: '0.9rem', cursor: resolving ? 'not-allowed' : 'pointer' }}
                             >
-                                {resolving ? 'Resolving...' : '✓ Machine Fixed — Back Online'}
+                                {resolving ? 'Resolving...' : 'Machine Fixed — Back Online'}
                             </button>
                         </>
                     )}
                 </div>
             )}
 
-            {/* Live signals */}
             {machine.telemetry.length > 0 && (
                 <div>
                     <div style={{ fontSize: '0.68rem', color: 'var(--muted-foreground)', marginBottom: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981', display: 'inline-block', animation: machine.status === 'RUNNING' ? 'pulse 1.5s infinite' : undefined }} />
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: machine.status === 'RUNNING' ? '#10b981' : '#94a3b8', display: 'inline-block' }} />
                         Live Signals
                     </div>
                     {machine.telemetry.map((t, i) => (
@@ -550,13 +422,12 @@ function DetailPanel({ machine, onClose, onResolved }: { machine: MachineLive; o
                 </div>
             )}
 
-            {/* Shift summary stub */}
             <div style={{ marginTop: '1.25rem', padding: '0.65rem', background: 'var(--surface-muted)', borderRadius: '0.5rem' }}>
                 <div style={{ fontSize: '0.68rem', color: 'var(--muted-foreground)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>This Shift</div>
                 {[
-                    { label: 'Parts Produced', value: '—' },
-                    { label: 'Downtime', value: machine.openDowntimeMins ? `${machine.openDowntimeMins} min` : '0 min' },
-                    { label: 'Shift OEE', value: machine.oee > 0 ? `${machine.oee}%` : '—' },
+                    { label: 'Parts Produced', value: '0' },
+                    { label: 'Downtime',        value: machine.openDowntimeMins ? `${machine.openDowntimeMins} min` : '0 min' },
+                    { label: 'Shift OEE',       value: machine.oee > 0 ? `${machine.oee}%` : 'N/A — no telemetry' },
                 ].map(r => (
                     <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', marginBottom: '0.25rem' }}>
                         <span style={{ color: 'var(--muted-foreground)' }}>{r.label}</span>
@@ -564,8 +435,6 @@ function DetailPanel({ machine, onClose, onResolved }: { machine: MachineLive; o
                     </div>
                 ))}
             </div>
-
-            <style>{`@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }`}</style>
         </div>
     );
 }
@@ -574,18 +443,18 @@ function DetailPanel({ machine, onClose, onResolved }: { machine: MachineLive; o
 
 function KpiStrip({ machines }: { machines: MachineLive[] }) {
     const running = machines.filter(m => m.status === 'RUNNING').length;
-    const total = machines.length;
-    const avgOee = total ? Math.round(machines.filter(m => m.oee > 0).reduce((s, m) => s + m.oee, 0) / Math.max(1, machines.filter(m => m.oee > 0).length)) : 0;
+    const total   = machines.length;
+    const avgOee  = machines.filter(m => m.oee > 0).reduce((s, m) => s + m.oee, 0) / Math.max(1, machines.filter(m => m.oee > 0).length);
 
     return (
         <div style={{ display: 'flex', gap: '1rem', padding: '0.75rem 2rem', background: 'var(--surface-muted)', borderBottom: '1px solid var(--card-border)', flexWrap: 'wrap' }}>
             {[
-                { label: 'Machines Online', value: `${running} / ${total}`, color: '#10b981' },
-                { label: 'Avg OEE', value: avgOee > 0 ? `${avgOee}%` : '—', color: avgOee >= 85 ? '#10b981' : avgOee >= 65 ? '#f59e0b' : '#ef4444' },
-                { label: 'Running', value: String(running), color: '#10b981' },
-                { label: 'Idle', value: String(machines.filter(m => m.status === 'IDLE').length), color: 'var(--muted-foreground)' },
-                { label: 'Down', value: String(machines.filter(m => m.status === 'DOWN').length), color: '#ef4444' },
-                { label: 'Maintenance', value: String(machines.filter(m => m.status === 'MAINTENANCE').length), color: '#f59e0b' },
+                { label: 'Machines Online', value: `${running} / ${total}`,                                                   color: '#10b981' },
+                { label: 'Avg OEE',         value: avgOee > 0 ? `${Math.round(avgOee)}%` : '—',                               color: avgOee >= 85 ? '#10b981' : avgOee >= 65 ? '#f59e0b' : '#ef4444' },
+                { label: 'Running',         value: String(running),                                                            color: '#10b981' },
+                { label: 'Idle',            value: String(machines.filter(m => m.status === 'IDLE').length),                   color: 'var(--muted-foreground)' },
+                { label: 'Down',            value: String(machines.filter(m => m.status === 'DOWN').length),                   color: '#ef4444' },
+                { label: 'Maintenance',     value: String(machines.filter(m => m.status === 'MAINTENANCE').length),            color: '#f59e0b' },
             ].map(k => (
                 <div key={k.label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '70px' }}>
                     <span style={{ fontSize: '1.15rem', fontWeight: 800, color: k.color }}>{k.value}</span>
@@ -599,153 +468,158 @@ function KpiStrip({ machines }: { machines: MachineLive[] }) {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function FactoryMapPage() {
-    const [tree, setTree] = useState<FactoryTree>(() => buildDemoTree());
-    const [loading, setLoading] = useState(false);
+    const [tree, setTree]                     = useState<FactoryTree | null>(null);
+    const [loading, setLoading]               = useState(true);
     const [selectedMachine, setSelectedMachine] = useState<MachineLive | null>(null);
-    const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
-    const [liveConnected, setLiveConnected] = useState(false);
-    const [usingDemoData, setUsingDemoData] = useState(true);
-    const esRef = useRef<EventSource | null>(null);
+    const selectedMachineRef                  = useRef<MachineLive | null>(null);
+    const [lastRefresh, setLastRefresh]       = useState<Date | null>(null);
+    const [liveConnected, setLiveConnected]   = useState(false);
+    const esRef                               = useRef<EventSource | null>(null);
+
+    const selectMachine = useCallback((m: MachineLive | null) => {
+        selectedMachineRef.current = m;
+        setSelectedMachine(m);
+    }, []);
 
     const refresh = useCallback(async () => {
         try {
             const t = await fetchFactoryTree();
-            // Check if result is from DB (has real IDs) or demo
-            const firstMachine = t.areas[0]?.lines[0]?.machines[0] ?? t.ungrouped[0];
-            const isDemo = !firstMachine || firstMachine.id.startsWith('demo-');
-            setUsingDemoData(isDemo);
             setTree(t);
             setLastRefresh(new Date());
-            // Update selected machine telemetry if it's still visible
-            if (selectedMachine) {
+            if (selectedMachineRef.current && t) {
                 const updated = [...t.areas.flatMap(a => a.lines.flatMap(l => l.machines)), ...t.ungrouped]
-                    .find(m => m.id === selectedMachine.id);
-                if (updated) setSelectedMachine(updated);
+                    .find(m => m.id === selectedMachineRef.current!.id);
+                if (updated) {
+                    selectedMachineRef.current = updated;
+                    setSelectedMachine(updated);
+                }
             }
-        } catch (e) {
-            console.error('[FactoryMap]', e);
         } finally {
             setLoading(false);
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Auto-refresh demo data every 8 seconds to make telemetry "live"
     useEffect(() => {
-        const timer = setInterval(refresh, 8000);
-        return () => clearInterval(timer);
+        refresh();
     }, [refresh]);
 
-    // SSE live updates from real DB
     useEffect(() => {
         const es = new EventSource('/api/stream');
         esRef.current = es;
-        es.onopen = () => setLiveConnected(true);
+        es.onopen  = () => setLiveConnected(true);
         es.onerror = () => setLiveConnected(false);
         es.onmessage = (evt) => {
             try {
                 const event = JSON.parse(evt.data);
                 if (event.type === 'machine.status.changed') refresh();
-            } catch { /* ignore */ }
+            } catch { /* ignore malformed events */ }
         };
         return () => { es.close(); setLiveConnected(false); };
     }, [refresh]);
 
     const allMachines = [
-        ...tree.areas.flatMap(a => a.lines.flatMap(l => l.machines)),
-        ...tree.ungrouped,
+        ...(tree?.areas.flatMap(a => a.lines.flatMap(l => l.machines)) ?? []),
+        ...(tree?.ungrouped ?? []),
     ];
 
     return (
-        <div style={{ background: 'var(--background)', minHeight: '100vh', color: 'var(--foreground)', fontFamily: 'system-ui, sans-serif', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ background: 'var(--background)', height: '100vh', color: 'var(--foreground)', display: 'flex', flexDirection: 'column' }}>
 
-            {/* Header */}
-            <div style={{ padding: '1.25rem 2rem', borderBottom: '1px solid var(--card-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            {/* ── Header ── */}
+            <div style={{ padding: '1.25rem 2rem', borderBottom: '1px solid var(--card-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <Factory size={22} color="#67e8f9" />
                     <div>
                         <h1 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: 'var(--foreground)' }}>Digital Factory Map</h1>
                         <div style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)', marginTop: '0.1rem' }}>
-                            {tree.enterprise} › {tree.plant}
+                            {tree ? `${tree.enterprise} › ${tree.plant}` : 'Loading...'}
                         </div>
                     </div>
-                    {usingDemoData && (
-                        <span style={{ fontSize: '0.68rem', background: 'rgba(103,232,249,0.12)', color: '#67e8f9', border: '1px solid rgba(103,232,249,0.25)', padding: '0.2rem 0.6rem', borderRadius: '1rem', fontWeight: 600 }}>
-                            DEMO
-                        </span>
-                    )}
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', fontSize: '0.8rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: liveConnected ? '#10b981' : '#94a3b8' }}>
                         {liveConnected ? <Wifi size={13} /> : <WifiOff size={13} />}
-                        {liveConnected ? 'Live DB' : (usingDemoData ? 'Demo Mode' : 'Polling')}
+                        {liveConnected ? 'Live' : 'Offline'}
                     </div>
-
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: 'var(--muted-foreground)' }}>
-                        <Clock size={12} /> {lastRefresh.toLocaleTimeString()}
+                        <Clock size={12} /> {lastRefresh ? lastRefresh.toLocaleTimeString() : '—'}
                     </div>
-
-                    <button onClick={refresh} disabled={loading} style={{
-                        background: 'var(--surface-muted)', border: '1px solid var(--card-border)',
-                        borderRadius: '0.4rem', padding: '0.35rem 0.75rem', color: 'var(--foreground)',
-                        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem',
-                    }}>
-                        <RefreshCw size={12} style={{ animation: loading ? 'spin 1s linear infinite' : undefined }} />
+                    <button
+                        type="button"
+                        onClick={refresh}
+                        disabled={loading}
+                        style={{ background: 'var(--surface-muted)', border: '1px solid var(--card-border)', borderRadius: '0.4rem', padding: '0.35rem 0.75rem', color: 'var(--foreground)', cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem' }}
+                    >
+                        <RefreshCw size={12} />
                         Refresh
                     </button>
                 </div>
             </div>
 
-            {/* KPI strip */}
-            <KpiStrip machines={allMachines} />
+            {/* ── KPI strip ── */}
+            {!loading && allMachines.length > 0 && <KpiStrip machines={allMachines} />}
 
-            {/* Body */}
-            <div style={{ display: 'flex', flex: 1, gap: '1.5rem', padding: '1.5rem 2rem', overflow: 'hidden' }}>
+            {/* ── Body ── */}
+            {loading ? (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted-foreground)', fontSize: '0.9rem' }}>
+                    Loading factory data...
+                </div>
+            ) : allMachines.length === 0 ? (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ textAlign: 'center', maxWidth: '360px' }}>
+                        <Factory size={40} color="#475569" style={{ marginBottom: '1rem' }} />
+                        <p style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--foreground)', margin: '0 0 0.5rem' }}>No machines configured</p>
+                        <p style={{ fontSize: '0.85rem', color: 'var(--muted-foreground)', margin: '0 0 1.5rem', lineHeight: 1.5 }}>
+                            Connect machines via{' '}
+                            <Link href="/settings/connectors" style={{ color: '#3b82f6', display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}>
+                                <Plug size={12} /> Machine Connections
+                            </Link>
+                            {' '}to see the live factory layout.
+                        </p>
+                        <Link
+                            href="/settings/connectors"
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.55rem 1.25rem', background: '#3b82f6', color: '#fff', borderRadius: '0.5rem', fontWeight: 600, fontSize: '0.85rem', textDecoration: 'none' }}
+                        >
+                            <Plug size={14} /> Configure Connections
+                        </Link>
+                    </div>
+                </div>
+            ) : (
+                <div style={{ display: 'flex', flex: 1, gap: '1.5rem', padding: '1.5rem 2rem', overflow: 'hidden' }}>
+                    <div style={{ flex: 1, overflowY: 'auto' }}>
+                        {(tree?.areas ?? []).map(area => (
+                            <AreaSection
+                                key={area.name}
+                                area={area}
+                                selectedId={selectedMachine?.id ?? null}
+                                onSelect={selectMachine}
+                            />
+                        ))}
 
-                {/* Factory floor */}
-                <div style={{ flex: 1, overflowY: 'auto' }}>
-                    {usingDemoData && (
-                        <div style={{ marginBottom: '1.25rem', padding: '0.65rem 1rem', background: 'rgba(103,232,249,0.05)', border: '1px solid rgba(103,232,249,0.15)', borderRadius: '0.65rem', fontSize: '0.78rem', color: 'var(--muted-foreground)', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                            <Factory size={13} color="#67e8f9" />
-                            Showing demo factory layout. Go to{' '}
-                            <a href="/settings" style={{ color: '#67e8f9', fontWeight: 600 }}>Settings → Seed Factory Data</a>
-                            {' '}to connect real DB machines.
-                        </div>
-                    )}
+                        {(tree?.ungrouped ?? []).length > 0 && (
+                            <div style={{ marginBottom: '1.5rem' }}>
+                                <div style={{ color: '#64748b', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                                    Unassigned Machines
+                                </div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.65rem' }}>
+                                    {(tree?.ungrouped ?? []).map(m => (
+                                        <MachineCard key={m.id} machine={m} selected={selectedMachine?.id === m.id} onSelect={() => selectMachine(m)} />
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
 
-                    {tree.areas.map(area => (
-                        <AreaSection
-                            key={area.name}
-                            area={area}
-                            selectedId={selectedMachine?.id ?? null}
-                            onSelect={setSelectedMachine}
+                    {selectedMachine && (
+                        <DetailPanel
+                            machine={selectedMachine}
+                            onClose={() => selectMachine(null)}
+                            onResolved={refresh}
                         />
-                    ))}
-
-                    {tree.ungrouped.length > 0 && (
-                        <div style={{ marginBottom: '1.5rem' }}>
-                            <div style={{ color: '#64748b', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                                Unassigned Machines
-                            </div>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.65rem' }}>
-                                {tree.ungrouped.map(m => (
-                                    <MachineCard key={m.id} machine={m} selected={selectedMachine?.id === m.id} onSelect={() => setSelectedMachine(m)} />
-                                ))}
-                            </div>
-                        </div>
                     )}
                 </div>
-
-                {/* Detail panel */}
-                {selectedMachine && (
-                    <DetailPanel
-                        machine={selectedMachine}
-                        onClose={() => setSelectedMachine(null)}
-                        onResolved={refresh}
-                    />
-                )}
-            </div>
+            )}
         </div>
     );
 }

@@ -1,14 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { Search, GitBranch, Package, Clock, User, Cpu, ChevronRight, AlertCircle, CheckCircle, Box } from 'lucide-react';
+import { Search, GitBranch, Package, Clock, ChevronRight, AlertCircle, CheckCircle, Box } from 'lucide-react';
 
 interface GenealogyResult {
     serialNumber: string;
     product: { name: string; sku: string };
     batch: { batchNumber: string; workOrder: string; quantity: number };
     rawMaterials: { lotNumber: string; quantity: number; unit: string; usedAt: string }[];
-    operations: { eventType: string; timestamp: string; machineId?: string; operatorId?: string; data: any }[];
+    operations: { eventType: string; timestamp: string; machineId?: string; operatorId?: string; data: Record<string, unknown> }[];
 }
 
 interface LotTrace {
@@ -88,7 +88,7 @@ export default function TraceabilityPage() {
                             value={searchTerm}
                             onChange={e => setSearchTerm(e.target.value)}
                             onKeyDown={e => e.key === 'Enter' && search()}
-                            placeholder={searchType === 'serial' ? 'e.g. VALVE-6IN-WO-2024-001-001' : 'e.g. LOT-CS-A106-001'}
+                            placeholder={searchType === 'serial' ? 'Enter serial number' : 'Enter lot number'}
                             style={{ width: '100%', padding: '0.65rem 0.75rem 0.65rem 2.25rem', borderRadius: '0.5rem', border: '1.5px solid var(--card-border)', fontSize: '0.95rem', boxSizing: 'border-box', outline: 'none', background: 'var(--card-bg)', color: 'var(--foreground)' }}
                             onFocus={e => e.target.style.borderColor = '#3b82f6'}
                             onBlur={e => e.target.style.borderColor = 'var(--card-border)'}
@@ -98,13 +98,8 @@ export default function TraceabilityPage() {
                         {loading ? 'Searching...' : 'Trace'}
                     </button>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
-                    {['VALVE-6IN-WO-2024-001-001', 'FLANGE-4IN-WO-2024-002-003', 'LOT-CS-A106-001'].map(ex => (
-                        <button key={ex} onClick={() => { setSearchTerm(ex); setSearchType(ex.startsWith('LOT') ? 'lot' : 'serial'); }} style={{ padding: '0.25rem 0.65rem', borderRadius: '999px', border: '1px solid var(--card-border)', background: 'var(--surface-muted)', color: 'var(--muted-foreground)', cursor: 'pointer', fontSize: '0.75rem' }}>
-                            {ex}
-                        </button>
-                    ))}
-                    <span style={{ fontSize: '0.75rem', color: '#9ca3af', alignSelf: 'center' }}>Try an example</span>
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '0.78rem', color: '#9ca3af' }}>Search by serial number or lot number to trace the full production genealogy.</span>
                 </div>
             </div>
 

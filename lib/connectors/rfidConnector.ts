@@ -106,117 +106,9 @@ export abstract class RFIDConnector {
 }
 
 /**
- * Demo RFID Connector - simulates tag scans for testing
- */
-export class DemoRFIDConnector extends RFIDConnector {
-    private scanning: boolean = false;
-    private scanInterval: NodeJS.Timeout | null = null;
-    
-    // Demo tags that can be scanned
-    private demoTags: RFIDTag[] = [
-        { epc: 'DEMO-SPOOL-001', tid: 'TID-001', scannedAt: new Date() },
-        { epc: 'DEMO-SPOOL-002', tid: 'TID-002', scannedAt: new Date() },
-        { epc: 'DEMO-SPOOL-003', tid: 'TID-003', scannedAt: new Date() },
-        { epc: 'DEMO-JOINT-001', tid: 'TID-J001', scannedAt: new Date() },
-        { epc: 'DEMO-JOINT-002', tid: 'TID-J002', scannedAt: new Date() },
-    ];
-
-    constructor() {
-        super({ type: RFIDReaderType.NETWORK });
-    }
-
-    async connect(): Promise<boolean> {
-        this.connected = true;
-        return true;
-    }
-
-    async disconnect(): Promise<void> {
-        this.connected = false;
-        await this.stopScanning();
-    }
-
-    async read(): Promise<RFIDReadResult> {
-        if (!this.connected) {
-            return { success: false, error: 'Not connected' };
-        }
-
-        // Randomly return one or more demo tags
-        const numTags = Math.random() > 0.7 ? Math.floor(Math.random() * 3) + 1 : 1;
-        const shuffled = [...this.demoTags].sort(() => Math.random() - 0.5);
-        const tags = shuffled.slice(0, numTags).map(t => ({
-            ...t,
-            rssi: -50 + Math.random() * 20,
-            scannedAt: new Date()
-        }));
-
-        this.lastScan = tags;
-        return { success: true, tags };
-    }
-
-    async startScanning(): Promise<void> {
-        if (!this.connected || this.scanning) return;
-        
-        this.scanning = true;
-        this.scanInterval = setInterval(async () => {
-            if (this.scanning) {
-                const result = await this.read();
-                if (result.success && result.tags && result.tags.length > 0) {
-                    this.notifyScan(result.tags);
-                }
-            }
-        }, 2000); // Scan every 2 seconds
-    }
-
-    async stopScanning(): Promise<void> {
-        this.scanning = false;
-        if (this.scanInterval) {
-            clearInterval(this.scanInterval);
-            this.scanInterval = null;
-        }
-    }
-
-    async write(_epc: string): Promise<RFIDWriteResult> {
-        if (!this.connected) {
-            return { success: false, error: 'Not connected' };
-        }
-
-        return { success: true };
-    }
-
-    /**
-     * Add a custom demo tag for testing
-     */
-    addDemoTag(epc: string, tid?: string): void {
-        this.demoTags.push({
-            epc,
-            tid: tid || `TID-${Date.now()}`,
-            scannedAt: new Date()
-        });
-    }
-
-    /**
-     * Simulate a specific tag scan
-     */
-    simulateScan(epc: string): void {
-        const tag: RFIDTag = {
-            epc,
-            tid: `TID-${Date.now()}`,
-            rssi: -45,
-            scannedAt: new Date()
-        };
-        this.notifyScan([tag]);
-    }
-}
-
-/**
  * Factory function to create RFID connector
  */
-export function createRFIDConnector(config: RFIDReaderConfig, demoMode: boolean = true): RFIDConnector {
-    if (demoMode || config.type === RFIDReaderType.NETWORK && config.host === 'demo') {
-        return new DemoRFIDConnector();
-    }
-
-    // Real connector selection based on type
+export function createRFIDConnector(config: RFIDReaderConfig): RFIDConnector {
     switch (config.type) {
         case RFIDReaderType.SERIAL:
             return new SerialRFIDConnector(config);
@@ -225,7 +117,7 @@ export function createRFIDConnector(config: RFIDReaderConfig, demoMode: boolean 
         case RFIDReaderType.NETWORK:
             return new NetworkRFIDConnector(config);
         default:
-            return new DemoRFIDConnector();
+            throw new Error(`Unsupported RFID reader type: ${config.type}`);
     }
 }
 
@@ -255,15 +147,34 @@ class USBRFIDConnector extends RFIDConnector {
 }
 
 class NetworkRFIDConnector extends RFIDConnector {
+    private ws: WebSocket | null = null;
+
     async connect(): Promise<boolean> {
-        this.connected = true;
-        return true;
+        const { host, port } = this.config;
+        if (!host) return false;
+        try {
+            this.connected = true;
+            return true;
+        } catch {
+            this.connected = false;
+            return false;
+        }
     }
-    async disconnect(): Promise<void> { this.connected = false; }
-    async read(): Promise<RFIDReadResult> { return { success: false, error: 'Not implemented' }; }
-    async startScanning(): Promise<void> {}
+    async disconnect(): Promise<void> {
+        this.connected = false;
+        this.ws = null;
+    }
+    async read(): Promise<RFIDReadResult> {
+        if (!this.connected) return { success: false, error: `Network RFID reader at ${this.config.host}:${this.config.port} is not connected. Call connect() first.` };
+        return { success: false, error: `Network RFID read requires LLRP protocol driver for ${this.config.host}. Install @rfid/llrp-client and configure the reader.` };
+    }
+    async startScanning(): Promise<void> {
+        if (!this.connected) throw new Error('Reader not connected');
+    }
     async stopScanning(): Promise<void> {}
-    async write(): Promise<RFIDWriteResult> { return { success: false, error: 'Not implemented' }; }
+    async write(): Promise<RFIDWriteResult> {
+        return { success: false, error: 'Network RFID write requires LLRP protocol driver configuration.' };
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -314,21 +225,28 @@ export function recordRead(epc: string, readerId: string): void {
     heartbeat(readerId);
 }
 
-export function resolveTag(epc: string): { type: string; id: string } | null {
-    // Resolve EPC to spool/joint
-    // Demo resolution
-    if (epc.startsWith('DEMO-SPOOL')) {
-        return { type: 'spool', id: epc.replace('DEMO-', '') };
-    }
-    if (epc.startsWith('DEMO-JOINT')) {
-        return { type: 'joint', id: epc.replace('DEMO-', '') };
-    }
+export async function resolveTag(epc: string): Promise<{ type: string; id: string; entityId: string } | null> {
+    const { prisma } = await import('@/lib/services/database');
+
+    const spool = await prisma.pipeSpool.findFirst({
+        where: { OR: [{ rfidTag1: epc }, { rfidTag2: epc }, { barcode: epc }] },
+        select: { id: true, spoolId: true },
+    });
+    if (spool) return { type: 'spool', id: spool.spoolId, entityId: spool.id };
+
+    const joint = await prisma.spoolJoint.findFirst({
+        where: { OR: [{ rfidTag1: epc }, { rfidTag2: epc }, { barcode: epc }] },
+        select: { id: true, jointId: true },
+    });
+    if (joint) return { type: 'joint', id: joint.jointId, entityId: joint.id };
+
     return null;
 }
 
-export default {
+const rfidConnector = {
     RFIDConnector,
-    DemoRFIDConnector,
     createRFIDConnector,
     RFIDReaderType
 };
+
+export default rfidConnector;

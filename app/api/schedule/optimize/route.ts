@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server'
+﻿import { NextRequest, NextResponse } from 'next/server'
+import { handleApiError } from '@/lib/apiResponse';
 import { SchedulingEngine } from '@/lib/engines/SchedulingEngine'
 import { requireRole } from '@/lib/api-auth'
 
 export async function POST(request: NextRequest) {
-  const authError = requireRole(request, ['ADMIN', 'PLANNER', 'SUPERVISOR']);
+  const authError = await requireRole(request, ['ADMIN', 'PLANNER', 'SUPERVISOR']);
   if (authError) return authError;
 
   try {
@@ -28,7 +29,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result)
   } catch (error) {
-    console.error('[POST /api/schedule/optimize]', error)
-    return NextResponse.json({ error: 'Scheduling optimization failed' }, { status: 500 })
+        return handleApiError('[POST /api/schedule/optimize]', error);
   }
 }

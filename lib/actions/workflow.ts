@@ -1,4 +1,4 @@
-'use server';
+﻿'use server';
 
 import { prisma } from '@/lib/services/database';
 import { QueueService } from '@/lib/services/QueueService';
@@ -6,6 +6,9 @@ import { WorkflowEngine } from '@/lib/engines/WorkflowEngine';
 import { AuditService, EventType } from '@/lib/services/AuditService';
 import { OrderLifecycleService } from '@/lib/services/OrderLifecycleService';
 import { revalidatePath } from 'next/cache';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('actions.workflow');
 
 /**
  * Resolve a username or user ID to a real User.id.
@@ -18,7 +21,7 @@ async function resolveOperatorId(operatorUsername: string): Promise<string> {
     const byUsername = await prisma.user.findUnique({ where: { username: operatorUsername } }).catch(() => null);
     if (byUsername) return byUsername.id;
 
-    throw new Error(`Operator "${operatorUsername}" not found. Seed demo data or create the user in Settings first.`);
+    throw new Error(`Operator "${operatorUsername}" not found. Create the user in Settings > User Management first.`);
 }
 
 /**
@@ -203,7 +206,7 @@ export async function startTask(taskId: string, operator: string) {
         revalidatePath('/planner');
         return { success: true };
     } catch (e) {
-        console.error('[startTask]', e);
+        log.error('[startTask]', { message: e instanceof Error ? e.message : String(e) });
         return { success: false, msg: (e as Error).message };
     }
 }
@@ -257,15 +260,25 @@ export async function completeTask(taskId: string, operator: string) {
         revalidatePath('/planner');
         return { success: true };
     } catch (e) {
-        console.error('[completeTask]', e);
+        log.error('[completeTask]', { message: e instanceof Error ? e.message : String(e) });
         return { success: false, msg: (e as Error).message };
     }
 }
 
-export async function getSystemEvents() {
-    return await prisma.systemEvent.findMany({
+export async function getSystemEvents(query?: string, take = 100) {
+    const where = query
+        ? {
+              OR: [
+                  { details:   { contains: query, mode: 'insensitive' as const } },
+                  { eventType: { contains: query, mode: 'insensitive' as const } },
+                  { userId:    { contains: query, mode: 'insensitive' as const } },
+              ],
+          }
+        : undefined;
+    return prisma.systemEvent.findMany({
+        where,
         orderBy: { timestamp: 'desc' },
-        take: 50
+        take,
     });
 }
 
@@ -289,3 +302,4 @@ export async function getOrderActivities(orderId: string) {
         },
     });
 }
+

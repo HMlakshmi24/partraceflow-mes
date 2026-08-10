@@ -27,6 +27,8 @@ interface ActiveDown {
     reason: string;
     since: string;
     durationMins: number;
+    performedBy?: string;
+    updatedAt?: string;
 }
 
 interface DashboardData {
@@ -67,26 +69,6 @@ const FALLBACK: DashboardData = {
     andon: { activeCount: 0, criticalCount: 0, alerts: [] },
 };
 
-// Deterministic production curve — no Math.random to avoid hydration mismatch
-const DEMO_PROD = [285, 310, 298, 325, 342, 318, 305, 330, 316, 298, 322, 335, 308, 295, 318, 340];
-
-function buildProductionTimeline(hoursBack: number): { hour: string; actual: number; target: number }[] {
-    const slots: { hour: string; actual: number; target: number }[] = [];
-    const now = new Date();
-    const step = Math.max(1, Math.floor(hoursBack / 8));
-    let idx = 0;
-    for (let i = hoursBack; i >= 0; i -= step) {
-        const t = new Date(now.getTime() - i * 3600000);
-        const label = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        // Deterministic variation: ramp up early, plateau in mid-shift, slight dip at end
-        const base = DEMO_PROD[idx % DEMO_PROD.length] ?? 300;
-        const rampFactor = idx < 2 ? 0.6 + idx * 0.2 : 1;
-        const actual = Math.round(base * rampFactor);
-        slots.push({ hour: label, actual, target: 350 });
-        idx++;
-    }
-    return slots;
-}
 
 async function fetchLegacyDashboard(period: string): Promise<DashboardData> {
     const hoursMap: Record<string, number> = { day: 8, week: 168, shift: 8 };
@@ -144,6 +126,7 @@ async function fetchLegacyDashboard(period: string): Promise<DashboardData> {
                 goodQuantity: 0,
                 scrapQuantity: 0,
                 status: sk,
+                lastHeartbeat: m.lastHeartbeat ?? null,
             });
         }
     }
@@ -167,24 +150,9 @@ async function fetchLegacyDashboard(period: string): Promise<DashboardData> {
         .slice(0, 6)
         .map(([label, value]) => ({ label, value: Math.round(value), color: '#d32f2f' }));
 
-    if (downtime.length === 0) {
-        downtime.push(
-            { label: 'Mechanical Breakdown', value: 45, color: '#d32f2f' },
-            { label: 'Preventive Maintenance', value: 30, color: '#d32f2f' },
-            { label: 'Material Shortage', value: 18, color: '#d32f2f' },
-            { label: 'Setup / Changeover', value: 12, color: '#d32f2f' },
-        );
-    }
+    const scrap: { label: string; value: number; color: string }[] = [];
 
-    // Scrap pareto (static for now — extend with real quality data)
-    const scrap = [
-        { label: 'Dimensional Error', value: 28, color: '#ff5722' },
-        { label: 'Surface Defect', value: 15, color: '#ff5722' },
-        { label: 'Bad Weld', value: 9, color: '#ff5722' },
-        { label: 'Discolored', value: 6, color: '#ff5722' },
-    ];
-
-    const production = buildProductionTimeline(hours > 24 ? 24 : hours);
+    const production: { hour: string; actual: number; target: number }[] = [];
 
     // Only show open stops from the last 24h — stale events must not flag machine as permanently DOWN
     const DAY_MS = 24 * 60 * 60 * 1000;
@@ -270,6 +238,7 @@ function DashboardContent() {
 
     const [data, setData] = useState<DashboardData>(FALLBACK);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [refreshing, setRefreshing] = useState(false);
     const [, setLastRefresh] = useState<Date | null>(null);
     const [liveConnected, setLiveConnected] = useState(false);
@@ -279,20 +248,18 @@ function DashboardContent() {
     const [resolving, setResolving] = useState(false);
     const [resolveError, setResolveError] = useState('');
     const [resolveSuccess, setResolveSuccess] = useState(false);
-    const [triggeringDemo, setTriggeringDemo] = useState(false);
     const [actionMessage, setActionMessage] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
-    const [currentTime, setCurrentTime] = useState(new Date());
-    const [plcTelemetry, setPlcTelemetry] = useState<Record<string, { temp: number; cycleTime: number; vibration: number }>>({});
+    const [currentTime, setCurrentTime] = useState<Date | null>(null);
     const eventSourceRef = useRef<EventSource | null>(null);
-    const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const refresh = useCallback(async () => {
         try {
             const d = await fetchLiveDashboard(period);
             setData(d);
             setLastRefresh(new Date());
+            setLoadError(null);
         } catch (e) {
-            console.error('[Dashboard] fetch failed', e);
+            setLoadError('Unable to load live dashboard data.');
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -304,67 +271,60 @@ function DashboardContent() {
         refresh();
     }, [refresh]);
 
-    // Update clock every minute
     useEffect(() => {
+        setCurrentTime(new Date());
         const t = setInterval(() => setCurrentTime(new Date()), 60000);
         return () => clearInterval(t);
     }, []);
 
-    // Fake PLC telemetry — seeded from machine id, jittered every 5s
-    useEffect(() => {
-        const seed = (id: string) => id.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-        const gen = (machines: typeof data.machines) => {
-            const next: typeof plcTelemetry = {};
-            machines.forEach(m => {
-                const s = seed(m.id);
-                const prev = plcTelemetry[m.id];
-                if (m.status === 'running') {
-                    next[m.id] = {
-                        temp:      Math.round(((prev?.temp      ?? (52 + s % 30)) + (Math.random() - 0.5) * 2) * 10) / 10,
-                        cycleTime: Math.round(((prev?.cycleTime ?? (18 + s % 14)) + (Math.random() - 0.5) * 1) * 10) / 10,
-                        vibration: Math.round(((prev?.vibration ?? (0.4 + (s % 8) * 0.1)) + (Math.random() - 0.5) * 0.05) * 100) / 100,
-                    };
-                }
-            });
-            return next;
-        };
-        const tick = () => setPlcTelemetry(gen(data.machines));
-        tick();
-        const t = setInterval(tick, 5000);
-        return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [data.machines]);
-
-    // Initial load + periodic refresh every 15s
+    // Initial load on mount; SSE drives subsequent updates
     useEffect(() => {
         setLoading(true);
         refresh();
-        refreshTimerRef.current = setInterval(refresh, 15000);
-        return () => { if (refreshTimerRef.current) clearInterval(refreshTimerRef.current); };
     }, [refresh]);
 
     // SSE live updates
     useEffect(() => {
-        const es = new EventSource('/api/stream');
-        eventSourceRef.current = es;
+        let cancelled = false;
+        let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+        let attempt = 0;
 
-        es.onopen = () => setLiveConnected(true);
-        es.onerror = () => setLiveConnected(false);
+        const connect = () => {
+            if (cancelled) return;
+            const es = new EventSource('/api/stream');
+            eventSourceRef.current = es;
 
-        es.onmessage = (evt) => {
-            try {
-                const event = JSON.parse(evt.data);
-                if (event.type === 'machine.status.changed'
-                    || event.type === 'machine.telemetry.received'
-                    || event.type?.startsWith('andon.')
-                    || event.type?.startsWith('downtime.')
-                    || event.type?.startsWith('quality.')) {
-                    refresh();
-                }
-            } catch { /* ignore malformed events */ }
+            es.onopen = () => { setLiveConnected(true); attempt = 0; };
+            es.onerror = () => {
+                setLiveConnected(false);
+                es.close();
+                if (cancelled) return;
+                const delay = Math.min(30_000, 1000 * Math.max(1, 2 ** attempt));
+                attempt += 1;
+                reconnectTimer = setTimeout(connect, delay);
+            };
+
+            es.onmessage = (evt) => {
+                try {
+                    const event = JSON.parse(evt.data);
+                    if (event.type === 'machine.status.changed'
+                        || event.type === 'machine.telemetry.received'
+                        || event.type?.startsWith('andon.')
+                        || event.type?.startsWith('downtime.')
+                        || event.type?.startsWith('quality.')) {
+                        refresh();
+                    }
+                } catch { /* ignore malformed events */ }
+            };
         };
 
-        return () => { es.close(); setLiveConnected(false); };
+        connect();
+        return () => {
+            cancelled = true;
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            if (eventSourceRef.current) eventSourceRef.current.close();
+            setLiveConnected(false);
+        };
     }, [refresh]);
 
     const setPeriod = (p: string) => router.push(`/dashboard?period=${p}`);
@@ -386,10 +346,31 @@ function DashboardContent() {
                         Live Factory Dashboard
                     </h1>
                     <p style={{ margin: '2px 0 0', fontSize: '0.85rem', color: 'var(--muted-foreground)' }}>
-                        {currentTime.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
-                        &nbsp;&nbsp;{currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {currentTime ? currentTime.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }) : ''}
+                        &nbsp;&nbsp;{currentTime ? currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                     </p>
                 </div>
+                {loadError && (
+                    <div style={{
+                        width: '100%',
+                        marginTop: '0.5rem',
+                        padding: '0.6rem 0.75rem',
+                        borderRadius: '0.5rem',
+                        border: '1px solid #fecaca',
+                        background: '#fef2f2',
+                        color: '#991b1b',
+                        fontSize: '0.84rem',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '0.75rem',
+                    }}>
+                        <span>{loadError}</span>
+                        <button onClick={() => refresh()} style={{ border: '1px solid #fca5a5', background: '#fff', color: '#991b1b', borderRadius: 6, padding: '0.25rem 0.6rem', cursor: 'pointer' }}>
+                            Retry
+                        </button>
+                    </div>
+                )}
 
                 {/* Controls */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
@@ -407,11 +388,11 @@ function DashboardContent() {
                         </button>
                     ))}
 
-                    {/* Live indicator */}
+                    {/* Live connection status — not interactive, status only */}
                     <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem' }}>
                         {liveConnected
                             ? <><Wifi size={13} color="#10b981" /><span style={{ color: '#10b981', fontWeight: 600 }}>Live</span></>
-                            : <><WifiOff size={13} color="#9ca3af" /><span style={{ color: '#9ca3af' }}>Polling</span></>}
+                            : <><WifiOff size={13} color="#9ca3af" /><span style={{ color: '#9ca3af' }}>Offline</span></>}
                     </span>
 
                     {/* Refresh button */}
@@ -426,70 +407,8 @@ function DashboardContent() {
                         {refreshing ? 'Refreshing...' : 'Refresh'}
                     </button>
 
-                    {/* Stops & Damage — toggles inline resolve panel, or demo trigger when no downs */}
-                    {liveDownCount === 0 ? (
-                        <button
-                            onClick={async () => {
-                                setTriggeringDemo(true);
-                                setActionMessage(null);
-                                try {
-                                    // Find first available machine from current payload.
-                                    // If dashboard payload has none, fall back to direct machine lookup.
-                                    let firstMachine = data.machines[0];
-                                    if (!firstMachine) {
-                                        const mRes = await fetch('/api/machines');
-                                        if (mRes.ok) {
-                                            const mData = await mRes.json();
-                                            const raw = (mData?.machines ?? [])[0];
-                                            if (raw?.id) {
-                                                firstMachine = { id: raw.id, name: raw.name ?? raw.code } as any;
-                                            }
-                                        }
-                                    }
-
-                                    if (firstMachine) {
-                                        const dtRes = await fetch('/api/downtime', {
-                                            method: 'POST',
-                                            headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({
-                                                action: 'start',
-                                                machineId: firstMachine.id,
-                                                reason: 'Machine Breakdown',
-                                                notes: 'Demo stop — triggered for demonstration',
-                                            }),
-                                        });
-                                        if (!dtRes.ok) {
-                                            const err = await dtRes.json().catch(() => ({}));
-                                            setActionMessage({ type: 'error', text: err.error ?? 'Demo stop trigger failed.' });
-                                        } else {
-                                            await refresh();
-                                            setActionMessage({ type: 'ok', text: `Demo stop created on ${firstMachine.name ?? 'machine'}.` });
-                                            setShowStopsPanel(true);
-                                        }
-                                    } else {
-                                        setActionMessage({ type: 'error', text: 'No machines found to trigger demo stop.' });
-                                    }
-                                } catch {
-                                    setActionMessage({ type: 'error', text: 'Network/server error while triggering demo stop.' });
-                                }
-                                finally { setTriggeringDemo(false); }
-                            }}
-                            disabled={triggeringDemo}
-                            style={{
-                                minHeight: '38px',
-                                background: 'none',
-                                border: '1px solid var(--card-border)',
-                                borderRadius: '0.5rem', padding: '0.35rem 0.85rem', cursor: triggeringDemo ? 'not-allowed' : 'pointer',
-                                color: 'var(--muted-foreground)',
-                                display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
-                                fontWeight: 600, fontSize: '0.82rem',
-                                opacity: triggeringDemo ? 0.7 : 1,
-                            }}
-                        >
-                            <AlertTriangle size={13} />
-                            {triggeringDemo ? 'Triggering...' : 'Demo: Trigger a Stop'}
-                        </button>
-                    ) : (
+                    {/* Stops & Damage — only when machines are actively down */}
+                    {liveDownCount > 0 && (
                         <button
                             onClick={() => setShowStopsPanel(v => !v)}
                             style={{
@@ -747,23 +666,18 @@ function DashboardContent() {
                                                 </div>
                                             )}
 
-                                            {/* PLC telemetry — simulated sensor readings for running machines */}
-                                            {machine.status === 'running' && plcTelemetry[machine.id] && (
-                                                <div style={{ display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap' }}>
-                                                    {[
-                                                        { label: '🌡', value: `${plcTelemetry[machine.id].temp}°C` },
-                                                        { label: '⏱', value: `${plcTelemetry[machine.id].cycleTime}s` },
-                                                        { label: '📳', value: `${plcTelemetry[machine.id].vibration}g` },
-                                                    ].map(s => (
-                                                        <span key={s.label} style={{
-                                                            fontSize: '0.68rem', fontWeight: 700,
-                                                            color: 'var(--muted-foreground)',
-                                                            background: 'var(--card-border)',
-                                                            borderRadius: '4px', padding: '1px 5px',
-                                                        }}>
-                                                            {s.label} {s.value}
-                                                        </span>
-                                                    ))}
+                                            {machine.status === 'running' && (
+                                                <div style={{
+                                                    display: 'flex', alignItems: 'center', gap: 4, marginTop: 6,
+                                                    padding: '2px 7px', background: 'rgba(100,116,139,0.08)',
+                                                    border: '1px solid rgba(100,116,139,0.15)', borderRadius: 4,
+                                                    fontSize: '0.68rem', color: '#94a3b8', fontWeight: 600,
+                                                }}>
+                                                    <span style={{ width: 6, height: 6, borderRadius: '50%',
+                                                        background: machine.lastHeartbeat ? '#10b981' : '#94a3b8', display: 'inline-block' }} />
+                                                    {machine.lastHeartbeat
+                                                        ? `Signal: ${new Date(machine.lastHeartbeat).toLocaleTimeString()}`
+                                                        : 'No signal — configure in Integrations'}
                                                 </div>
                                             )}
 
@@ -773,6 +687,12 @@ function DashboardContent() {
                                                     <div style={{ fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 }}>
                                                         {activeDownInfo?.reason ?? 'Reason not recorded'}
                                                     </div>
+                                                    {(activeDownInfo?.performedBy || activeDownInfo?.since) && (
+                                                        <div style={{ fontSize: '0.68rem', color: 'var(--muted-foreground)', marginTop: '2px' }}>
+                                                            {activeDownInfo.performedBy && <>Updated by: {activeDownInfo.performedBy} · </>}
+                                                            {new Date(activeDownInfo.updatedAt ?? activeDownInfo.since).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                        </div>
+                                                    )}
                                                     <div style={{ fontSize: '0.7rem', color: '#dc2626', marginTop: '6px', padding: '3px 8px', background: 'rgba(220,38,38,0.1)', borderRadius: '6px', display: 'inline-block', fontWeight: 700 }}>
                                                         Tap to Resolve →
                                                     </div>
@@ -835,7 +755,7 @@ function DashboardContent() {
                                     <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted-foreground)', background: 'var(--card-bg)', borderRadius: '0.75rem', border: '1px solid var(--card-border)' }}>
                                         <p style={{ marginBottom: '0.5rem', fontWeight: 600 }}>No machine data yet.</p>
                                         <p style={{ fontSize: '0.85rem' }}>
-                                            Run the Demo Seed from <a href="/settings" style={{ color: '#3b82f6' }}>Settings</a> to populate factory data.
+                                            Connect machines via <a href="/settings/connectors" style={{ color: '#3b82f6' }}>Integrations</a> to start receiving production data.
                                         </p>
                                     </div>
                                 ) : (
@@ -942,34 +862,63 @@ function DashboardContent() {
                                     <button
                                         disabled={resolving}
                                         onClick={async () => {
-                                            if (!resolveTarget.downtimeEventId) {
-                                                setResolveError('No downtime event found for this machine. It may have already been resolved.');
-                                                return;
-                                            }
                                             setResolving(true);
                                             setResolveError('');
+
+                                            // Bug fix (found via audit): this used to fire the
+                                            // resolve request without awaiting it or checking
+                                            // res.ok, then show "Machine Resolved!" and an
+                                            // optimistic "running" status unconditionally. If the
+                                            // backend rejected the resolve (permission error,
+                                            // already-closed event, validation failure), the
+                                            // operator still saw success — until the 2s-later
+                                            // refresh() silently reverted the status with no
+                                            // explanation. Now the outcome is awaited and checked
+                                            // before either state is applied.
                                             try {
-                                                const res = await fetch('/api/downtime', {
-                                                    method: 'POST',
-                                                    headers: { 'Content-Type': 'application/json' },
-                                                    body: JSON.stringify({
-                                                        action: 'end',
-                                                        downtimeEventId: resolveTarget.downtimeEventId,
-                                                        resolutionNotes: resolveNotes || 'Issue resolved by operator',
-                                                    }),
-                                                });
-                                                if (res.ok) {
-                                                    setResolveSuccess(true);
-                                                    refresh();
-                                                } else {
-                                                    const err = await res.json();
-                                                    setResolveError(err.error ?? 'Failed to resolve. Try again.');
+                                                const res = resolveTarget.downtimeEventId
+                                                    ? await fetch('/api/downtime', {
+                                                        method: 'POST',
+                                                        headers: { 'Content-Type': 'application/json' },
+                                                        body: JSON.stringify({
+                                                            action: 'end',
+                                                            downtimeEventId: resolveTarget.downtimeEventId,
+                                                            resolutionNotes: resolveNotes || 'Issue resolved by operator',
+                                                        }),
+                                                    })
+                                                    : await fetch('/api/downtime', {
+                                                        method: 'POST',
+                                                        headers: { 'Content-Type': 'application/json' },
+                                                        body: JSON.stringify({
+                                                            action: 'recover-machine',
+                                                            machineId: resolveTarget.id,
+                                                            resolutionNotes: resolveNotes || 'Issue resolved by operator',
+                                                        }),
+                                                    });
+
+                                                if (!res.ok) {
+                                                    const body = await res.json().catch(() => ({}));
+                                                    setResolveError(body.error ?? 'Failed to resolve — please try again.');
+                                                    setResolving(false);
+                                                    return;
                                                 }
                                             } catch {
-                                                setResolveError('Network error. Check connection and try again.');
-                                            } finally {
+                                                setResolveError('Network error — could not reach the server. Please try again.');
                                                 setResolving(false);
+                                                return;
                                             }
+
+                                            setData(prev => ({
+                                                ...prev,
+                                                machines: prev.machines.map(m =>
+                                                    m.id === resolveTarget.id ? { ...m, status: 'running' as const } : m
+                                                ),
+                                                activeDown: (prev.activeDown ?? []).filter(d => d.id !== resolveTarget.id),
+                                                summary: { ...prev.summary, openDowntimes: Math.max(0, (prev.summary.openDowntimes || 0) - 1) },
+                                            }));
+                                            setResolveSuccess(true);
+                                            setResolving(false);
+                                            setTimeout(() => refresh(), 2000);
                                         }}
                                         style={{
                                             flex: 2, padding: '11px', borderRadius: '10px', border: 'none',

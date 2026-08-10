@@ -1,482 +1,323 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Factory, Lock, User, Eye, EyeOff, AlertCircle, CheckCircle, Crown, HardHat, Wrench } from 'lucide-react';
+import { Suspense } from 'react';
+import { Eye, EyeOff, Crown, HardHat, Wrench, ShieldCheck, User, Settings } from 'lucide-react';
 
-// Quick-login cards for demo — click fills AND submits
-const DEMO_ACCOUNTS = [
-    {
-        username: 'admin',
-        password: 'admin123',
-        role: 'Administrator',
-        description: 'Full system access',
-        color: '#6366f1',
-        borderColor: 'rgba(99,102,241,0.5)',
-        bg: 'rgba(99,102,241,0.12)',
-        Icon: Crown,
-    },
-    {
-        username: 'Arjun.Supv',
-        password: 'demo',
-        role: 'Supervisor',
-        description: 'Manage production floor',
-        color: '#0ea5e9',
-        borderColor: 'rgba(14,165,233,0.5)',
-        bg: 'rgba(14,165,233,0.12)',
-        Icon: HardHat,
-    },
-    {
-        username: 'Ramesh.Kumar',
-        password: 'demo',
-        role: 'Operator / Worker',
-        description: 'Log your work and tasks',
-        color: '#10b981',
-        borderColor: 'rgba(16,185,129,0.5)',
-        bg: 'rgba(16,185,129,0.12)',
-        Icon: Wrench,
-    },
-    {
-        username: 'Deepa.QC',
-        password: 'demo',
-        role: 'Quality Inspector',
-        description: 'Inspect and approve work',
-        color: '#f59e0b',
-        borderColor: 'rgba(245,158,11,0.5)',
-        bg: 'rgba(245,158,11,0.12)',
-        Icon: CheckCircle,
-    },
+interface RoleCard {
+  role: string;
+  label: string;
+  desc: string;
+  color: string;
+  borderColor: string;
+  icon: React.ReactNode;
+}
+
+// SECURITY fix: this previously embedded real, working credentials
+// (including a live ADMIN password) directly in the client bundle — anyone
+// loading /login could become ADMIN with one click, no password needed, in
+// every build including production. These cards now carry only a role; the
+// server (/api/auth/demo-login) decides whether to honor it, and only ever
+// does so when the deployment itself is in demo mode — see that route for
+// the full explanation.
+const ROLE_CARDS: RoleCard[] = [
+  { role: 'ADMIN', label: 'Administrator', desc: 'Full system access', color: '#a78bfa', borderColor: '#7c3aed', icon: <Crown size={32} /> },
+  { role: 'SUPERVISOR', label: 'Supervisor', desc: 'Manage production floor', color: '#22d3ee', borderColor: '#06b6d4', icon: <HardHat size={32} /> },
+  { role: 'OPERATOR', label: 'Operator / Worker', desc: 'Log your work and tasks', color: '#34d399', borderColor: '#10b981', icon: <Wrench size={32} /> },
+  { role: 'QUALITY', label: 'Quality Inspector', desc: 'Inspect and approve work', color: '#fbbf24', borderColor: '#f59e0b', icon: <ShieldCheck size={32} /> },
 ];
 
-function LoginContent() {
-    const router = useRouter();
-    const params = useSearchParams();
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
-    const [showPwd, setShowPwd] = useState(false);
-    const [loading, setLoading] = useState(false);
-    const [loadingCard, setLoadingCard] = useState<string | null>(null);
-    const [error, setError] = useState('');
-    const [isRateLimit, setIsRateLimit] = useState(false);
-    const [setupDone, setSetupDone] = useState(false);
-    const [settingUp, setSettingUp] = useState(false);
-    const denied = params.get('denied') === '1';
-    const expired = params.get('expired') === '1';
+function LoginForm() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const reason = searchParams.get('reason');
+
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [loadingRole, setLoadingRole] = useState<string | null>(null);
+  // Quick-sign-in cards only render once the server confirms this
+  // deployment is actually in demo mode (see /api/auth/demo-login) —
+  // defaults to hidden so there's no flash of the cards on a production
+  // deployment while the check is in flight.
+  const [demoModeAvailable, setDemoModeAvailable] = useState(false);
 
   useEffect(() => {
-        if (denied) setError('You do not have permission to view that page. Please log in with the correct account.');
-        if (expired) setError('Your session has expired. Please sign in again.');
-  }, [denied, expired]);
+    fetch('/api/health')
+      .then(r => r.json())
+      .then(d => { if (d?.demoMode) setDemoModeAvailable(true); })
+      .catch(() => {});
+  }, []);
 
-  async function clearStaleClientCaches() {
-    if (typeof window === 'undefined') return;
+  const reasonMessages: Record<string, string> = {
+    session_expired: 'Your session has expired. Please sign in again.',
+    idle_timeout: 'You were signed out due to inactivity.',
+    user_logout: 'You have been signed out.',
+    revoked: 'Your session was revoked by an administrator.',
+  };
+
+  function handleLoginResponse(res: Response, data: { error?: string; mustChangePassword?: boolean; mfaSetupRequired?: boolean; mfaVerificationRequired?: boolean }) {
+    if (!res.ok) {
+      setError(data.error || 'Login failed');
+      return;
+    }
+    if (data.mustChangePassword) {
+      router.replace('/change-password');
+      return;
+    }
+    // proxy.ts would redirect here anyway (MFA is mandatory for every
+    // account), but sending the browser straight to the right step avoids a
+    // pointless extra hop through /dashboard first.
+    if (data.mfaSetupRequired) {
+      router.replace('/mfa-setup');
+      return;
+    }
+    if (data.mfaVerificationRequired) {
+      router.replace('/mfa-verify');
+      return;
+    }
+    router.replace('/dashboard');
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
     try {
-      if ('serviceWorker' in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        await Promise.all(regs.map(r => r.unregister().catch(() => false)));
-      }
-      if ('caches' in window) {
-        const keys = await caches.keys();
-        await Promise.all(keys.map(k => caches.delete(k).catch(() => false)));
-      }
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      handleLoginResponse(res, await res.json());
     } catch {
-      // best-effort cleanup only
+      setError('Unable to reach the server. Check your connection.');
+    } finally {
+      setLoading(false);
     }
   }
 
-    async function doLogin(u: string, p: string) {
-        setLoading(true);
-        setError('');
-        setIsRateLimit(false);
-        try {
-            const res = await fetch('/api/auth/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: u.trim(), password: p }),
-            });
-            let data: { success?: boolean; error?: string; mustChangePassword?: boolean } = {};
-            try { data = await res.json(); } catch { /* non-JSON body, handled below */ }
-            if (res.ok && data.success) {
-                await clearStaleClientCaches();
-                if (data.mustChangePassword) {
-                    router.replace('/change-password');
-                } else {
-                    router.replace(params.get('next') ?? '/dashboard');
-                }
-                return;
-            }
-            if (res.status === 429) {
-                const retryAfter = res.headers.get('Retry-After');
-                const waitMins = retryAfter ? Math.ceil(Number(retryAfter) / 60) : 15;
-                setIsRateLimit(true);
-                setError(`Too many login attempts. Please wait ${waitMins} minute${waitMins !== 1 ? 's' : ''} before trying again.`);
-            } else if (res.status === 503) {
-                setError((data.error ?? 'Database unreachable') + ' — Use "First Time Setup" below or check /api/health for details.');
-            } else if (res.status === 401) {
-                setError('Invalid username or password. If this is a fresh deployment, click "First Time Setup" below to create the admin account.');
-            } else {
-                setError(data.error ?? 'Login failed. Please try again.');
-            }
-            setLoadingCard(null);
-        } catch {
-            setError('Network error — cannot reach the server. Check your internet connection or open /api/health in a new tab.');
-            setLoadingCard(null);
-        } finally {
-            setLoading(false);
-        }
+  async function handleRoleClick(card: RoleCard) {
+    setError('');
+    setLoadingRole(card.role);
+    try {
+      const res = await fetch('/api/auth/demo-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: card.role }),
+      });
+      handleLoginResponse(res, await res.json());
+    } catch {
+      setError('Unable to reach the server. Check your connection.');
+    } finally {
+      setLoadingRole(null);
     }
+  }
 
-    async function runFirstTimeSetup() {
-        setSettingUp(true);
-        setError('');
-        try {
-            const check = await fetch('/api/setup').then(r => r.json()).catch(() => null);
-            if (check && !check.needsSetup) {
-                setError('Users already exist — setup not needed. Try logging in with admin / admin123, or seed full demo data from Settings after login.');
-                return;
-            }
-            const res = await fetch('/api/setup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: 'admin', password: 'admin123' }),
-            });
-            const data = await res.json();
-            if (res.ok) {
-                setSetupDone(true);
-                setUsername('admin');
-                setPassword('admin123');
-            } else {
-                setError(data.error ?? 'Setup failed. Ensure DATABASE_URL is set correctly in Vercel environment variables.');
-            }
-        } catch {
-            setError('Cannot reach server. Check DATABASE_URL is set in Vercel project settings.');
-        } finally {
-            setSettingUp(false);
-        }
-    }
-
-    function handleLogin(e: React.FormEvent) {
-        e.preventDefault();
-        if (!username.trim()) { setError('Please enter your username.'); return; }
-        if (!password) { setError('Please enter your password.'); return; }
-        doLogin(username, password);
-    }
-
-    function quickLogin(u: string, p: string) {
-        setLoadingCard(u);
-        setUsername(u);
-        setPassword(p);
-        doLogin(u, p);
-    }
-
-    const inputStyle: React.CSSProperties = {
-        width: '100%',
-        padding: '0.85rem 0.9rem 0.85rem 2.8rem',
-        borderRadius: '0.75rem',
-        border: '1.5px solid rgba(255,255,255,0.15)',
-        background: 'rgba(255,255,255,0.07)',
-        color: '#fff',
-        fontSize: '1rem',
-        boxSizing: 'border-box',
-        outline: 'none',
-        transition: 'border-color 0.2s',
-        minHeight: '48px',
-    };
-
-    return (
+  return (
+    <div style={{
+      minHeight: '100vh', width: '100%',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      background: 'linear-gradient(135deg, #0a0f1e 0%, #111827 50%, #0a0f1e 100%)',
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+      padding: '2rem 1rem',
+      gap: '1.5rem',
+    }}>
+      {/* Branding */}
+      <div style={{ textAlign: 'center' }}>
         <div style={{
-            minHeight: '100vh',
-            background: 'linear-gradient(135deg, #0b1220 0%, #0f1a2e 50%, #1b2f52 100%)',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '2rem 1rem',
-            fontFamily: 'system-ui, -apple-system, sans-serif',
+          width: 60, height: 60, margin: '0 auto 0.75rem',
+          background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)',
+          borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: '1.6rem', fontWeight: 900, color: '#fff',
         }}>
-
-            {/* Top: Logo + Title */}
-            <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
-                <div style={{
-                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    width: 80, height: 80, borderRadius: '1.25rem',
-                    background: 'linear-gradient(135deg, #1e3a5f, #0ea5e9)',
-                    marginBottom: '1.25rem',
-                    boxShadow: '0 12px 32px rgba(14,165,233,0.4)',
-                }}>
-                    <Factory size={40} color="#fff" />
-                </div>
-                <div style={{ color: '#fff', fontSize: '2rem', fontWeight: 900, letterSpacing: '-0.03em', lineHeight: 1.1 }}>
-                    ParTraceflow MES
-                </div>
-                <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: '1rem', marginTop: '0.5rem', fontWeight: 500 }}>
-                    Manufacturing Execution System
-                </div>
-            </div>
-
-            {/* Role Selection Section */}
-            <div style={{ width: '100%', maxWidth: 720 }}>
-                <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-                    <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '1.05rem', fontWeight: 600, margin: 0 }}>
-                        Select your role to sign in instantly
-                    </p>
-                    <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: '0.82rem', margin: '0.45rem 0 0' }}>
-                        Demo buttons use the seeded factory accounts directly.
-                    </p>
-                </div>
-
-                {/* Role Cards Grid */}
-                <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))',
-                    gap: '1rem',
-                    marginBottom: '2rem',
-                }}>
-                    {DEMO_ACCOUNTS.map(acc => {
-                        const isThisLoading = loadingCard === acc.username;
-                        const { Icon } = acc;
-                        return (
-                            <button
-                                key={acc.username}
-                                type="button"
-                                disabled={loading}
-                                onClick={() => quickLogin(acc.username, acc.password)}
-                                style={{
-                                    position: 'relative',
-                                    minHeight: '140px',
-                                    padding: '20px 16px',
-                                    borderRadius: '1rem',
-                                    border: `2px solid ${acc.borderColor}`,
-                                    background: acc.bg,
-                                    cursor: loading ? 'not-allowed' : 'pointer',
-                                    textAlign: 'center',
-                                    transition: 'transform 0.18s, box-shadow 0.18s, border-color 0.18s',
-                                    backdropFilter: 'blur(8px)',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    gap: '8px',
-                                    overflow: 'hidden',
-                                }}
-                                onMouseEnter={e => {
-                                    if (!loading) {
-                                        (e.currentTarget as HTMLElement).style.transform = 'translateY(-4px)';
-                                        (e.currentTarget as HTMLElement).style.boxShadow = `0 12px 32px ${acc.color}30`;
-                                        (e.currentTarget as HTMLElement).style.borderColor = acc.color;
-                                    }
-                                }}
-                                onMouseLeave={e => {
-                                    (e.currentTarget as HTMLElement).style.transform = 'translateY(0)';
-                                    (e.currentTarget as HTMLElement).style.boxShadow = 'none';
-                                    (e.currentTarget as HTMLElement).style.borderColor = acc.borderColor;
-                                }}
-                            >
-                                {/* Loading overlay */}
-                                {isThisLoading && (
-                                    <div style={{
-                                        position: 'absolute', inset: 0, borderRadius: '0.85rem',
-                                        background: 'rgba(0,0,0,0.4)', display: 'flex',
-                                        alignItems: 'center', justifyContent: 'center', zIndex: 1,
-                                    }}>
-                                        <span style={{
-                                            width: 24, height: 24,
-                                            border: '3px solid rgba(255,255,255,0.3)',
-                                            borderTopColor: '#fff',
-                                            borderRadius: '50%',
-                                            display: 'inline-block',
-                                            animation: 'spin 0.7s linear infinite',
-                                        }} />
-                                    </div>
-                                )}
-
-                                {/* Icon */}
-                                <div style={{
-                                    width: 52, height: 52, borderRadius: '0.8rem',
-                                    background: acc.color + '22',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    marginBottom: 2,
-                                }}>
-                                    <Icon size={26} color={acc.color} />
-                                </div>
-
-                                {/* Role name */}
-                                <div style={{ color: '#fff', fontSize: '15px', fontWeight: 700, lineHeight: 1.2 }}>
-                                    {acc.role}
-                                </div>
-
-                                {/* Description */}
-                                <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', lineHeight: 1.3 }}>
-                                    {acc.description}
-                                </div>
-
-                                {/* Click hint */}
-                                <div style={{ color: acc.color, fontSize: '11px', fontWeight: 700, marginTop: 2, opacity: 0.9 }}>
-                                    Click to Sign In
-                                </div>
-                            </button>
-                        );
-                    })}
-                </div>
-
-                {/* Divider */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.75rem' }}>
-                    <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.12)' }} />
-                    <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '0.8rem', whiteSpace: 'nowrap', fontWeight: 500 }}>
-                        — or enter your credentials manually —
-                    </span>
-                    <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.12)' }} />
-                </div>
-
-                {/* Manual Login Form */}
-                <div style={{
-                    background: 'rgba(255,255,255,0.05)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    borderRadius: '1.25rem',
-                    padding: '2rem',
-                    backdropFilter: 'blur(16px)',
-                    boxShadow: '0 24px 60px rgba(0,0,0,0.4)',
-                }}>
-
-                    {/* Error */}
-                    {error && (
-                        <div style={{
-                            display: 'flex', gap: '0.7rem', alignItems: 'flex-start',
-                            padding: '0.9rem 1rem', borderRadius: '0.75rem',
-                            background: isRateLimit ? 'rgba(245,158,11,0.15)' : 'rgba(239,68,68,0.14)',
-                            border: isRateLimit ? '1px solid rgba(245,158,11,0.5)' : '1px solid rgba(239,68,68,0.35)',
-                            color: isRateLimit ? '#fcd34d' : '#fca5a5',
-                            fontSize: '0.9rem', marginBottom: '1.5rem', lineHeight: 1.5,
-                        }}>
-                            <AlertCircle size={18} style={{ flexShrink: 0, marginTop: 2 }} />
-                            <div>
-                                {isRateLimit && <div style={{ fontWeight: 800, marginBottom: '2px' }}>Rate limit reached</div>}
-                                {error}
-                            </div>
-                        </div>
-                    )}
-
-                    <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
-                        {/* Username */}
-                        <div>
-                            <label style={{ display: 'block', color: 'rgba(255,255,255,0.8)', fontSize: '0.9rem', fontWeight: 700, marginBottom: '0.5rem' }}>
-                                Username
-                            </label>
-                            <div style={{ position: 'relative' }}>
-                                <User size={18} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.35)', pointerEvents: 'none' }} />
-                                <input
-                                    type="text"
-                                    value={username}
-                                    onChange={e => setUsername(e.target.value)}
-                                    autoComplete="username"
-                                    placeholder="Enter your username"
-                                    style={inputStyle}
-                                />
-                            </div>
-                        </div>
-
-                        {/* Password */}
-                        <div>
-                            <label style={{ display: 'block', color: 'rgba(255,255,255,0.8)', fontSize: '0.9rem', fontWeight: 700, marginBottom: '0.5rem' }}>
-                                Password
-                            </label>
-                            <div style={{ position: 'relative' }}>
-                                <Lock size={18} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.35)', pointerEvents: 'none' }} />
-                                <input
-                                    type={showPwd ? 'text' : 'password'}
-                                    value={password}
-                                    onChange={e => setPassword(e.target.value)}
-                                    autoComplete="current-password"
-                                    placeholder="Enter your password"
-                                    style={{ ...inputStyle, paddingRight: '3rem' }}
-                                />
-                                <button type="button" onClick={() => setShowPwd(v => !v)} style={{
-                                    position: 'absolute', right: '0.9rem', top: '50%', transform: 'translateY(-50%)',
-                                    background: 'none', border: 'none', cursor: 'pointer',
-                                    color: 'rgba(255,255,255,0.4)', padding: 0, display: 'flex',
-                                }}>
-                                    {showPwd ? <EyeOff size={18} /> : <Eye size={18} />}
-                                </button>
-                            </div>
-                        </div>
-
-                        <button
-                            type="submit"
-                            disabled={loading}
-                            style={{
-                                minHeight: '52px',
-                                padding: '0.9rem',
-                                borderRadius: '0.85rem',
-                                border: 'none',
-                                background: loading ? 'rgba(14,165,233,0.4)' : 'linear-gradient(135deg, #0ea5e9, #2563eb)',
-                                color: '#fff',
-                                fontWeight: 800,
-                                fontSize: '1.05rem',
-                                cursor: loading ? 'not-allowed' : 'pointer',
-                                marginTop: '0.25rem',
-                                boxShadow: loading ? 'none' : '0 4px 18px rgba(14,165,233,0.4)',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-                                transition: 'opacity 0.2s',
-                            }}
-                        >
-                            {loading && loadingCard === null ? (
-                                <>
-                                    <span style={{ display: 'inline-block', width: 18, height: 18, border: '2.5px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
-                                    Signing in...
-                                </>
-                            ) : (
-                                <>
-                                    <CheckCircle size={18} />
-                                    Sign In
-                                </>
-                            )}
-                        </button>
-                    </form>
-
-                    {/* First Time Setup — shown after error or always visible as secondary action */}
-                    {setupDone ? (
-                        <div style={{ marginTop: '1.25rem', padding: '0.9rem 1rem', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.35)', borderRadius: '0.75rem', color: '#6ee7b7', fontSize: '0.88rem', textAlign: 'center' }}>
-                            <CheckCircle size={16} style={{ display: 'inline', marginRight: '0.4rem' }} />
-                            Admin account created! Username: <strong>admin</strong> · Password: <strong>admin123</strong>
-                            <br />
-                            <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>Click Sign In above or seed full demo data from Settings after login.</span>
-                        </div>
-                    ) : (
-                        <div style={{ marginTop: '1.25rem', textAlign: 'center' }}>
-                            <button
-                                type="button"
-                                onClick={runFirstTimeSetup}
-                                disabled={settingUp || loading}
-                                style={{ background: 'none', border: '1px solid rgba(255,255,255,0.18)', borderRadius: '0.6rem', color: 'rgba(255,255,255,0.5)', fontSize: '0.82rem', padding: '0.5rem 1.2rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
-                            >
-                                {settingUp ? (
-                                    <><span style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> Setting up...</>
-                                ) : (
-                                    '⚙ First Time Setup — create admin account'
-                                )}
-                            </button>
-                            <div style={{ color: 'rgba(255,255,255,0.25)', fontSize: '0.74rem', marginTop: '0.4rem' }}>Use this only on a fresh deployment with no users</div>
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* Footer */}
-            <div style={{ textAlign: 'center', marginTop: '2rem', fontSize: '0.78rem', color: 'rgba(255,255,255,0.2)' }}>
-                ParTraceflow MES &nbsp;·&nbsp; Factory-01 &nbsp;·&nbsp; {new Date().getFullYear()}
-            </div>
-
-            <style>{`
-                @keyframes spin { to { transform: rotate(360deg); } }
-            `}</style>
+          MES
         </div>
-    );
+        <h1 style={{ margin: 0, fontSize: '1.6rem', fontWeight: 800, color: '#f1f5f9', letterSpacing: '-0.02em' }}>
+          ParTraceflow MES
+        </h1>
+        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#64748b' }}>
+          Manufacturing Execution System
+        </p>
+      </div>
+
+      {/* Role Quick-Select Cards — demo-mode deployments only. The server
+          (/api/auth/demo-login) is the real gate; this client check just
+          avoids showing buttons that would 403 on a production deployment. */}
+      {demoModeAvailable && (
+        <>
+          <div style={{ textAlign: 'center', width: '100%', maxWidth: 700 }}>
+            <p style={{ color: '#94a3b8', fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.75rem' }}>
+              Demo mode — select a role to sign in instantly
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem' }}>
+              {ROLE_CARDS.map(card => (
+                <button
+                  key={card.role}
+                  onClick={() => handleRoleClick(card)}
+                  disabled={loadingRole !== null}
+                  style={{
+                    background: 'rgba(15, 23, 42, 0.8)',
+                    border: `2px solid ${loadingRole === card.role ? card.color : card.borderColor + '60'}`,
+                    borderRadius: 14,
+                    padding: '1.25rem 0.75rem',
+                    cursor: loadingRole !== null ? 'wait' : 'pointer',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.6rem',
+                    transition: 'all 0.2s',
+                    opacity: loadingRole && loadingRole !== card.role ? 0.4 : 1,
+                  }}
+                  onMouseEnter={e => { if (!loadingRole) (e.currentTarget.style.borderColor = card.color); }}
+                  onMouseLeave={e => { if (!loadingRole) (e.currentTarget.style.borderColor = card.borderColor + '60'); }}
+                >
+                  <div style={{
+                    width: 48, height: 48, borderRadius: 12,
+                    background: card.borderColor + '20',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: card.color,
+                  }}>
+                    {card.icon}
+                  </div>
+                  <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#e2e8f0' }}>{card.label}</div>
+                  <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{card.desc}</div>
+                  <div style={{ fontSize: '0.75rem', color: card.color, fontWeight: 600 }}>
+                    {loadingRole === card.role ? 'Signing in...' : 'Click to Sign In'}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Divider */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', width: '100%', maxWidth: 500 }}>
+            <div style={{ flex: 1, height: 1, background: 'rgba(148,163,184,0.15)' }} />
+            <span style={{ color: '#64748b', fontSize: '0.8rem', fontStyle: 'italic' }}>or enter your credentials manually</span>
+            <div style={{ flex: 1, height: 1, background: 'rgba(148,163,184,0.15)' }} />
+          </div>
+        </>
+      )}
+
+      {/* Manual Login Form */}
+      <div style={{
+        width: '100%', maxWidth: 500, padding: '2rem',
+        background: 'rgba(15, 23, 42, 0.7)',
+        border: '1px solid rgba(148, 163, 184, 0.12)',
+        borderRadius: 16,
+      }}>
+        {reason && reasonMessages[reason] && (
+          <div style={{
+            padding: '0.75rem 1rem', marginBottom: '1.25rem',
+            background: 'rgba(245, 158, 11, 0.1)',
+            border: '1px solid rgba(245, 158, 11, 0.3)',
+            borderRadius: 10, color: '#fbbf24', fontSize: '0.84rem', fontWeight: 500,
+          }}>
+            {reasonMessages[reason]}
+          </div>
+        )}
+
+        {error && (
+          <div style={{
+            padding: '0.75rem 1rem', marginBottom: '1.25rem',
+            background: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: 10, color: '#f87171', fontSize: '0.84rem', fontWeight: 600,
+          }}>
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: '1.1rem' }}>
+            <label style={{ display: 'block', marginBottom: 6, fontSize: '0.85rem', fontWeight: 700, color: '#e2e8f0' }}>
+              Username
+            </label>
+            <div style={{ position: 'relative' }}>
+              <User size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
+              <input
+                type="text"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                required
+                autoComplete="username"
+                placeholder="Enter your username"
+                style={{
+                  width: '100%', padding: '0.75rem 0.9rem 0.75rem 2.5rem',
+                  background: 'rgba(30, 41, 59, 0.6)',
+                  border: '1px solid rgba(148, 163, 184, 0.2)',
+                  borderRadius: 10, color: '#f1f5f9', fontSize: '0.95rem',
+                  outline: 'none', boxSizing: 'border-box',
+                }}
+                onFocus={e => e.target.style.borderColor = '#3b82f6'}
+                onBlur={e => e.target.style.borderColor = 'rgba(148, 163, 184, 0.2)'}
+              />
+            </div>
+          </div>
+
+          <div style={{ marginBottom: '1.5rem' }}>
+            <label style={{ display: 'block', marginBottom: 6, fontSize: '0.85rem', fontWeight: 700, color: '#e2e8f0' }}>
+              Password
+            </label>
+            <div style={{ position: 'relative' }}>
+              <Settings size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+                placeholder="Enter your password"
+                style={{
+                  width: '100%', padding: '0.75rem 2.8rem 0.75rem 2.5rem',
+                  background: 'rgba(30, 41, 59, 0.6)',
+                  border: '1px solid rgba(148, 163, 184, 0.2)',
+                  borderRadius: 10, color: '#f1f5f9', fontSize: '0.95rem',
+                  outline: 'none', boxSizing: 'border-box',
+                }}
+                onFocus={e => e.target.style.borderColor = '#3b82f6'}
+                onBlur={e => e.target.style.borderColor = 'rgba(148, 163, 184, 0.2)'}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(v => !v)}
+                style={{
+                  position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+                  background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8',
+                  padding: 4, display: 'flex', alignItems: 'center',
+                }}
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            style={{
+              width: '100%', padding: '0.85rem',
+              background: loading ? '#475569' : 'linear-gradient(135deg, #06b6d4, #3b82f6)',
+              border: 'none', borderRadius: 10,
+              color: '#fff', fontSize: '1rem', fontWeight: 700,
+              cursor: loading ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+            }}
+          >
+            <ShieldCheck size={18} />
+            {loading ? 'Signing in...' : 'Sign In'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 export default function LoginPage() {
-    return (
-        <Suspense>
-            <LoginContent />
-        </Suspense>
-    );
+  return (
+    <Suspense fallback={<div style={{ minHeight: '100vh', background: '#0a0f1e' }} />}>
+      <LoginForm />
+    </Suspense>
+  );
 }

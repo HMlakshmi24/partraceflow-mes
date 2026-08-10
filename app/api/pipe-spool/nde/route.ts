@@ -5,6 +5,9 @@ import { requireSpoolAction } from '@/lib/spoolRBAC';
 import { CreateNDESchema, validationError } from '@/lib/validation';
 import { apiError, apiSuccess } from '@/lib/apiResponse';
 import { AuditService, EventType } from '@/lib/services/AuditService';
+import { requireRole } from '@/lib/api-auth';
+
+const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
 // Joint must have been welded before NDE can be performed
 const NDE_ALLOWED_JOINT_STATUSES = ['WELDED', 'NDE_PENDING', 'REPAIR'];
@@ -27,6 +30,9 @@ function normalizeNDEPayload(data: Record<string, unknown>) {
 }
 
 export async function GET(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
@@ -65,6 +71,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const body = await req.json();
     const { action, id, ...data } = body;
@@ -96,13 +105,21 @@ export async function POST(req: NextRequest) {
         userId: resultGuard.userId,
       });
       if (record.jointId && data.result) {
-        await onNDEResult(record.jointId, data.result, data.holdFlag ?? false, record.id).catch(() => {});
+        await onNDEResult(record.jointId, data.result, data.holdFlag ?? false).catch(() => {});
       }
       return apiSuccess({ record });
     }
 
     if (id) {
-      const record = await prisma.nDERecord.update({ where: { id }, data });
+      // CRIT-3 fix: this fallback had no permission check at all, letting any
+      // spool role (incl. OPERATOR) set `result`/`holdFlag` directly, bypassing
+      // APPROVE_NDE/REJECT_NDE. Gate with CREATE_NDE (QC+) for general field
+      // edits and strip the result-defining fields — those must go through
+      // the guarded update_result action above.
+      const guard = await requireSpoolAction('CREATE_NDE');
+      if (guard instanceof NextResponse) return guard;
+      const { result: _result, holdFlag: _holdFlag, ...safeData } = data;
+      const record = await prisma.nDERecord.update({ where: { id }, data: safeData });
       return apiSuccess({ record });
     }
 
@@ -138,7 +155,7 @@ export async function POST(req: NextRequest) {
       guard.userId,
     );
     if (record.jointId && parsed.data.result) {
-      await onNDEResult(record.jointId, parsed.data.result, parsed.data.holdFlag ?? false, record.id).catch(() => {});
+      await onNDEResult(record.jointId, parsed.data.result, parsed.data.holdFlag ?? false).catch(() => {});
     }
     return apiSuccess({ record });
   } catch {

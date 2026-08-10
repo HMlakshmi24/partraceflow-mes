@@ -24,7 +24,7 @@ function isSameOrigin(url) {
   return url.origin === self.location.origin;
 }
 
-// eslint-disable-next-line no-restricted-globals
+ 
 self.addEventListener('message', () => {});
 
 
@@ -100,7 +100,7 @@ self.addEventListener('fetch', (event) => {
 
         if (cached) {
           // Return cached quickly, update in background
-          fetchPromise;
+          void fetchPromise;
           return cached;
         }
 

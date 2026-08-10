@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
+import { handleApiError } from '@/lib/apiResponse';
 import { prisma } from '@/lib/services/database';
 import { requireRole } from '@/lib/api-auth';
 
 export async function GET(req: NextRequest) {
-    const authError = requireRole(req, ['ADMIN', 'SUPERVISOR']);
+    const authError = await requireRole(req, ['ADMIN', 'SUPERVISOR']);
     if (authError) return authError;
 
     try {
@@ -68,7 +69,6 @@ export async function GET(req: NextRequest) {
             types: typesRaw.map(t => ({ type: t.eventType, count: t._count.eventType })),
         });
     } catch (error) {
-        console.error('[GET /api/audit]', error);
-        return NextResponse.json({ error: 'Failed to fetch audit log' }, { status: 500 });
+                return handleApiError('[GET /api/audit]', error);
     }
 }

@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
 import { apiError, apiSuccess } from '@/lib/apiResponse';
+import { requireRole } from '@/lib/api-auth';
+
+const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
 export async function GET(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const [
       totalLines,

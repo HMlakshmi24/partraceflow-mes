@@ -7,7 +7,7 @@ import { createLogger } from '@/lib/logger';
 const ALLOWED = ['ADMIN', 'SUPERVISOR', 'PLANNER', 'QC', 'QUALITY'];
 
 export async function GET(req: NextRequest) {
-  const denied = requireRole(req, ALLOWED);
+  const denied = await requireRole(req, ALLOWED);
   if (denied) return denied;
 
   const log = createLogger('api/reports/operator', req.headers.get('x-correlation-id') ?? undefined);

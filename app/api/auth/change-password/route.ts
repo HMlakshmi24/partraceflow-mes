@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
-import { hashPassword, verifySessionToken, SESSION_COOKIE, COOKIE_OPTIONS } from '@/lib/auth';
+import { hashPassword, verifySessionToken, createSessionToken, SESSION_COOKIE, getCookieOptions } from '@/lib/auth';
 import { z } from 'zod';
-import { AuditService, EventType } from '@/lib/services/AuditService';
+import { AuditService } from '@/lib/services/AuditService';
+import { requireRole } from '@/lib/api-auth';
+
+const ALL_ROLES = ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'QUALITY', 'QC', 'MAINTENANCE'];
 
 const ChangePasswordSchema = z.object({
     oldPassword: z.string().min(1, 'Old password required'),
@@ -17,6 +20,9 @@ const ChangePasswordSchema = z.object({
 const WEAK_PASSWORDS = new Set(['admin123', 'demo', 'password123', 'test1234']);
 
 export async function POST(req: NextRequest) {
+    const authError = await requireRole(req, ALL_ROLES);
+    if (authError) return authError;
+
     const token = req.cookies.get(SESSION_COOKIE)?.value;
     const session = token ? verifySessionToken(token) : null;
 
@@ -57,7 +63,6 @@ export async function POST(req: NextRequest) {
             }
         });
 
-        const ip = req.headers.get('x-forwarded-for')?.split(',')[0] ?? req.headers.get('x-real-ip') ?? 'unknown';
         await AuditService.logChange({
             action: 'Changed Password',
             entity: 'User',
@@ -69,8 +74,27 @@ export async function POST(req: NextRequest) {
             role: user.role
         });
 
-        return NextResponse.json({ success: true, message: 'Password updated successfully' });
-    } catch (e) {
+        // BUG FIX (found while wiring up MFA): this route updated the DB but
+        // never reissued the session cookie — the client kept the OLD token
+        // with mustChangePassword:true baked in, so proxy.ts (the request
+        // gate) kept redirecting back to /change-password forever after a
+        // "successful" change. Any newly created or admin-reset account hit
+        // this. A fresh token must be issued reflecting the real new state
+        // (also carries the account's real MFA state now that MFA exists).
+        const newToken = createSessionToken({
+            userId: user.id,
+            username: user.username,
+            role: user.role,
+            mustChangePassword: false,
+            sessionVersion: user.sessionVersion,
+            mfaEnabled: user.mfaEnabled,
+            mfaVerified: false,
+        });
+
+        const res = NextResponse.json({ success: true, message: 'Password updated successfully' });
+        res.cookies.set(SESSION_COOKIE, newToken, getCookieOptions(user.role));
+        return res;
+    } catch {
         return NextResponse.json({ error: 'Server error updating password' }, { status: 500 });
     }
 }

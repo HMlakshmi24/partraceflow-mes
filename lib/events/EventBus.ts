@@ -40,7 +40,7 @@ class MESEventBus extends EventEmitter {
 
   private constructor() {
     super()
-    this.setMaxListeners(100) // large factories have many listeners
+    this.setMaxListeners(1000) // each SSE connection adds listeners; 1000 supports ~100 concurrent dashboards
   }
 
   static getInstance(): MESEventBus {

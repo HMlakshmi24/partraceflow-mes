@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { AlertTriangle, CheckCircle, XCircle, RefreshCw, Bell, BellOff, Zap, Clock, User } from 'lucide-react';
+import { AlertTriangle, CheckCircle, XCircle, RefreshCw, Bell, BellOff, Zap } from 'lucide-react';
 
 interface AndonEvent {
     id: string;
@@ -124,7 +124,7 @@ export default function AndonPage() {
     const acknowledge = async (eventId: string) => {
         await fetch('/api/andon', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'acknowledge', eventId, userId: 'SUPERVISOR' }),
+            body: JSON.stringify({ action: 'acknowledge', eventId }),
         });
         toast('Alert acknowledged');
         load();
@@ -207,7 +207,7 @@ export default function AndonPage() {
                             <div style={{ background: 'var(--card-bg)', borderRadius: '1rem', border: '1px solid #e5e7eb', padding: '2rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
                                 <Zap size={40} style={{ opacity: 0.3, marginBottom: '0.75rem' }} />
                                 <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>No Andon boards configured</p>
-                                <p style={{ fontSize: '0.85rem' }}>Seed demo data from <a href="/settings" style={{ color: '#3b82f6' }}>Settings</a> to create boards.</p>
+                                <p style={{ fontSize: '0.85rem' }}>Configure Andon boards via the API to enable visual alert displays.</p>
                             </div>
                         )}
 

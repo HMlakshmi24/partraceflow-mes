@@ -2,8 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
 import { apiError, apiSuccess } from '@/lib/apiResponse';
 import { requireSpoolAction } from '@/lib/spoolRBAC';
+import { requireRole } from '@/lib/api-auth';
+
+const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
 export async function GET(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
@@ -34,6 +40,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   const guard = await requireSpoolAction('BULK_IMPORT');
   if (guard instanceof NextResponse) return guard;
 

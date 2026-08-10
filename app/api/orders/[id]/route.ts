@@ -11,7 +11,7 @@ async function deny(user: { id: string; role: string }, orderId: string, eventTy
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const authError = requireRole(req, ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'QC', 'QUALITY']);
+  const authError = await requireRole(req, ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'QC', 'QUALITY']);
   if (authError) return authError;
 
   const { id } = await params;
@@ -72,7 +72,7 @@ const TRANSITIONS_REQUIRING_NOTES = new Set(['CANCELLED', 'ON_HOLD', 'REWORK']);
 const ALL_STATUSES = new Set(['PLANNED', 'RELEASED', 'IN_PROGRESS', 'QC_PENDING', 'APPROVED', 'REWORK', 'ON_HOLD', 'COMPLETED', 'CANCELLED']);
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const authError = requireRole(req, ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'QC', 'QUALITY']);
+  const authError = await requireRole(req, ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'QC', 'QUALITY']);
   if (authError) return authError;
 
   const { id } = await params;

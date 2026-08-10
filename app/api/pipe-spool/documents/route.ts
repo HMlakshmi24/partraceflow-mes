@@ -1,8 +1,15 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { apiError, apiSuccess } from '@/lib/apiResponse';
+import { createLogger } from '@/lib/logger';
+import { requireRole } from '@/lib/api-auth';
+import { requireSpoolAction } from '@/lib/spoolRBAC';
+
+const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
+
+const log = createLogger('pipe-spool.documents');
 
 // Vercel Blob is used in production (BLOB_READ_WRITE_TOKEN set).
 // Local filesystem is used in development (no token).
@@ -23,6 +30,9 @@ async function storeFile(file: File, safeName: string): Promise<string> {
 }
 
 export async function GET(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
@@ -46,7 +56,7 @@ export async function GET(req: NextRequest) {
     if (documentType) where.documentType = documentType;
     
 
-    const docs = await prisma.spoolDocument.findMany({ where, orderBy: { uploadedAt: 'desc' } });
+    const docs = await prisma.spoolDocument.findMany({ where, orderBy: { uploadedAt: 'desc' }, take: 1000 });
     return apiSuccess({ docs });
   } catch (e) {
     return apiError('Failed to fetch documents', 'DOCUMENT_FETCH_FAILED', 500);
@@ -54,6 +64,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const contentType = req.headers.get('content-type') ?? '';
 
@@ -99,20 +112,28 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { action, id, ...data } = body;
 
+    // CRIT-3 fix: these branches had zero fine-grained RBAC beyond the coarse
+    // SPOOL_ROLES check, letting any OPERATOR delete/alter any spool document.
     if (action === 'delete' && id) {
+      const guard = await requireSpoolAction('DELETE_DOCUMENT');
+      if (guard instanceof NextResponse) return guard;
       await prisma.spoolDocument.delete({ where: { id } });
       return apiSuccess({ deleted: true });
     }
 
     if (id) {
+      const guard = await requireSpoolAction('UPLOAD_DOCUMENT');
+      if (guard instanceof NextResponse) return guard;
       const doc = await prisma.spoolDocument.update({ where: { id }, data });
       return apiSuccess({ doc });
     }
 
+    const guard = await requireSpoolAction('UPLOAD_DOCUMENT');
+    if (guard instanceof NextResponse) return guard;
     const doc = await prisma.spoolDocument.create({ data });
     return apiSuccess({ doc });
   } catch (e: any) {
-    console.error('[documents]', e);
+    log.error('documents save error', { message: e instanceof Error ? e.message : String(e) });
     return apiError(e.message ?? 'Failed to save document', 'DOCUMENT_SAVE_FAILED', 500);
   }
 }

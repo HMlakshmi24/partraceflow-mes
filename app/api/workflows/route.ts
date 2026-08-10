@@ -3,7 +3,11 @@ import { WorkflowEngine } from '@/lib/engines/WorkflowEngine';
 import { AuditService, EventType } from '@/lib/services/AuditService';
 import { OrderLifecycleService } from '@/lib/services/OrderLifecycleService';
 import { prisma } from '@/lib/services/database';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('workflows');
 import { requireRole, getRequestSession } from '@/lib/api-auth';
+import { ErrorTrackingService } from '@/lib/services/ErrorTrackingService';
 
 /**
  * Workflow runtime API.
@@ -26,36 +30,31 @@ export async function POST(req: NextRequest) {
 
     // Starting a new workflow instance is planner-level; task operations allow operators
     if (PLANNER_ACTIONS.includes(action)) {
-      const authError = requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR']);
+      const authError = await requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR']);
       if (authError) return authError;
     } else if (action === 'complete_task') {
-      const authError = requireRole(req, OPERATOR_WORKFLOW_ROLES);
+      const authError = await requireRole(req, OPERATOR_WORKFLOW_ROLES);
+      if (authError) return authError;
+    } else if (['get_instance', 'list_instances', 'get_pending_tasks'].includes(action)) {
+      // MEDIUM fix: these three read actions previously had no role check at
+      // all (only the if/else-if chain above gated 'start'/'complete_task'),
+      // so any authenticated role — not just the roles GET /api/workflows
+      // requires for the equivalent reads — could list every workflow
+      // instance/task in the plant. Matched to GET's role set for consistency.
+      const authError = await requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR', 'OPERATOR', 'QC', 'QUALITY']);
       if (authError) return authError;
     }
 
     if (action === 'start') {
       const { processId } = body;
-      let { workOrderId } = body;
+      const { workOrderId } = body;
 
       try {
         if (!workOrderId) {
-          let product = await prisma.product.findFirst();
-          if (!product) {
-            product = await prisma.product.create({
-              data: { sku: 'PART-DEMO', name: 'Demo Part', description: 'Auto-created demo product' },
-            });
-          }
-          const demoOrder = await prisma.workOrder.create({
-            data: {
-              orderNumber: `WO-DEMO-${Date.now()}`,
-              quantity: 10,
-              priority: 1,
-              status: 'RELEASED',
-              dueDate: new Date(Date.now() + 7 * 24 * 3600 * 1000),
-              productId: product.id,
-            },
-          });
-          workOrderId = demoOrder.id;
+          return Response.json(
+            { success: true, message: 'No work orders configured' },
+            { status: 200 },
+          );
         }
 
         const instance = await WorkflowEngine.startInstance(processId, workOrderId);
@@ -70,7 +69,13 @@ export async function POST(req: NextRequest) {
           },
         });
       } catch (e) {
-        return Response.json({ success: false, error: (e as Error).message });
+        await ErrorTrackingService.captureException('workflows.api.start', e, 'HIGH');
+        // HIGH-11 fix: only echo the message back for WorkflowEngine's own
+        // deliberate, safe-to-display errors — anything else (e.g. a raw
+        // Prisma failure) gets a generic message instead.
+        const message = e instanceof Error ? e.message : '';
+        const isKnownBusinessError = /Definition not found|No Start Event found/i.test(message);
+        return Response.json({ success: false, error: isKnownBusinessError ? message : 'Failed to start workflow instance' });
       }
     }
 
@@ -126,11 +131,12 @@ export async function POST(req: NextRequest) {
 
         // Trigger order lifecycle — auto-transition to QC_PENDING when all tasks done
         await OrderLifecycleService.onTaskCompleted(taskId, actor).catch(err => {
-          console.error('[complete_task] onTaskCompleted failed (non-fatal):', err);
+          log.warn('onTaskCompleted failed (non-fatal)', { taskId, message: err instanceof Error ? err.message : String(err) });
         });
 
         return Response.json({ success: true });
       } catch (e) {
+        await ErrorTrackingService.captureException('workflows.api.complete_task', e, 'HIGH');
         const message = (e as Error).message;
         const isPreviousTaskBlocking = /Previous task/i.test(message);
         const isAlreadyDone = /already completed/i.test(message);
@@ -145,7 +151,10 @@ export async function POST(req: NextRequest) {
             session?.userId,
           );
         }
-        return Response.json({ error: message, code }, { status: httpStatus });
+        // HIGH-11 fix: only the three recognized business-logic cases above
+        // are safe, deliberately-authored messages — the SERVER_ERROR
+        // fallback can be a raw/unexpected error, so don't echo it.
+        return Response.json({ error: code === 'SERVER_ERROR' ? 'Failed to complete task' : message, code }, { status: httpStatus });
       }
     }
 
@@ -202,16 +211,16 @@ export async function POST(req: NextRequest) {
 
     return Response.json({ error: 'Unknown action' }, { status: 400 });
   } catch (error) {
-    console.error('Workflow API error:', error);
-    return Response.json(
-      { error: error instanceof Error ? error.message : 'Unknown error' },
-      { status: 500 },
-    );
+    log.error('POST /api/workflows error', { message: error instanceof Error ? error.message : String(error) });
+    await ErrorTrackingService.captureException('workflows.api.post', error, 'CRITICAL');
+    // HIGH-11 fix: this is the outermost catch-all — most likely to be
+    // catching a raw/unexpected error, so don't echo it to the client.
+    return Response.json({ error: 'Request failed' }, { status: 500 });
   }
 }
 
 export async function GET(req: NextRequest) {
-  const authError = requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR', 'OPERATOR', 'QC', 'QUALITY']);
+  const authError = await requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR', 'OPERATOR', 'QC', 'QUALITY']);
   if (authError) return authError;
 
   try {
@@ -244,12 +253,13 @@ export async function GET(req: NextRequest) {
         orderBy: { id: 'desc' },
         take: 50,
       }),
-      prisma.workflowDefinition.findMany({ orderBy: { name: 'asc' } }),
+      prisma.workflowDefinition.findMany({ orderBy: { name: 'asc' }, take: 200 }),
     ]);
 
     return Response.json({ instances, definitions });
   } catch (error) {
-    console.error('Workflow GET error:', error);
+    log.error('GET /api/workflows error', { message: error instanceof Error ? error.message : String(error) });
+    await ErrorTrackingService.captureException('workflows.api.get', error, 'HIGH');
     return Response.json({ error: 'Failed to fetch workflows' }, { status: 500 });
   }
 }

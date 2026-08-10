@@ -1,6 +1,16 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
+import { handleApiError } from '@/lib/apiResponse';
 import { prisma } from '@/lib/services/database';
-import { OEEService } from '@/lib/services/OEEService';
+import { requireRole } from '@/lib/api-auth';
+
+const ALL_ROLES = ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'QUALITY', 'QC', 'MAINTENANCE'];
+import { OEEEngine } from '@/lib/services/OEEEngine';
+import { AlarmEngine } from '@/lib/services/AlarmEngine';
+import { DeviceHealthMonitor } from '@/lib/services/DeviceHealthMonitor';
+import { KPIEngine } from '@/lib/services/KPIEngine';
+import { ConflictEngine } from '@/lib/services/ConflictEngine';
+import { SchedulerService, calcAdherence, calcCapacityUtilization } from '@/lib/services/SchedulerService';
+import { calcMaterialVariance, calcVariancePct, calcScrapPct } from '@/lib/services/ProductMasterService';
 
 type PeriodKey = 'day' | 'week' | 'shift';
 
@@ -43,94 +53,56 @@ function bucketLabels(period: PeriodKey, _from: Date, to: Date) {
     return labels;
 }
 
-const _now = () => Date.now();
-const DEMO_DASHBOARD = {
-    oee: { oee: 72, availability: 85, performance: 88, quality: 97, stops: 2 },
-    machines: [
-        { id: 'd1', name: 'CNC-01',   oee: 88, availability: 90, performance: 99, quality: 99,  goodQuantity: 1200, scrapQuantity: 12, status: 'running' },
-        { id: 'd2', name: 'CNC-02',   oee: 85, availability: 88, performance: 98, quality: 99,  goodQuantity: 1150, scrapQuantity: 15, status: 'running' },
-        { id: 'd3', name: 'WLD-01',   oee: 45, availability: 50, performance: 90, quality: 98,  goodQuantity: 500,  scrapQuantity: 20, status: 'warning' },
-        { id: 'd4', name: 'QC-GATE',  oee: 90, availability: 92, performance: 99, quality: 99,  goodQuantity: 1300, scrapQuantity: 5,  status: 'running' },
-        { id: 'd5', name: 'ASSY-01',  oee: 91, availability: 92, performance: 99, quality: 100, goodQuantity: 1310, scrapQuantity: 2,  status: 'running' },
-        { id: 'd6', name: 'PKG-01',   oee: 20, availability: 25, performance: 80, quality: 90,  goodQuantity: 200,  scrapQuantity: 40, status: 'down'    },
-    ],
-    activeDown: [
-        { id: 'd6', downtimeEventId: 'demo-dt-1', name: 'PKG-01', reason: 'Mechanical Breakdown', since: new Date(_now() - 45 * 60_000).toISOString(), durationMins: 45 },
-        { id: 'd3', downtimeEventId: 'demo-dt-2', name: 'WLD-01', reason: 'Setup / Changeover',   since: new Date(_now() - 20 * 60_000).toISOString(), durationMins: 20 },
-    ],
-    stopsByMachine: [
-        { id: 'd6', name: 'PKG-01', count: 3, minutes: 95 },
-        { id: 'd3', name: 'WLD-01', count: 2, minutes: 45 },
-        { id: 'd1', name: 'CNC-01', count: 1, minutes: 18 },
-    ],
-    downtime: [
-        { label: 'Electrical Fault',        value: 62, color: '#d32f2f' },
-        { label: 'Preventive Maintenance',   value: 45, color: '#d32f2f' },
-        { label: 'Mechanical Breakdown',     value: 38, color: '#d32f2f' },
-        { label: 'Material Shortage',        value: 28, color: '#d32f2f' },
-        { label: 'Setup / Changeover',       value: 18, color: '#d32f2f' },
-        { label: 'Operator Break',           value: 12, color: '#d32f2f' },
-    ],
-    scrap: [
-        { label: 'Surface Finish',    value: 14, color: '#ff5722' },
-        { label: 'Dimensional OOS',   value: 9,  color: '#ff5722' },
-        { label: 'Label Misaligned',  value: 7,  color: '#ff5722' },
-        { label: 'Assembly Error',    value: 5,  color: '#ff5722' },
-        { label: 'Torque Failure',    value: 3,  color: '#ff5722' },
-        { label: 'Wrong Color',       value: 2,  color: '#ff5722' },
-    ],
-    production: [
-        { hour: 'Mon', actual: 25000, target: 28000 },
-        { hour: 'Tue', actual: 27000, target: 28000 },
-        { hour: 'Wed', actual: 26500, target: 28000 },
-        { hour: 'Thu', actual: 28500, target: 28000 },
-        { hour: 'Fri', actual: 24000, target: 28000 },
-        { hour: 'Sat', actual: 28000, target: 28000 },
-        { hour: 'Sun', actual: 22000, target: 28000 },
-    ],
-    summary: { activeOrders: 4, openDowntimes: 2, failedQc: 3, runningMachines: 4, totalMachines: 6 },
-    andon: {
-        activeCount: 1,
-        criticalCount: 0,
-        alerts: [{
-            id: 'demo-andon-1', color: 'YELLOW', severity: 'WARNING',
-            message: 'PKG-01 mechanical breakdown — maintenance required',
-            reason: 'Mechanical Breakdown', boardName: 'Factory Floor',
-            timestamp: new Date(_now() - 45 * 60_000).toISOString(), machineId: 'd6',
-        }],
-    },
-};
 
 export async function GET(req: NextRequest) {
+    const authError = await requireRole(req, ALL_ROLES);
+    if (authError) return authError;
+
     try {
         const period = (new URL(req.url).searchParams.get('period') ?? 'day') as PeriodKey;
         const { from, to } = getRange(period);
 
-        const machines = await prisma.machine.findMany();
+        // Fetch machines with their live runtime rows in one query
+        const machines = await prisma.machine.findMany({
+            include: { runtime: true },
+        });
         const machineStatusMap = new Map(machines.map(m => [m.id, m.status]));
+        const runtimeMap = new Map(machines.filter(m => m.runtime).map(m => [m.id, m.runtime!]));
+
+        // Calculate OEE for each machine from real runtime + downtime data
         const oeeResults = await Promise.allSettled(
-            machines.map(m => OEEService.calculateOEE(m.id, from, to))
+            machines.map(m => OEEEngine.calculateForPeriod(m.id, from, to).then(oee => ({
+                machineId: m.id,
+                machineName: m.name,
+                ...oee,
+                goodQuantity:  runtimeMap.get(m.id)?.goodCount   ?? 0,
+                scrapQuantity: runtimeMap.get(m.id)?.rejectCount  ?? 0,
+            })))
         );
 
         const oeeList = oeeResults
             .filter(r => r.status === 'fulfilled')
             .map(r => (r as PromiseFulfilledResult<any>).value);
 
-        const n = oeeList.length || 1;
-        const avgRaw = oeeList.reduce((acc, r) => ({
-            oee: acc.oee + r.oee / n,
+        const machinesWithRuntime = oeeList.filter(m => {
+            const rt = runtimeMap.get(m.machineId);
+            return rt && (rt.runtimeSeconds > 0 || rt.goodCount > 0 || rt.cycleCount > 0);
+        });
+        const n = machinesWithRuntime.length || 1;
+        const avgRaw = machinesWithRuntime.reduce((acc, r) => ({
+            oee:          acc.oee          + r.oee          / n,
             availability: acc.availability + r.availability / n,
-            performance: acc.performance + r.performance / n,
-            quality: acc.quality + r.quality / n,
+            performance:  acc.performance  + r.performance  / n,
+            quality:      acc.quality      + r.quality      / n,
         }), { oee: 0, availability: 0, performance: 0, quality: 0 });
         const avg = {
-            oee: Math.round(avgRaw.oee * 10) / 10,
+            oee:          Math.round(avgRaw.oee          * 10) / 10,
             availability: Math.round(avgRaw.availability * 10) / 10,
-            performance: Math.round(avgRaw.performance * 10) / 10,
-            quality: Math.round(avgRaw.quality * 10) / 10,
+            performance:  Math.round(avgRaw.performance  * 10) / 10,
+            quality:      Math.round(avgRaw.quality      * 10) / 10,
         };
 
-        // ── Historical downtime (closed events in period) — for Pareto chart ──────
+        // â”€â”€ Historical downtime (closed events in period) â€” for Pareto chart â”€â”€â”€â”€â”€â”€
         const downtimeEvents = await prisma.downtimeEvent.findMany({
             where: { startTime: { gte: from, lte: to }, endTime: { not: null } }, // CLOSED only
             include: { reason: true, machine: { select: { id: true, name: true, code: true } } }
@@ -153,24 +125,7 @@ export async function GET(req: NextRequest) {
             .slice(0, 6)
             .map(([label, value]) => ({ label, value, color: '#d32f2f' }));
 
-        // Pad Pareto with demo history so chart has meaningful scale
-        const DEMO_DOWNTIME = [
-            { label: 'Electrical Fault', value: 62 },
-            { label: 'Preventive Maintenance', value: 45 },
-            { label: 'Mechanical Breakdown', value: 38 },
-            { label: 'Material Shortage', value: 28 },
-            { label: 'Setup / Changeover', value: 18 },
-            { label: 'Operator Break', value: 12 },
-        ];
-        const existingDowntimeLabels = new Set(downtime.map(d => d.label));
-        for (const demo of DEMO_DOWNTIME) {
-            if (downtime.length >= 6) break;
-            if (!existingDowntimeLabels.has(demo.label)) {
-                downtime.push({ label: demo.label, value: demo.value, color: '#d32f2f' });
-            }
-        }
-
-        // ── Active (open) stops — drives live alert state ─────────────────────────
+        // â”€â”€ Active (open) stops â€” drives live alert state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const openDowntimeEvents = await prisma.downtimeEvent.findMany({
             where: { status: 'OPEN', endTime: null },
             include: { reason: true, machine: { select: { id: true, name: true, code: true } } },
@@ -209,22 +164,6 @@ export async function GET(req: NextRequest) {
             .slice(0, 6)
             .map(([label, value]) => ({ label, value, color: '#ff5722' }));
 
-        const DEMO_SCRAP = [
-            { label: 'Surface Finish', value: 14 },
-            { label: 'Dimensional OOS', value: 9 },
-            { label: 'Label Misaligned', value: 7 },
-            { label: 'Assembly Error', value: 5 },
-            { label: 'Torque Failure', value: 3 },
-            { label: 'Wrong Color', value: 2 },
-        ];
-        const existingScrapLabels = new Set(scrap.map(s => s.label));
-        for (const demo of DEMO_SCRAP) {
-            if (scrap.length >= 6) break;
-            if (!existingScrapLabels.has(demo.label)) {
-                scrap.push({ label: demo.label, value: demo.value, color: '#ff5722' });
-            }
-        }
-
         const andonAlerts = await prisma.andonEvent.findMany({
             where: { resolvedAt: null },
             include: { board: true },
@@ -232,11 +171,36 @@ export async function GET(req: NextRequest) {
             take: 5,
         });
 
-        const [openDowntimes, activeOrders, failedQc] = await Promise.all([
+        const [openDowntimes, activeOrders, failedQc, activeAlarms, deviceCounts] = await Promise.all([
             prisma.downtimeEvent.count({ where: { status: 'OPEN' } }),
             prisma.workOrder.count({ where: { status: { in: ['RELEASED', 'IN_PROGRESS'] } } }),
             prisma.qualityCheck.count({ where: { result: 'FAIL' } }),
+            AlarmEngine.activeCount(),
+            DeviceHealthMonitor.statusCounts(),
         ]);
+
+        // â”€â”€ Analytics: fleet KPIs for the selected period â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        const machineIdsWithRuntime = machines
+            .filter(m => m.runtime && (m.runtime.runtimeSeconds > 0 || m.runtime.goodCount > 0))
+            .map(m => m.id);
+        const fleetKpi = machineIdsWithRuntime.length > 0
+            ? await KPIEngine.aggregateFleet(machineIdsWithRuntime, from, to)
+            : { avgMTBF: 0, avgMTTR: 0, avgUtilization: 0, avgScrapRate: 0 };
+
+        // Alarm trend: count per day for the period
+        const alarmTrendRaw = await prisma.alarmEvent.findMany({
+            where: { startTime: { gte: from, lte: to } },
+            select: { startTime: true, severity: true },
+        });
+        const alarmTrendBucketMs = period === 'week' ? 86_400_000 : period === 'shift' ? 3_600_000 : 4 * 3_600_000;
+        const alarmTrendMap = new Map<number, number>();
+        for (const a of alarmTrendRaw) {
+            const bucket = Math.floor(a.startTime.getTime() / alarmTrendBucketMs) * alarmTrendBucketMs;
+            alarmTrendMap.set(bucket, (alarmTrendMap.get(bucket) ?? 0) + 1);
+        }
+        const alarmTrend = Array.from(alarmTrendMap.entries())
+            .sort((a, b) => a[0] - b[0])
+            .map(([ts, count]) => ({ timestamp: new Date(ts), count }));
 
         const runningMachines = machines.filter(m => (m.status ?? '').toUpperCase() === 'RUNNING').length;
 
@@ -260,36 +224,32 @@ export async function GET(req: NextRequest) {
             }
         });
 
-        const hasRealProduction = production.some(p => p.actual > 0);
-        const DEMO_PROD = [42, 178, 312, 341, 298, 356, 329, 347];
-        production.forEach((p, i) => {
-            if (!hasRealProduction) {
-                // No real task completions yet — show demo target with 0 actual so the chart has scale
-                p.actual = 0;
-                p.target = DEMO_PROD[i % DEMO_PROD.length] ?? 300;
-            } else {
-                p.target = Math.max(p.actual, Math.round(p.actual * 1.15));
-            }
+        production.forEach(p => {
+            p.target = p.actual > 0 ? Math.max(p.actual, Math.round(p.actual * 1.15)) : 0;
         });
 
         const machineRows = oeeList.map((m: any) => {
             const dbStatus = (machineStatusMap.get(m.machineId) ?? 'IDLE').toLowerCase();
-            // Do not trust stale persisted DOWN flags for dashboard tiles.
-            // Live DOWN state must come from active (OPEN) downtime events only.
+            const rt = runtimeMap.get(m.machineId);
             const status = dbStatus === 'running'
                 ? 'running'
                 : dbStatus === 'maintenance'
                     ? 'warning'
-                    : 'stopped';
+                    : dbStatus === 'down'
+                        ? 'down'
+                        : 'stopped';
             return {
-                id: m.machineId,
-                name: m.machineName,
-                oee: Math.round(m.oee),
-                availability: Math.round(m.availability),
-                performance: Math.round(m.performance),
-                quality: Math.round(m.quality),
-                goodQuantity: m.goodQuantity,
-                scrapQuantity: m.scrapQuantity,
+                id:            m.machineId,
+                name:          m.machineName,
+                oee:           Math.round(m.oee * 10) / 10,
+                availability:  Math.round(m.availability * 10) / 10,
+                performance:   Math.round(m.performance * 10) / 10,
+                quality:       Math.round(m.quality * 10) / 10,
+                goodQuantity:  rt?.goodCount   ?? 0,
+                scrapQuantity: rt?.rejectCount  ?? 0,
+                runtimeSeconds:  rt?.runtimeSeconds   ?? 0,
+                downtimeSeconds: rt?.downtimeSeconds  ?? 0,
+                lastHeartbeat:   rt?.lastHeartbeat?.toISOString() ?? null,
                 status,
             };
         });
@@ -307,6 +267,143 @@ export async function GET(req: NextRequest) {
 
         const finalRunningMachines = machineRows.filter(m => m.status === 'running').length;
 
+        // â”€â”€ Planning analytics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        const planningHorizonEnd = new Date(to.getTime() + 24 * 3_600_000); // next 24h beyond period
+
+        const [blockingConflicts, upcomingSchedules, delayedOrders] = await Promise.all([
+            ConflictEngine.countActive(),
+            prisma.productionSchedule.findMany({
+                where: { status: { in: ['SCHEDULED', 'IN_PROGRESS'] }, plannedStart: { lte: planningHorizonEnd } },
+                select: { machineId: true, plannedStart: true, plannedEnd: true, estimatedDurationMinutes: true },
+            }),
+            prisma.workOrder.count({
+                where: { status: { in: ['RELEASED', 'IN_PROGRESS'] }, dueDate: { lt: new Date() } },
+            }),
+        ]);
+
+        // Machine utilization forecast: scheduled minutes / available minutes per machine (next 24h)
+        const forecastMs = 24 * 3_600_000;
+        const forecastEnd = new Date(Date.now() + forecastMs);
+        const schedLoadByMachine = new Map<string, number>();
+        for (const s of upcomingSchedules) {
+            const clippedStart = Math.max(s.plannedStart.getTime(), Date.now());
+            const clippedEnd   = Math.min(s.plannedEnd.getTime(), forecastEnd.getTime());
+            const mins = Math.max(0, clippedEnd - clippedStart) / 60_000;
+            schedLoadByMachine.set(s.machineId, (schedLoadByMachine.get(s.machineId) ?? 0) + mins);
+        }
+        const availableMinutes = forecastMs / 60_000; // 1440 min per machine per day
+        const machineUtilizationForecast = machines.map(m => ({
+            machineId:   m.id,
+            machineName: m.name,
+            scheduledMinutes: Math.round(schedLoadByMachine.get(m.id) ?? 0),
+            availableMinutes: Math.round(availableMinutes),
+            utilizationPct: calcCapacityUtilization(schedLoadByMachine.get(m.id) ?? 0, availableMinutes),
+        }));
+
+        // Schedule adherence: avg across recently COMPLETED schedules in period
+        const completedSchedules = await prisma.productionSchedule.findMany({
+            where: { status: 'COMPLETED', actualEnd: { gte: from, lte: to } },
+            select: { estimatedDurationMinutes: true, actualStart: true, actualEnd: true },
+        });
+        const adherenceValues = completedSchedules
+            .filter(s => s.actualStart && s.actualEnd)
+            .map(s => {
+                const actual = (s.actualEnd!.getTime() - s.actualStart!.getTime()) / 60_000;
+                return calcAdherence(s.estimatedDurationMinutes, actual);
+            });
+        const scheduleAdherence = adherenceValues.length > 0
+            ? Math.round(adherenceValues.reduce((a, b) => a + b, 0) / adherenceValues.length * 10) / 10
+            : null;
+
+        // â”€â”€ Manufacturing analytics (Product / BOM / Routing) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        const [topProductRows, consumptionRows, routingBottleneckRows, overdueOpsCount] = await Promise.all([
+            // Top running products by active work order count
+            prisma.workOrder.groupBy({
+                by: ['productId'],
+                where: { status: { in: ['RELEASED', 'IN_PROGRESS'] } },
+                _count: { id: true },
+                orderBy: { _count: { id: 'desc' } },
+                take: 5,
+            }),
+            // Material consumption variance for the period
+            prisma.materialConsumption.findMany({
+                where: { issuedAt: { gte: from, lte: to } },
+                select: { componentCode: true, plannedQuantity: true, actualQuantity: true, scrapQuantity: true },
+            }),
+            // Routing bottlenecks: operations with highest estimated cycle time
+            prisma.routingOperation.findMany({
+                where: { routing: { isActive: true } },
+                orderBy: { estimatedCycleTime: 'desc' },
+                take: 5,
+                select: {
+                    operationCode: true, operationName: true,
+                    machineCapabilityType: true, estimatedCycleTime: true, sequence: true,
+                    routing: { select: { routingCode: true, product: { select: { sku: true, name: true } } } },
+                },
+            }),
+            // Overdue operations: released/in-progress orders past due date
+            prisma.workOrder.count({
+                where: { status: { in: ['RELEASED', 'IN_PROGRESS'] }, dueDate: { lt: new Date() } },
+            }),
+        ]);
+
+        // Resolve product names for top products
+        const topProductIds = topProductRows.map(r => r.productId);
+        const topProductDetails = topProductIds.length > 0
+            ? await prisma.product.findMany({
+                where: { id: { in: topProductIds } },
+                select: { id: true, sku: true, name: true },
+            })
+            : [];
+        const topProductMap = new Map(topProductDetails.map(p => [p.id, p]));
+
+        const topProducts = topProductRows.map(r => ({
+            productId:   r.productId,
+            sku:         topProductMap.get(r.productId)?.sku ?? r.productId,
+            name:        topProductMap.get(r.productId)?.name ?? 'Unknown',
+            activeOrders: r._count.id,
+        }));
+
+        // Aggregate material variance by component
+        const componentVarianceMap = new Map<string, { planned: number; actual: number; scrap: number }>();
+        for (const c of consumptionRows) {
+            const prev = componentVarianceMap.get(c.componentCode) ?? { planned: 0, actual: 0, scrap: 0 };
+            componentVarianceMap.set(c.componentCode, {
+                planned: prev.planned + c.plannedQuantity,
+                actual:  prev.actual  + c.actualQuantity,
+                scrap:   prev.scrap   + c.scrapQuantity,
+            });
+        }
+        const materialVariance = Array.from(componentVarianceMap.entries())
+            .map(([code, v]) => ({
+                componentCode: code,
+                plannedQty:    Math.round(v.planned * 100) / 100,
+                actualQty:     Math.round(v.actual  * 100) / 100,
+                scrapQty:      Math.round(v.scrap   * 100) / 100,
+                variance:      calcMaterialVariance(v.planned, v.actual),
+                variancePct:   calcVariancePct(v.planned, v.actual),
+                scrapPct:      calcScrapPct(v.scrap, v.actual),
+            }))
+            .sort((a, b) => Math.abs(b.variancePct) - Math.abs(a.variancePct))
+            .slice(0, 10);
+
+        // Scrap by product (from machine runtime rejectCount, per active order product)
+        const scrapByProduct = topProducts.map(p => {
+            const woMachineIds = machines.map(m => m.id);
+            const totalReject = woMachineIds.reduce((sum, mid) => sum + (runtimeMap.get(mid)?.rejectCount ?? 0), 0);
+            return { ...p, scrapRate: totalReject };
+        });
+
+        // Downtime heatmap: runtime vs downtime per machine â€” built after machineRows is finalised
+        const downtimeHeatmap = machineRows.map(m => ({
+            machineId:       m.id,
+            machineName:     m.name,
+            downtimeMinutes: Math.round((m.downtimeSeconds ?? 0) / 60),
+            utilization:     (m.runtimeSeconds > 0 || m.downtimeSeconds > 0)
+                ? Math.round((m.runtimeSeconds / (m.runtimeSeconds + m.downtimeSeconds)) * 1000) / 10
+                : 0,
+        }));
+
         return NextResponse.json({
             oee: { ...avg, stops: activeDown.length },   // stops = LIVE open count
             stopsByMachine,
@@ -319,8 +416,44 @@ export async function GET(req: NextRequest) {
                 activeOrders,
                 openDowntimes,
                 failedQc,
+                activeAlarms,
                 runningMachines: finalRunningMachines,
                 totalMachines: machines.length,
+            },
+            connectivity: {
+                connectedDevices:   deviceCounts.online,
+                offlineDevices:     deviceCounts.offline,
+                errorDevices:       deviceCounts.error,
+                activePlcAlarms:    activeAlarms,
+            },
+            analytics: {
+                mtbf:               fleetKpi.avgMTBF,
+                mttr:               fleetKpi.avgMTTR,
+                utilization:        fleetKpi.avgUtilization,
+                scrapRate:          fleetKpi.avgScrapRate,
+                alarmTrend,
+                downtimeHeatmap,
+            },
+            planning: {
+                blockingConflicts,
+                delayedOrders,
+                scheduleAdherence,
+                machineUtilizationForecast,
+            },
+            manufacturing: {
+                topProducts,
+                materialVariance,
+                routingBottlenecks: routingBottleneckRows.map(op => ({
+                    operationCode:         op.operationCode,
+                    operationName:         op.operationName,
+                    machineCapabilityType: op.machineCapabilityType,
+                    estimatedCycleTime:    op.estimatedCycleTime,
+                    routingCode:           op.routing.routingCode,
+                    productSku:            op.routing.product.sku,
+                    productName:           op.routing.product.name,
+                })),
+                overdueOperations: overdueOpsCount,
+                scrapByProduct,
             },
             andon: {
                 activeCount: andonAlerts.length,
@@ -338,48 +471,6 @@ export async function GET(req: NextRequest) {
             }
         });
     } catch (error) {
-        console.error('[GET /api/dashboard] Error, returning degraded demo payload:', error);
-        const now = new Date();
-        return NextResponse.json(
-            {
-                oee: { oee: 74, availability: 86, performance: 88, quality: 96, stops: 0 },
-                stopsByMachine: [],
-                machines: [
-                    { id: 'demo-cnc-01', name: 'CNC Milling Center', oee: 82, availability: 84, performance: 90, quality: 97, goodQuantity: 540, scrapQuantity: 8, status: 'running' },
-                    { id: 'demo-assy-01', name: 'Assembly Station A', oee: 0, availability: 0, performance: 0, quality: 0, goodQuantity: 0, scrapQuantity: 0, status: 'stopped' },
-                    { id: 'demo-prs-01', name: 'Pressure Test Rig', oee: 0, availability: 0, performance: 0, quality: 0, goodQuantity: 0, scrapQuantity: 0, status: 'stopped' },
-                    { id: 'demo-qc-01', name: 'Inspection Station', oee: 90, availability: 92, performance: 95, quality: 99, goodQuantity: 610, scrapQuantity: 4, status: 'running' }
-                ],
-                activeDown: [],
-                downtime: [
-                    { label: 'Mechanical Breakdown', value: 45, color: '#d32f2f' },
-                    { label: 'Preventive Maintenance', value: 30, color: '#d32f2f' },
-                    { label: 'Material Shortage', value: 18, color: '#d32f2f' },
-                    { label: 'Setup / Changeover', value: 12, color: '#d32f2f' }
-                ],
-                scrap: [
-                    { label: 'Surface Finish', value: 14, color: '#ff5722' },
-                    { label: 'Dimensional OOS', value: 9, color: '#ff5722' },
-                    { label: 'Assembly Error', value: 5, color: '#ff5722' },
-                    { label: 'Torque Failure', value: 3, color: '#ff5722' }
-                ],
-                production: bucketLabels('day', new Date(now.getTime() - 24 * 3600 * 1000), now).map((hour, i) => ({
-                    hour,
-                    actual: [250, 280, 310, 295, 325, 305][i] ?? 300,
-                    target: 330,
-                })),
-                summary: {
-                    activeOrders: 4,
-                    openDowntimes: 0,
-                    failedQc: 0,
-                    runningMachines: 2,
-                    totalMachines: 4,
-                },
-                andon: { activeCount: 0, criticalCount: 0, alerts: [] },
-                degraded: true,
-                warning: 'Database unavailable. Showing resilient demo dashboard payload.',
-            },
-            { status: 200 }
-        );
+                return handleApiError('[GET /api/dashboard]', error);
     }
 }

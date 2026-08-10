@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { TrendingUp, AlertTriangle, CheckCircle, RefreshCw, Plus, Activity, Database } from 'lucide-react';
+import { TrendingUp, AlertTriangle, CheckCircle, RefreshCw, Activity } from 'lucide-react';
 
 interface SPCPoint {
     value: number;
@@ -61,8 +61,18 @@ function XBarChart({ data }: { data: SPCChartData }) {
 
     const allVals = points.map(p => p.value);
     const allLimits = [ucl, lcl, usl, lsl, centerLine].filter((v): v is number => v !== undefined);
-    const minV = Math.min(...allVals, ...allLimits) * 0.995;
-    const maxV = Math.max(...allVals, ...allLimits) * 1.005;
+    // Bug fix (found via audit): padding used to be computed by multiplying
+    // the endpoints themselves (*0.995 / *1.005), which only expands the
+    // range for positive values — for a parameter with negative values
+    // (e.g. a deviation-from-nominal metric), that shrinks the range
+    // instead, pushing the true min/max (and possibly UCL/LCL) off the
+    // plotted chart area. Padding is now a fraction of the actual span,
+    // added/subtracted, which works regardless of sign.
+    const rawMin = Math.min(...allVals, ...allLimits);
+    const rawMax = Math.max(...allVals, ...allLimits);
+    const pad = (rawMax - rawMin) * 0.005 || 1;
+    const minV = rawMin - pad;
+    const maxV = rawMax + pad;
     const range = maxV - minV || 1;
 
     const toY = (v: number) => PT + chartH - ((v - minV) / range) * chartH;
@@ -134,7 +144,6 @@ export default function SPCPage() {
     const [chartData, setChartData] = useState<SPCChartData | null>(null);
     const [loading, setLoading] = useState(true);
     const [chartLoading, setChartLoading] = useState(false);
-    const [seeding, setSeeding] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -163,16 +172,7 @@ export default function SPCPage() {
         load();
     };
 
-    const seedDemo = async () => {
-        setSeeding(true);
-        await fetch('/api/spc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'seed_demo' }) });
-        await load();
-        setSeeding(false);
-    };
-
     const filtered = machineFilter ? parameters.filter(p => p.machine.id === machineFilter) : parameters;
-    const violations = filtered.filter(p => p._count.spcRecords > 0).length;
-
     return (
         <div style={{ padding: '1.5rem', fontFamily: 'inherit', background: 'var(--background)', minHeight: '100vh' }}>
             {/* Header */}
@@ -186,9 +186,6 @@ export default function SPCPage() {
                     </p>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button onClick={seedDemo} disabled={seeding} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.65rem 1.1rem', borderRadius: '0.5rem', border: '1px solid var(--card-border)', background: seeding ? 'var(--surface-muted)' : 'var(--card-bg)', color: seeding ? '#9ca3af' : 'var(--foreground)', cursor: seeding ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
-                        <Database size={15} /> {seeding ? 'Seeding…' : 'Seed Demo Data'}
-                    </button>
                     <button onClick={load} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.65rem 1.1rem', borderRadius: '0.5rem', border: '1px solid var(--card-border)', background: 'var(--card-bg)', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
                         <RefreshCw size={15} /> Refresh
                     </button>
@@ -228,7 +225,6 @@ export default function SPCPage() {
                     ) : filtered.length === 0 ? (
                         <div style={{ padding: '2rem', textAlign: 'center', color: '#9ca3af', fontSize: '0.85rem' }}>
                             No parameters found.<br />
-                            <button onClick={seedDemo} style={{ marginTop: '0.5rem', padding: '0.4rem 0.8rem', borderRadius: '0.4rem', border: '1px solid var(--card-border)', background: 'var(--surface-muted)', cursor: 'pointer', fontSize: '0.8rem' }}>Seed demo data</button>
                         </div>
                     ) : filtered.map(param => {
                         const limits = param.controlLimits[0];
@@ -351,8 +347,8 @@ export default function SPCPage() {
                             <p style={{ fontWeight: 600, fontSize: '1.1rem', marginBottom: '0.5rem' }}>Select a parameter to view its control chart</p>
                             <p style={{ fontSize: '0.85rem', marginBottom: '1.5rem' }}>X-bar chart with UCL/LCL, Cp/Cpk capability indices, and violation detection</p>
                             {filtered.length === 0 && (
-                                <button onClick={seedDemo} disabled={seeding} style={{ padding: '0.65rem 1.5rem', borderRadius: '0.5rem', border: 'none', background: '#6366f1', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>
-                                    {seeding ? 'Seeding…' : 'Load Demo SPC Data'}
+                                <button onClick={load} style={{ padding: '0.65rem 1.5rem', borderRadius: '0.5rem', border: 'none', background: '#6366f1', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>
+                                    Refresh SPC Data
                                 </button>
                             )}
                         </div>

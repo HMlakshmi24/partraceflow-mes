@@ -77,7 +77,6 @@ function FilterBar() {
         <>
             <FilterButton label="Week" value="week" active={currentPeriod === 'week'} />
             <FilterButton label="Day" value="day" active={currentPeriod === 'day'} />
-            <FilterButton label="Hours" value="hours" active={currentPeriod === 'hours'} />
             <FilterButton label="Shift" value="shift" active={currentPeriod === 'shift'} />
         </>
     );

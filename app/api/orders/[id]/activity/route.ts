@@ -6,7 +6,7 @@ const ACTIVITY_READ_ROLES = ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'QC',
 const ACTIVITY_WRITE_ROLES = ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'QC', 'QUALITY'];
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    const authError = requireRole(req, ACTIVITY_READ_ROLES);
+    const authError = await requireRole(req, ACTIVITY_READ_ROLES);
     if (authError) return authError;
 
     const { id } = await params;
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    const authError = requireRole(req, ACTIVITY_WRITE_ROLES);
+    const authError = await requireRole(req, ACTIVITY_WRITE_ROLES);
     if (authError) return authError;
 
     const { id } = await params;

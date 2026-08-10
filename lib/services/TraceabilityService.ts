@@ -148,9 +148,14 @@ export class TraceabilityService {
 
     if (!lot) return null
 
+    // Bug fix (found via audit): this used to also return `product: lot` at
+    // the top level — the raw Lot record (lotNumber/quantity/status/...)
+    // mislabeled as "product". A raw-material lot can be consumed by
+    // batches for different products, so there's no single "the product"
+    // for a lot in the first place — the real per-batch product name is
+    // (and always was) correctly available below, in usedInBatches[].product.
     return {
       lot: lot.lotNumber,
-      product: lot,
       usedInBatches: lot.materialUsages.map(mu => ({
         batchNumber: mu.batch.batchNumber,
         workOrder: mu.batch.workOrder.orderNumber,

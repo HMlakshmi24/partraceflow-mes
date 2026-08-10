@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
 import { requireRole } from '@/lib/api-auth';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('designer');
 
 /**
  * Designer API
@@ -8,7 +11,7 @@ import { requireRole } from '@/lib/api-auth';
  * GET  -> list saved workflows or fetch by ?name=
  */
 export async function POST(req: NextRequest) {
-    const authError = requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR']);
+    const authError = await requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR']);
     if (authError) return authError as NextResponse;
 
     try {
@@ -32,7 +35,7 @@ export async function POST(req: NextRequest) {
             return new Response(JSON.stringify({ success: true, workflow: { id: created.id, name: created.name } }), { status: 200 });
         }
     } catch (e) {
-        console.error('designer save API error:', e);
+        log.error('designer save error', { message: e instanceof Error ? e.message : String(e) });
         return new Response(JSON.stringify({ success: false, error: (e as Error).message }), { status: 500 });
     }
 }
@@ -52,7 +55,7 @@ export async function GET(req: NextRequest) {
         const simplified = list.map(l => ({ id: l.id, name: l.name, createdAt: l.createdAt }));
         return new Response(JSON.stringify({ success: true, list: simplified }), { status: 200 });
     } catch (e) {
-        console.error('designer list API error:', e);
+        log.error('designer list error', { message: e instanceof Error ? e.message : String(e) });
         return new Response(JSON.stringify({ success: false, error: (e as Error).message }), { status: 500 });
     }
 }

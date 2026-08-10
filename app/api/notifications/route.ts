@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { NotificationService } from '@/lib/services/NotificationService'
+import { requireRole } from '@/lib/api-auth';
+
+const ALL_ROLES = ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'QUALITY', 'QC', 'MAINTENANCE'];
 
 export async function GET(request: NextRequest) {
+  const authError = await requireRole(request, ALL_ROLES);
+  if (authError) return authError;
+
   try {
     const { searchParams } = new URL(request.url)
     const recipientId = searchParams.get('recipientId')

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   Layers, GitBranch, Circle, AlertTriangle, CheckCircle2, Clock,
   Package, FileSearch, ShieldAlert, BarChart3, MapPin, RefreshCw, Activity,
-  ChevronRight, Tag,
+  ChevronRight, Tag, Flame, FileCheck2,
 } from 'lucide-react';
 import { SPOOL_STATUS_COLORS, JOINT_STATUS_COLORS } from '@/lib/spoolStatus';
 
@@ -195,6 +195,8 @@ export default function PipeSpoolDashboard() {
     { href: '/pipe-spool/nde',          icon: Circle,      label: 'Weld Testing (NDE)',      desc: 'X-ray and ultrasonic test results for welds', color: '#10b981' },
     { href: '/pipe-spool/ncr',          icon: ShieldAlert, label: 'Issues & Defects',        desc: 'Log and track any quality issues found', color: '#ef4444' },
     { href: '/pipe-spool/pressure-tests', icon: Activity,  label: 'Pressure Tests',          desc: 'Record hydrostatic and pneumatic test results', color: '#ec4899' },
+    { href: '/pipe-spool/pwht',         icon: Flame,       label: 'PWHT Cycles',             desc: 'Approve post-weld heat treatment cycles', color: '#f97316' },
+    { href: '/pipe-spool/mdr',          icon: FileCheck2,  label: 'MDR Dossiers',            desc: 'Review and approve manufacturing data records', color: '#8b5cf6' },
     { href: '/pipe-spool/yard',         icon: MapPin,      label: 'Storage Yard',            desc: 'Find where each spool is stored in the yard', color: '#f97316' },
     { href: '/pipe-spool/reports',      icon: BarChart3,   label: 'Reports',                 desc: 'View progress reports and export for handover', color: '#22c55e' },
     { href: '/pipe-spool/scan',         icon: Tag,         label: 'RFID Scanner',            desc: 'Scan RFID tags to look up any spool instantly', color: '#8b5cf6' },

@@ -1,4 +1,8 @@
-import { prisma } from '@/lib/services/database'
+﻿import { prisma } from '@/lib/services/database'
+import { createLogger } from '@/lib/logger';
+import { RuntimeEngine, isValidMachineStatus } from '@/lib/services/RuntimeEngine';
+
+const log = createLogger('TelemetryService');
 
 export interface TelemetryPoint {
   signalId: string
@@ -100,15 +104,17 @@ export class TelemetryService {
             newStatus = transform.valueMap?.[point.value] ?? null
           }
 
-          if (newStatus) {
-            await prisma.machine.update({
-              where: { id: point.machineId },
-              data: { status: newStatus }
-            })
+          // CRIT-5 fix: newStatus comes from a config-driven threshold/value-map
+          // rule (SignalMapping.transformRule) and was previously written to
+          // Machine.status with no validation and no MachineRuntime sync.
+          if (newStatus && isValidMachineStatus(newStatus)) {
+            await RuntimeEngine.upsertHeartbeat(point.machineId, { status: newStatus })
+          } else if (newStatus) {
+            log.warn(`Signal mapping ${mapping.id} produced an invalid machine status`, { newStatus })
           }
         }
       } catch (e) {
-        console.error(`[TelemetryService] Error evaluating mapping ${mapping.id}:`, e)
+        log.error(`[TelemetryService] Error evaluating mapping ${mapping.id}:`, { message: e instanceof Error ? e.message : String(e) })
       }
     }
   }
@@ -124,3 +130,4 @@ export class TelemetryService {
     return result.count
   }
 }
+

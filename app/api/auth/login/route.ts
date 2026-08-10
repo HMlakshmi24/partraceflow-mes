@@ -1,51 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
-import { verifyPassword, createSessionToken, SESSION_COOKIE, COOKIE_OPTIONS } from '@/lib/auth';
+import { verifyPassword, createSessionToken, SESSION_COOKIE, getCookieOptions } from '@/lib/auth';
 import { LoginSchema, validationError } from '@/lib/validation';
 import { authCheckFailureLimiter, authFailureLimiter } from '@/lib/rateLimit';
 import { AuditService, EventType } from '@/lib/services/AuditService';
+import { createLogger } from '@/lib/logger';
+import { getClientIp } from '@/lib/utils/getClientIp';
 
-const WEAK_DEMO_PASSWORDS = new Set(['admin123', 'demo', 'password', '123456', 'admin', 'test']);
+const log = createLogger('auth/login');
 
-function resolveDbFallbackUser(username: string, password: string) {
-    // Emergency access path when database connectivity is temporarily unavailable.
-    // Enabled by default for demo continuity. Set ALLOW_DBLESS_DEMO_LOGIN=false to disable.
-    const dbFallbackEnabled = process.env.ALLOW_DBLESS_DEMO_LOGIN !== 'false';
-    if (!dbFallbackEnabled) return null;
-
-    const adminUser = (process.env.DEMO_ADMIN_USERNAME ?? 'admin').trim();
-    const adminPass = process.env.DEMO_ADMIN_PASSWORD ?? 'admin123';
-    const operatorUser = (process.env.DEMO_OPERATOR_USERNAME ?? 'operator').trim();
-    const operatorPass = process.env.DEMO_OPERATOR_PASSWORD ?? 'demo';
-    const supervisorUser = (process.env.DEMO_SUPERVISOR_USERNAME ?? 'Arjun.Supv').trim();
-    const supervisorPass = process.env.DEMO_SUPERVISOR_PASSWORD ?? 'demo';
-    const workerUser = (process.env.DEMO_WORKER_USERNAME ?? 'Ramesh.Kumar').trim();
-    const workerPass = process.env.DEMO_WORKER_PASSWORD ?? 'demo';
-    const qcUser = (process.env.DEMO_QC_USERNAME ?? 'Deepa.QC').trim();
-    const qcPass = process.env.DEMO_QC_PASSWORD ?? 'demo';
-
-    if (username === adminUser && password === adminPass) {
-        return { id: 'demo-admin-local', username: adminUser, role: 'ADMIN' as const };
-    }
-
-    if (username === operatorUser && password === operatorPass) {
-        return { id: 'demo-operator-local', username: operatorUser, role: 'OPERATOR' as const };
-    }
-
-    if (username === supervisorUser && password === supervisorPass) {
-        return { id: 'demo-supervisor-local', username: supervisorUser, role: 'SUPERVISOR' as const };
-    }
-
-    if (username === workerUser && password === workerPass) {
-        return { id: 'demo-worker-local', username: workerUser, role: 'OPERATOR' as const };
-    }
-
-    if (username === qcUser && password === qcPass) {
-        return { id: 'demo-qc-local', username: qcUser, role: 'QUALITY' as const };
-    }
-
-    return null;
-}
+const WEAK_PASSWORDS = new Set(['admin123', 'demo', 'password', '123456', 'admin', 'test']);
 
 export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => null);
@@ -55,7 +19,7 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) return validationError(parsed.error);
 
     const { username, password } = parsed.data;
-    const ip = req.headers.get('x-forwarded-for')?.split(',')[0] ?? req.headers.get('x-real-ip') ?? 'unknown';
+    const ip = getClientIp(req);
 
     const rl = await authCheckFailureLimiter(ip, username);
     if (!rl.allowed) {
@@ -69,7 +33,10 @@ export async function POST(req: NextRequest) {
     const isProduction = process.env.NODE_ENV === 'production';
 
     try {
-        const user = await prisma.user.findUnique({ where: { username } });
+        const user = await prisma.user.findUnique({
+            where: { username },
+            select: { id: true, username: true, role: true, isActive: true, passwordHash: true, mustChangePassword: true, sessionVersion: true, mfaEnabled: true },
+        });
 
         if (!user || !user.isActive) {
             await authFailureLimiter(ip, username);
@@ -78,7 +45,13 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Invalid username or password' }, { status: 401 });
         }
 
-        const passwordOk = !user.passwordHash ? true : verifyPassword(password, user.passwordHash);
+        if (!user.passwordHash) {
+            await authFailureLimiter(ip, username);
+            AuditService.log(EventType.AUTH_FAILED, `Login failed for "${username}" — account has no password configured`, { username, ip }, user.id).catch(() => { });
+            return NextResponse.json({ error: 'Account not configured. Contact your administrator.' }, { status: 401 });
+        }
+
+        const passwordOk = verifyPassword(password, user.passwordHash);
 
         if (!passwordOk) {
             await authFailureLimiter(ip, username);
@@ -90,55 +63,37 @@ export async function POST(req: NextRequest) {
         await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
         // Audit-log when production accounts use known-weak passwords, but do not block
-        if (isProduction && WEAK_DEMO_PASSWORDS.has(password)) {
+        if (isProduction && WEAK_PASSWORDS.has(password)) {
             AuditService.log(EventType.PERMISSION_DENIED, `Security notice: User "${username}" is using a weak default password in production`, { username, ip }).catch(() => { });
         }
 
         // Enforce mustChangePassword
         if (user.mustChangePassword) {
-            const token = createSessionToken({ userId: user.id, username: user.username, role: user.role, mustChangePassword: true });
+            const token = createSessionToken({ userId: user.id, username: user.username, role: user.role, mustChangePassword: true, sessionVersion: user.sessionVersion, mfaEnabled: user.mfaEnabled, mfaVerified: false });
             const res = NextResponse.json({
                 success: true,
                 mustChangePassword: true,
                 user: { id: user.id, username: user.username, role: user.role },
             });
-            res.cookies.set(SESSION_COOKIE, token, COOKIE_OPTIONS);
+            res.cookies.set(SESSION_COOKIE, token, getCookieOptions(user.role));
             return res;
         }
 
         AuditService.log(EventType.AUTH_LOGIN, `User "${username}" logged in`, { username, role: user.role, ip }, user.id).catch(() => { });
 
-        const token = createSessionToken({ userId: user.id, username: user.username, role: user.role, mustChangePassword: false });
+        const token = createSessionToken({ userId: user.id, username: user.username, role: user.role, mustChangePassword: false, sessionVersion: user.sessionVersion, mfaEnabled: user.mfaEnabled, mfaVerified: false });
         const res = NextResponse.json({
             success: true,
+            mfaSetupRequired: !user.mfaEnabled,
+            mfaVerificationRequired: user.mfaEnabled,
             user: { id: user.id, username: user.username, role: user.role },
         });
 
-        res.cookies.set(SESSION_COOKIE, token, COOKIE_OPTIONS);
+        res.cookies.set(SESSION_COOKIE, token, getCookieOptions(user.role));
         return res;
 
     } catch (error) {
-        console.error('[MES] Database unavailable during login:', (error as Error).message);
-
-        const fallbackUser = resolveDbFallbackUser(username, password);
-        if (fallbackUser) {
-            const token = createSessionToken({
-                userId: fallbackUser.id,
-                username: fallbackUser.username,
-                role: fallbackUser.role,
-                mustChangePassword: false,
-            });
-
-            const res = NextResponse.json({
-                success: true,
-                degradedAuth: true,
-                user: { id: fallbackUser.id, username: fallbackUser.username, role: fallbackUser.role },
-                warning: 'Signed in using emergency demo mode because the database is currently unreachable.',
-            });
-            res.cookies.set(SESSION_COOKIE, token, COOKIE_OPTIONS);
-            return res;
-        }
-
-        return NextResponse.json({ error: 'Authentication service unavailable. Please check database connection.' }, { status: 503 });
+        log.error('database unavailable during login', { message: (error as Error).message });
+        return NextResponse.json({ error: 'Authentication service unavailable. Please try again later.' }, { status: 503 });
     }
 }

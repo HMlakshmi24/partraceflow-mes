@@ -5,8 +5,14 @@ import { requireSpoolAction } from '@/lib/spoolRBAC';
 import { CreatePressureTestSchema, validationError } from '@/lib/validation';
 import { apiError, apiSuccess } from '@/lib/apiResponse';
 import { AuditService, EventType } from '@/lib/services/AuditService';
+import { requireRole } from '@/lib/api-auth';
+
+const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
 export async function GET(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
@@ -44,6 +50,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const body = await req.json();
     const { action, id, ...data } = body;
@@ -77,7 +86,15 @@ export async function POST(req: NextRequest) {
     }
 
     if (id) {
-      const record = await prisma.pressureTestRecord.update({ where: { id }, data });
+      // CRIT-3 fix: this fallback had no permission check at all, letting any
+      // spool role (incl. OPERATOR) set `result` directly, bypassing
+      // APPROVE_PRESSURE_TEST. Gate it the same as update_result and strip
+      // the result/certificate fields so a pass/fail can only be recorded
+      // through the guarded action above.
+      const guard = await requireSpoolAction('APPROVE_PRESSURE_TEST');
+      if (guard instanceof NextResponse) return guard;
+      const { result: _result, certificatePath: _certificatePath, ...safeData } = data;
+      const record = await prisma.pressureTestRecord.update({ where: { id }, data: safeData });
       return apiSuccess({ record });
     }
 

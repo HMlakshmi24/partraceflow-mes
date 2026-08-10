@@ -1,4 +1,4 @@
-/**
+﻿/**
  * POST /api/rfid/ingest
  *
  * Universal RFID ingestion endpoint. Any gateway (TCP bridge, MQTT forwarder,
@@ -11,11 +11,35 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { handleApiError } from '@/lib/apiResponse';
 import { isDuplicate, heartbeat, recordRead, resolveTag } from '@/lib/connectors/rfidConnector';
 import { RFIDIngestSchema, validationError } from '@/lib/validation';
 import { prisma } from '@/lib/services/database';
+import { createLogger } from '@/lib/logger';
+import { requireRole, getRequestSession, RequestSession } from '@/lib/api-auth';
+import { recordStatusChange } from '@/lib/services/StatusHistoryService';
+import { rateLimit } from '@/lib/rateLimit';
+import { getClientIp } from '@/lib/utils/getClientIp';
+
+const RFID_ROLES = ['ADMIN', 'SUPERVISOR', 'MAINTENANCE'];
+
+const log = createLogger('rfid.ingest');
 
 export async function POST(req: NextRequest) {
+  const authError = await requireRole(req, RFID_ROLES);
+  if (authError) return authError;
+
+  // MEDIUM fix: bulk-ingest endpoint had no rate limiting at all. Limit is
+  // generous (a busy gateway serving many readers can legitimately send
+  // several reads/sec) — this is an abuse/misconfiguration backstop, not a
+  // throughput cap for normal operation; per-reader+tag 3s dedup below
+  // handles normal duplicate suppression.
+  const ip = getClientIp(req);
+  const rl = await rateLimit(`rfid-ingest:${ip}`, { limit: 600, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } });
+  }
+
   try {
     const raw = await req.json();
     const parsed = RFIDIngestSchema.safeParse(raw);
@@ -37,12 +61,11 @@ export async function POST(req: NextRequest) {
     // Resolve which asset this tag belongs to
     const asset = await resolveTag(tagId);
 
-    // Audit: log to console (extend to DB by adding RFIDRead model to schema if needed)
-    console.info('[rfid/ingest]', { tagId, readerId, asset: asset?.type, ts: ts.toISOString() });
+    log.info('tag read accepted', { tagId, readerId, assetType: asset?.type, ts: ts.toISOString() });
 
     // Auto-advance spool status based on reader location
     if (asset && asset.type === 'spool' && location) {
-      await autoAdvanceFromReader(asset.id, 'FABRICATING', location);
+      await autoAdvanceFromReader(asset.id, location, getRequestSession(req));
     }
 
     return NextResponse.json({
@@ -54,13 +77,21 @@ export async function POST(req: NextRequest) {
       asset,
     });
   } catch (e: any) {
-    console.error('[rfid/ingest]', e);
-    return NextResponse.json({ error: e.message ?? 'Ingest failed' }, { status: 500 });
+        return handleApiError('[rfid/ingest]', e);
   }
 }
 
-// Auto-advance spool status when scanned at known reader locations
-async function autoAdvanceFromReader(spoolId: string, currentStatus: string, location: string) {
+// Auto-advance spool status when scanned at known reader locations.
+//
+// CRIT-6 fix: this previously validated against a hardcoded literal
+// ('FABRICATING') instead of the spool's real current status, and wrote the
+// new status unconditionally (no `where` guard tied to the read status, and
+// no audit trail via StatusHistoryService) — a scan at "Yard Entrance" could
+// silently regress an already-advanced spool back to RECEIVED. It now reads
+// the real status, uses a conditional update scoped to that status (so a
+// concurrent change loses the race safely instead of clobbering), and
+// records the transition in the audit trail like every other status change.
+async function autoAdvanceFromReader(spoolId: string, location: string, session: RequestSession | null) {
   const LOCATION_TRANSITIONS: Record<string, { from: string[]; to: string }> = {
     'Yard Entrance': { from: ['FABRICATING'], to: 'RECEIVED' },
     'Storage Zone A': { from: ['RECEIVED'], to: 'IN_STORAGE' },
@@ -74,13 +105,31 @@ async function autoAdvanceFromReader(spoolId: string, currentStatus: string, loc
   if (!rule) return;
 
   const [, { from, to }] = rule;
+
+  const spool = await prisma.pipeSpool.findUnique({ where: { id: spoolId }, select: { status: true } });
+  if (!spool) return;
+  const currentStatus = spool.status;
+
   if (!from.includes(currentStatus)) return;
 
   const spoolMod = await import('@/lib/spoolTransitions');
   if (!spoolMod.canTransition(spoolMod.SPOOL_TRANSITIONS, currentStatus, to)) return;
 
-  await prisma.pipeSpool.update({
-    where: { id: spoolId },
-    data: { status: to },
-  }).catch((e) => { console.warn('[rfid] spool status update failed:', e?.message); });
+  try {
+    const result = await prisma.pipeSpool.updateMany({
+      where: { id: spoolId, status: currentStatus },
+      data: { status: to },
+    });
+    if (result.count === 0) {
+      log.warn('spool status auto-advance skipped — status changed concurrently', { spoolId, expected: currentStatus });
+      return;
+    }
+    await recordStatusChange('PipeSpool', spoolId, currentStatus, to, {
+      changedBy: session?.username ?? 'rfid-gateway',
+      changedByUserId: session?.userId,
+      changedByRole: session?.role,
+    }, `RFID auto-advance at ${location}`).catch(() => {});
+  } catch (e: any) {
+    log.warn('spool status auto-advance failed', { message: e?.message });
+  }
 }

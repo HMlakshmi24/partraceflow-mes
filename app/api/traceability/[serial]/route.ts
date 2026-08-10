@@ -1,10 +1,17 @@
-import { NextRequest, NextResponse } from 'next/server'
+﻿import { NextRequest, NextResponse } from 'next/server'
+import { handleApiError } from '@/lib/apiResponse';
 import { TraceabilityService } from '@/lib/services/TraceabilityService'
+import { requireRole } from '@/lib/api-auth';
+
+const ALL_ROLES = ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'QUALITY', 'QC', 'MAINTENANCE'];
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ serial: string }> }
 ) {
+  const authError = await requireRole(request, ALL_ROLES);
+  if (authError) return authError;
+
   try {
     const { serial } = await params
     const url = new URL(request.url)
@@ -23,7 +30,6 @@ export async function GET(
     }
     return NextResponse.json(genealogy)
   } catch (error) {
-    console.error('[GET /api/traceability]', error)
-    return NextResponse.json({ error: 'Failed to fetch genealogy' }, { status: 500 })
+        return handleApiError('[GET /api/traceability]', error);
   }
 }

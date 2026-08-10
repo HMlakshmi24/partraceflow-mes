@@ -1,5 +1,8 @@
-import { prisma } from '@/lib/services/database'
+﻿import { prisma } from '@/lib/services/database'
 import { NotificationService } from '@/lib/services/NotificationService'
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('EventRuleEngine');
 
 export interface EvaluationContext {
   machineId?: string
@@ -30,7 +33,7 @@ export class EventRuleEngine {
           await this.executeActions(rule, context)
         }
       } catch (e) {
-        console.error(`[EventRuleEngine] Error evaluating rule ${rule.id}:`, e)
+        log.error(`[EventRuleEngine] Error evaluating rule ${rule.id}:`, { message: e instanceof Error ? e.message : String(e) })
       }
     }
   }
@@ -157,7 +160,7 @@ export class EventRuleEngine {
           data: { executedCount: { increment: 1 } }
         })
       } catch (e) {
-        console.error(`[EventRuleEngine] Action ${action.id} failed:`, e)
+        log.error(`[EventRuleEngine] Action ${action.id} failed:`, { message: e instanceof Error ? e.message : String(e) })
       }
     }
 
@@ -175,3 +178,4 @@ export class EventRuleEngine {
       .replace('{{downtimeMinutes}}', String(context.downtimeDurationMinutes ?? ''))
   }
 }
+

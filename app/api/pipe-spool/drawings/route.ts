@@ -1,8 +1,15 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/services/database';
 import { apiError, apiSuccess } from '@/lib/apiResponse';
+import { requireRole } from '@/lib/api-auth';
+import { requireSpoolAction } from '@/lib/spoolRBAC';
+
+const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
 export async function GET(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
@@ -38,20 +45,31 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const body = await req.json();
     const { action, id, ...data } = body;
 
+    // CRIT-3 fix: these branches had zero fine-grained RBAC beyond the coarse
+    // SPOOL_ROLES check, letting any OPERATOR delete/alter any controlled drawing.
     if (action === 'delete' && id) {
+      const guard = await requireSpoolAction('DELETE_DOCUMENT');
+      if (guard instanceof NextResponse) return guard;
       await prisma.isometricDrawing.delete({ where: { id } });
       return apiSuccess({ deleted: true });
     }
 
     if (id) {
+      const guard = await requireSpoolAction('UPLOAD_DOCUMENT');
+      if (guard instanceof NextResponse) return guard;
       const drawing = await prisma.isometricDrawing.update({ where: { id }, data });
       return apiSuccess({ drawing });
     }
 
+    const guard = await requireSpoolAction('UPLOAD_DOCUMENT');
+    if (guard instanceof NextResponse) return guard;
     const drawing = await prisma.isometricDrawing.create({ data });
     return apiSuccess({ drawing });
   } catch (e: any) {

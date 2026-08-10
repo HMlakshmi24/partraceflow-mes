@@ -89,7 +89,9 @@ export class AndonService {
     if (boards.length === 0) return
 
     const board = boards[0]
-    const color: AndonColor = durationMinutes > 30 ? 'RED' : durationMinutes > 10 ? 'YELLOW' : 'YELLOW'
+    // MEDIUM fix: the ">10" and "else" branches both evaluated to YELLOW,
+    // collapsing the intended RED/YELLOW/GREEN 3-tier severity into 2 tiers.
+    const color: AndonColor = durationMinutes > 30 ? 'RED' : durationMinutes > 10 ? 'YELLOW' : 'GREEN'
     const severity = durationMinutes > 30 ? 'CRITICAL' : 'WARNING'
 
     await this.triggerAndon({
@@ -107,7 +109,8 @@ export class AndonService {
     return prisma.andonEvent.findMany({
       where: { resolvedAt: null },
       include: { board: true },
-      orderBy: { timestamp: 'desc' }
+      orderBy: { timestamp: 'desc' },
+      take: 500,
     })
   }
 

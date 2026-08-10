@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "mongodb"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -12,54 +12,97 @@ datasource db {
 // --------------------------------------------------------
 
 model Product {
-  id          String   @id @default(cuid()) @map("_id")
-  sku         String   @unique // e.g., "PART-101"
-  name        String
-  description String?
+  id               String   @id @default(cuid())
+  sku              String   @unique // e.g., "PART-101" — serves as productCode
+  name             String
+  description      String?
+  revision         String   @default("A")
+  unitOfMeasure    String   @default("EA") // EA | KG | L | M | M2 | M3
+  productType      String   @default("FINISHED_GOOD") // FINISHED_GOOD | SEMI_FINISHED | RAW_MATERIAL | COMPONENT
+  isActive         Boolean  @default(true)
+  defaultBatchSize Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  workOrders  WorkOrder[]
-  cadDocuments CADDocument[]
-  lots        Lot[]
-  serialNumbers SerialNumber[]
+  workOrders           WorkOrder[]
+  cadDocuments         CADDocument[]
+  lots                 Lot[]
+  serialNumbers        SerialNumber[]
+  boms                 BillOfMaterial[]
+  routings             Routing[]
+  materialConsumptions MaterialConsumption[]
+
+  @@index([sku])
+  @@index([productType, isActive])
 }
 
 model Machine {
-  id          String   @id @default(cuid()) @map("_id")
-  code        String   @unique // e.g., "W21"
-  name        String
-  status      String   @default("IDLE") // IDLE, RUNNING, DOWN, MAINTENANCE
-  oee         Float    @default(0)
-  productionLineId String?
-  productionLine   ProductionLine? @relation(fields: [productionLineId], references: [id])
-  tasks       WorkflowTask[]
-  components  MachineComponent[]
-  signals     MachineSignal[]
-  machineEvents MachineEvent[]
-  downtimeEvents DowntimeEvent[]
-  maintenanceWindows MaintenanceWindow[]
-  scheduledJobs ScheduledJob[]
-  telemetry   MachineTelemetry[]
+  id                  String               @id @default(cuid())
+  code                String               @unique // e.g., "W21"
+  name                String
+  status              String               @default("IDLE") // IDLE, RUNNING, DOWN, MAINTENANCE
+  oee                 Float                @default(0)
+  productionLineId    String?
+  productionLine      ProductionLine?      @relation(fields: [productionLineId], references: [id])
+  tasks               WorkflowTask[]
+  components          MachineComponent[]
+  signals             MachineSignal[]
+  machineEvents       MachineEvent[]
+  downtimeEvents      DowntimeEvent[]
+  maintenanceWindows  MaintenanceWindow[]
+  scheduledJobs       ScheduledJob[]
+  telemetry           MachineTelemetry[]
+  workOrders          WorkOrder[]
+  runtime             MachineRuntime?
+  oeeSnapshots        OEESnapshot[]
+  alarmEvents         AlarmEvent[]
+  signalMaps          MachineSignalMap[]
+  plcTagMaps          PLCTagMap[]
+  historianRecords    HistorianRecord[]
+  capabilities        MachineCapability[]
+  productionSchedules ProductionSchedule[]
+  schedulingConflicts SchedulingConflict[]
+
+  @@index([status])
 }
 
 model User {
-  id           String    @id @default(cuid()) @map("_id")
-  username     String    @unique
-  passwordHash String?   // scrypt hash; null = demo mode (any password)
-  mustChangePassword Boolean @default(false)
-  role         String    // OPERATOR, SUPERVISOR, ADMIN, PLANNER, QUALITY, MAINTENANCE
-  plantId      String?
-  employeeId   String?
-  isActive     Boolean   @default(true)
-  lastLoginAt  DateTime?
-  tasks     WorkflowTask[]
-  events    SystemEvent[]
-  qualityApprovals QualityApproval[]
-  cadApprovals CADDocumentApproval[]
-  taskApprovals TaskApproval[] @relation("TaskApprovals")
-  operatorShifts OperatorShift[]
-  skills    OperatorSkill[]
-  certifications Certification[]
-  trainingRecords TrainingRecord[]
+  id                   String                @id @default(cuid())
+  username             String                @unique
+  passwordHash         String? // scrypt hash; null = demo mode (any password)
+  mustChangePassword   Boolean               @default(false)
+  role                 String // OPERATOR, SUPERVISOR, ADMIN, PLANNER, QUALITY, MAINTENANCE
+  plantId              String?
+  employeeId           String?
+  email                String?
+  displayName          String?
+  isActive             Boolean               @default(true)
+  sessionVersion       Int                   @default(0)
+  lastLoginAt          DateTime?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  // Industry-readiness: MFA (TOTP, RFC 6238). mfaSecret holds the AES-256-GCM
+  // encrypted secret (encrypted, not hashed — the server must be able to
+  // recover it to compute the current code). While mfaEnabled=false it holds
+  // an unconfirmed, in-progress enrollment secret; /api/auth/mfa/verify flips
+  // mfaEnabled=true once the user proves possession. mfaBackupCodes holds
+  // scrypt-hashed (like passwordHash) one-time recovery codes as a JSON array.
+  mfaSecret            String?
+  mfaEnabled           Boolean               @default(false)
+  mfaEnrolledAt        DateTime?
+  mfaBackupCodes       String?
+  tasks                WorkflowTask[]
+  events               SystemEvent[]
+  qualityApprovals     QualityApproval[]
+  cadApprovals         CADDocumentApproval[]
+  taskApprovals        TaskApproval[]        @relation("TaskApprovals")
+  operatorShifts       OperatorShift[]
+  skills               OperatorSkill[]
+  certifications       Certification[]
+  trainingRecords      TrainingRecord[]
+  workOrders           WorkOrder[]           @relation("WorkOrderOperator")
+  inspections          SpoolInspection[]     @relation("InspectionInspector")
+  welderQualifications WelderQualification[]
 }
 
 // --------------------------------------------------------
@@ -67,53 +110,73 @@ model User {
 // --------------------------------------------------------
 
 model WorkOrder {
-  id             String   @id @default(cuid()) @map("_id")
-  orderNumber    String   @unique // e.g., "WO-2024-001"
-  quantity       Int
-  priority       Int      @default(1)
+  id                   String                @id @default(cuid())
+  orderNumber          String                @unique // e.g., "WO-2024-001"
+  quantity             Int
+  priority             Int                   @default(1)
   // Valid statuses: PLANNED → RELEASED → IN_PROGRESS → QC_PENDING → APPROVED → COMPLETED
   //                 Any → ON_HOLD | CANCELLED; QC_PENDING → REWORK → IN_PROGRESS
-  status         String   @default("PLANNED")
-  dueDate        DateTime
-  productId      String
-  product        Product  @relation(fields: [productId], references: [id])
-  workflowInstances WorkflowInstance[]
-  activities     OrderActivity[]
-  batchId        String?
-  scheduledStart DateTime?
-  scheduledEnd   DateTime?
-  scheduledJob   ScheduledJob?
-  batches        Batch[]
-  inspectionRecords InspectionRecord[]
-  createdAt      DateTime @default(now())
+  status               String                @default("PLANNED")
+  dueDate              DateTime
+  productId            String
+  product              Product               @relation(fields: [productId], references: [id])
+  machineId            String?
+  machine              Machine?              @relation(fields: [machineId], references: [id])
+  shiftId              String?
+  shift                Shift?                @relation(fields: [shiftId], references: [id])
+  operatorId           String?
+  operator             User?                 @relation("WorkOrderOperator", fields: [operatorId], references: [id])
+  routingId            String?
+  routing              Routing?              @relation(fields: [routingId], references: [id])
+  plannedQuantity      Int? // explicit planned qty; quantity field = ordered qty
+  workflowInstances    WorkflowInstance[]
+  activities           OrderActivity[]
+  batchId              String?
+  scheduledStart       DateTime?
+  scheduledEnd         DateTime?
+  scheduledJob         ScheduledJob?
+  batches              Batch[]
+  inspectionRecords    InspectionRecord[]
+  pipeSpools           PipeSpool[]
+  completions          Completion[]
+  downtimeEvents       DowntimeEvent[]
+  productionSchedules  ProductionSchedule[]
+  schedulingConflicts  SchedulingConflict[]
+  materialConsumptions MaterialConsumption[]
+  createdAt            DateTime              @default(now())
+  deletedAt            DateTime?
+  deletedBy            String?
+
+  @@index([status, dueDate])
+  @@index([machineId, shiftId, operatorId])
 }
 
 model OrderActivity {
-  id          String   @id @default(cuid()) @map("_id")
+  id          String    @id @default(cuid())
   orderId     String
   order       WorkOrder @relation(fields: [orderId], references: [id])
-  action      String   // STATUS_CHANGE | QC_RESULT | NOTE | ASSIGNED | ALERT
+  action      String // STATUS_CHANGE | QC_RESULT | NOTE | ASSIGNED | ALERT
   fromStatus  String?
   toStatus    String?
-  performedBy String?  // username
-  role        String?  // user role
-  machine     String?  // machine code/name
-  operator    String?  // operator name
+  performedBy String? // username
+  role        String? // user role
+  machine     String? // machine code/name
+  operator    String? // operator name
   notes       String?
-  timestamp   DateTime @default(now())
+  timestamp   DateTime  @default(now())
 }
 
 model InspectionRecord {
-  id           String   @id @default(cuid()) @map("_id")
+  id           String    @id @default(cuid())
   workOrderId  String
   workOrder    WorkOrder @relation(fields: [workOrderId], references: [id])
-  inspector    String   @default("Inspector_01")
-  result       String   // PASS | REWORK | FAIL
+  inspector    String    @default("Inspector_01")
+  result       String // PASS | REWORK | FAIL
   notes        String?
   defectType   String?
-  measurements String?  // JSON: { diameter, weight, torque }
-  visualChecks String?  // JSON: { surfaceFinish, colorMatch, labelAlignment }
-  createdAt    DateTime @default(now())
+  measurements String? // JSON: { diameter, weight, torque }
+  visualChecks String? // JSON: { surfaceFinish, colorMatch, labelAlignment }
+  createdAt    DateTime  @default(now())
 }
 
 // --------------------------------------------------------
@@ -121,79 +184,100 @@ model InspectionRecord {
 // --------------------------------------------------------
 
 model WorkflowStepDef {
-  id          String @id @default(cuid()) @map("_id")
-  name        String
-  sequence    Int
-  tasks       WorkflowTask[]
+  id       String         @id @default(cuid())
+  name     String
+  sequence Int
+  tasks    WorkflowTask[]
 }
 
 model WorkflowInstance {
-  id            String   @id @default(cuid()) @map("_id")
-  serialNumber  String?
-  status        String   @default("ACTIVE")
-  workOrderId   String
-  workOrder     WorkOrder @relation(fields: [workOrderId], references: [id])
-  definitionId  String?   // Link to the versioned definition
-  definition    WorkflowDefinition? @relation(fields: [definitionId], references: [id])
+  id           String              @id @default(cuid())
+  serialNumber String?
+  status       String              @default("ACTIVE")
+  workOrderId  String
+  workOrder    WorkOrder           @relation(fields: [workOrderId], references: [id])
+  definitionId String? // Link to the versioned definition
+  definition   WorkflowDefinition? @relation(fields: [definitionId], references: [id])
 
-  context       String    @default("{}") // JSON storage for process variables
+  context String @default("{}") // JSON storage for process variables
 
-  tasks         WorkflowTask[]
-  tokens        WorkflowToken[]
+  tasks  WorkflowTask[]
+  tokens WorkflowToken[]
 }
 
 model WorkflowTask {
-  id             String   @id @default(cuid()) @map("_id")
-  status         String   @default("PENDING")
-  version        Int      @default(0)
-  instanceId     String
-  instance       WorkflowInstance @relation(fields: [instanceId], references: [id])
-  stepDefId      String
-  stepDef        WorkflowStepDef @relation(fields: [stepDefId], references: [id])
-  machineId      String?
-  machine        Machine? @relation(fields: [machineId], references: [id])
-  operatorId     String?
-  operator       User?    @relation(fields: [operatorId], references: [id])
-  startTime      DateTime?
-  endTime        DateTime?
-  reworkCount    Int      @default(0)
-  parentTaskId   String?  // For rework loops
-  parentTask     WorkflowTask? @relation("TaskHierarchy", fields: [parentTaskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  childTasks     WorkflowTask[] @relation("TaskHierarchy")
-  qualityChecks  QualityCheck[]
-  approvals      TaskApproval[]
-  qualityGate    QualityGate?
+  id                  String               @id @default(cuid())
+  status              String               @default("PENDING")
+  version             Int                  @default(0)
+  instanceId          String
+  instance            WorkflowInstance     @relation(fields: [instanceId], references: [id])
+  stepDefId           String
+  stepDef             WorkflowStepDef      @relation(fields: [stepDefId], references: [id])
+  machineId           String?
+  machine             Machine?             @relation(fields: [machineId], references: [id])
+  operatorId          String?
+  operator            User?                @relation(fields: [operatorId], references: [id])
+  startTime           DateTime?
+  endTime             DateTime?
+  reworkCount         Int                  @default(0)
+  parentTaskId        String? // For rework loops
+  parentTask          WorkflowTask?        @relation("TaskHierarchy", fields: [parentTaskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  childTasks          WorkflowTask[]       @relation("TaskHierarchy")
+  qualityChecks       QualityCheck[]
+  approvals           TaskApproval[]
+  qualityGate         QualityGate?
   traceabilityRecords TraceabilityRecord[]
-  materialUsages MaterialUsage[]
-}
+  materialUsages      MaterialUsage[]
 
+  // MEDIUM fix: this is the central execution-engine table (every task
+  // lookup/list filters by one of these) and had no indexes at all.
+  @@index([instanceId])
+  @@index([stepDefId])
+  @@index([machineId])
+  @@index([operatorId])
+}
 
 // --------------------------------------------------------
 // 4. QUALITY & TRACEABILITY
 // --------------------------------------------------------
 
 model QualityCheck {
-  id          String   @id @default(cuid()) @map("_id")
-  parameter   String
-  expected    String
-  actual      String
-  result      String
-  taskId      String
-  task        WorkflowTask @relation(fields: [taskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id        String       @id @default(cuid())
+  parameter String
+  expected  String
+  actual    String
+  result    String
+  taskId    String
+  task      WorkflowTask @relation(fields: [taskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model SystemEvent {
-  id        String   @id @default(cuid()) @map("_id")
+  id        String   @id @default(cuid())
   timestamp DateTime @default(now())
   eventType String
   details   String
   userId    String?
   user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([eventType, timestamp])
+}
+
+model ErrorLog {
+  id        String   @id @default(cuid())
+  timestamp DateTime @default(now())
+  service   String
+  severity  String
+  message   String
+  stack     String?
+
+  @@index([timestamp])
+  @@index([service])
+  @@index([severity])
 }
 
 model AuditDiff {
-  id              String   @id @default(cuid()) @map("_id")
-  entityType      String   // 'WorkOrder', 'WorkflowTask', 'QualityCheck'
+  id              String   @id @default(cuid())
+  entityType      String // 'WorkOrder', 'WorkflowTask', 'QualityCheck'
   entityId        String
   fieldName       String
   oldValue        String?
@@ -213,7 +297,7 @@ model AuditDiff {
 
 // Persisted workflow definitions (BPMN/JSON payloads)
 model WorkflowDefinition {
-  id        String   @id @default(cuid()) @map("_id")
+  id        String   @id @default(cuid())
   name      String
   version   Int      @default(1)
   // payload stored as JSON string (Node Graph)
@@ -225,12 +309,12 @@ model WorkflowDefinition {
 
 // Token-based execution tracker
 model WorkflowToken {
-  id          String   @id @default(cuid()) @map("_id")
-  instanceId  String
-  instance    WorkflowInstance @relation(fields: [instanceId], references: [id])
-  nodeId      String   // ID in the JSON Model (e.g., "StartEvent_1")
-  status      String   @default("ACTIVE") // ACTIVE, CONSUMED, WAITING
-  createdAt   DateTime @default(now())
+  id         String           @id @default(cuid())
+  instanceId String
+  instance   WorkflowInstance @relation(fields: [instanceId], references: [id])
+  nodeId     String // ID in the JSON Model (e.g., "StartEvent_1")
+  status     String           @default("ACTIVE") // ACTIVE, CONSUMED, WAITING
+  createdAt  DateTime         @default(now())
 }
 
 // --------------------------------------------------------
@@ -238,109 +322,109 @@ model WorkflowToken {
 // --------------------------------------------------------
 
 model QualityRule {
-  id          String @id @default(cuid()) @map("_id")
-  name        String
-  description String?
+  id            String            @id @default(cuid())
+  name          String
+  description   String?
   // Logic stored as JSON: { field: "pH", operator: ">", value: 7.0 }
-  logic       String
+  logic         String
   qualityChecks QualityGateRule[]
 }
 
 // Quality Gate with threshold rules and approvals
 model QualityGate {
-  id          String @id @default(cuid()) @map("_id")
+  id          String            @id @default(cuid())
   name        String
   description String?
-  taskId      String @unique
-  task        WorkflowTask @relation(fields: [taskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  status      String @default("PENDING") // PENDING, PASSED, FAILED, REJECTED
+  taskId      String            @unique
+  task        WorkflowTask      @relation(fields: [taskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  status      String            @default("PENDING") // PENDING, PASSED, FAILED, REJECTED
   rules       QualityGateRule[]
   approvals   QualityApproval[]
-  createdAt   DateTime @default(now())
+  createdAt   DateTime          @default(now())
 }
 
 model QualityGateRule {
-  id           String @id @default(cuid()) @map("_id")
+  id           String      @id @default(cuid())
   gateId       String
   gate         QualityGate @relation(fields: [gateId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   ruleId       String
   rule         QualityRule @relation(fields: [ruleId], references: [id])
   thresholdMin Float?
   thresholdMax Float?
-  mandatory    Boolean @default(true)
+  mandatory    Boolean     @default(true)
 }
 
 model QualityApproval {
-  id          String @id @default(cuid()) @map("_id")
-  gateId      String
-  gate        QualityGate @relation(fields: [gateId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  userId      String
-  user        User @relation(fields: [userId], references: [id])
-  status      String // APPROVED, REJECTED
-  comments    String?
-  approvedAt  DateTime @default(now())
+  id         String      @id @default(cuid())
+  gateId     String
+  gate       QualityGate @relation(fields: [gateId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  userId     String
+  user       User        @relation(fields: [userId], references: [id])
+  status     String // APPROVED, REJECTED
+  comments   String?
+  approvedAt DateTime    @default(now())
 }
 
 // Task approvals for quality gates
 model TaskApproval {
-  id          String @id @default(cuid()) @map("_id")
-  taskId      String
-  task        WorkflowTask @relation(fields: [taskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  userId      String
-  user        User @relation("TaskApprovals", fields: [userId], references: [id])
-  status      String // APPROVED, REJECTED
-  comments    String?
-  approvedAt  DateTime @default(now())
+  id         String       @id @default(cuid())
+  taskId     String
+  task       WorkflowTask @relation(fields: [taskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  userId     String
+  user       User         @relation("TaskApprovals", fields: [userId], references: [id])
+  status     String // APPROVED, REJECTED
+  comments   String?
+  approvedAt DateTime     @default(now())
 }
 
 // Automated triggers
 model AutomatedTrigger {
-  id          String @id @default(cuid()) @map("_id")
-  name        String
-  type        String // TIME_BASED, EVENT_BASED, STATUS_CHANGE
-  config      String // JSON configuration
-  isActive    Boolean @default(true)
-  actions     TriggerAction[]
-  createdAt   DateTime @default(now())
+  id        String          @id @default(cuid())
+  name      String
+  type      String // TIME_BASED, EVENT_BASED, STATUS_CHANGE
+  config    String // JSON configuration
+  isActive  Boolean         @default(true)
+  actions   TriggerAction[]
+  createdAt DateTime        @default(now())
 }
 
 model TriggerAction {
-  id            String @id @default(cuid()) @map("_id")
-  triggerId     String
-  trigger       AutomatedTrigger @relation(fields: [triggerId], references: [id])
-  actionType    String // CREATE_EVENT, UPDATE_STATUS, SEND_NOTIFICATION
-  actionConfig  String // JSON action configuration
-  executedAt    DateTime?
-  status        String @default("PENDING") // PENDING, EXECUTED, FAILED
+  id           String           @id @default(cuid())
+  triggerId    String
+  trigger      AutomatedTrigger @relation(fields: [triggerId], references: [id])
+  actionType   String // CREATE_EVENT, UPDATE_STATUS, SEND_NOTIFICATION
+  actionConfig String // JSON action configuration
+  executedAt   DateTime?
+  status       String           @default("PENDING") // PENDING, EXECUTED, FAILED
 }
 
 // CAD Integration
 model CADDocument {
-  id            String @id @default(cuid()) @map("_id")
-  productId     String
-  product       Product @relation(fields: [productId], references: [id])
-  fileName      String
-  fileType      String // PDF, DWG, STEP, etc.
-  version       Int @default(1)
-  revision      String @default("A")
-  filePath      String
-  fileSize      Int
-  uploadedBy    String
-  uploadedAt    DateTime @default(now())
-  isActive      Boolean @default(true)
-  checksum      String // MD5 for integrity
-  approvals     CADDocumentApproval[]
+  id         String                @id @default(cuid())
+  productId  String
+  product    Product               @relation(fields: [productId], references: [id])
+  fileName   String
+  fileType   String // PDF, DWG, STEP, etc.
+  version    Int                   @default(1)
+  revision   String                @default("A")
+  filePath   String
+  fileSize   Int
+  uploadedBy String
+  uploadedAt DateTime              @default(now())
+  isActive   Boolean               @default(true)
+  checksum   String // MD5 for integrity
+  approvals  CADDocumentApproval[]
 }
 
 model CADDocumentApproval {
-  id          String @id @default(cuid()) @map("_id")
-  documentId  String
-  document    CADDocument @relation(fields: [documentId], references: [id])
-  userId      String
-  user        User @relation(fields: [userId], references: [id])
-  status      String // APPROVED, REJECTED
-  comments    String?
-  approvedAt  DateTime @default(now())
+  id         String      @id @default(cuid())
+  documentId String
+  document   CADDocument @relation(fields: [documentId], references: [id])
+  userId     String
+  user       User        @relation(fields: [userId], references: [id])
+  status     String // APPROVED, REJECTED
+  comments   String?
+  approvedAt DateTime    @default(now())
 }
 
 // --------------------------------------------------------
@@ -348,41 +432,46 @@ model CADDocumentApproval {
 // --------------------------------------------------------
 
 model MachineSignal {
-  id          String   @id @default(cuid()) @map("_id")
-  machineId   String
-  machine     Machine  @relation(fields: [machineId], references: [id])
-  signalName  String
-  signalType  String   // ANALOG, DIGITAL, STRING
-  unit        String?  // RPM, °C, bar
-  protocol    String   // OPCUA, MODBUS, MQTT, REST
-  address     String   // OPC-UA NodeId or Modbus register or MQTT topic
-  minValue    Float?
-  maxValue    Float?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  telemetry   MachineTelemetry[]
-  mappings    SignalMapping[]
+  id         String             @id @default(cuid())
+  machineId  String
+  machine    Machine            @relation(fields: [machineId], references: [id])
+  signalName String
+  signalType String // ANALOG, DIGITAL, STRING
+  unit       String? // RPM, °C, bar
+  protocol   String // OPCUA, MODBUS, MQTT, REST
+  address    String // OPC-UA NodeId or Modbus register or MQTT topic
+  minValue   Float?
+  maxValue   Float?
+  isActive   Boolean            @default(true)
+  createdAt  DateTime           @default(now())
+  telemetry  MachineTelemetry[]
+  mappings   SignalMapping[]
 }
 
 model MachineTelemetry {
-  id              String    @id @default(cuid()) @map("_id")
+  id              String        @id @default(cuid())
   signalId        String
   signal          MachineSignal @relation(fields: [signalId], references: [id])
-  value           String    // stored as string, parsed by consumer
-  quality         String    @default("GOOD") // GOOD, BAD, UNCERTAIN
-  timestamp       DateTime  @default(now())
+  value           String // stored as string, parsed by consumer
+  quality         String        @default("GOOD") // GOOD, BAD, UNCERTAIN
+  timestamp       DateTime      @default(now())
   sourceTimestamp DateTime? // timestamp from device itself
-  machineId       String    // denormalized for fast queries
-  machine         Machine   @relation(fields: [machineId], references: [id])
+  machineId       String // denormalized for fast queries
+  machine         Machine       @relation(fields: [machineId], references: [id])
+
+  // MEDIUM fix: this hot-path time-series table had zero indexes despite
+  // its own comment claiming it's "denormalized for fast queries".
+  @@index([machineId, timestamp])
+  @@index([signalId, timestamp])
 }
 
 model MachineEvent {
-  id             String    @id @default(cuid()) @map("_id")
+  id             String    @id @default(cuid())
   machineId      String
   machine        Machine   @relation(fields: [machineId], references: [id])
-  eventType      String    // ALARM, STATUS_CHANGE, FAULT, MAINTENANCE_REQUEST
+  eventType      String // ALARM, STATUS_CHANGE, FAULT, MAINTENANCE_REQUEST
   severity       String    @default("INFO") // INFO, WARNING, CRITICAL, FATAL
-  code           String?   // machine-specific event code
+  code           String? // machine-specific event code
   description    String
   acknowledged   Boolean   @default(false)
   acknowledgedBy String?
@@ -392,12 +481,58 @@ model MachineEvent {
 }
 
 model SignalMapping {
-  id            String        @id @default(cuid()) @map("_id")
+  id            String        @id @default(cuid())
   signalId      String
   signal        MachineSignal @relation(fields: [signalId], references: [id])
-  mesField      String        // which MES field this signal updates (e.g. "machine.status", "task.quantity")
-  transformRule String?       // JSON: { "type": "threshold", "above": 0, "setValue": "RUNNING" }
+  mesField      String // which MES field this signal updates (e.g. "machine.status", "task.quantity")
+  transformRule String? // JSON: { "type": "threshold", "above": 0, "setValue": "RUNNING" }
   isActive      Boolean       @default(true)
+}
+
+// Live machine runtime state — one row per machine, upserted on every heartbeat
+model MachineRuntime {
+  id               String    @id @default(cuid())
+  machineId        String    @unique
+  machine          Machine   @relation(fields: [machineId], references: [id])
+  status           String    @default("IDLE") // RUNNING | IDLE | DOWN | MAINTENANCE
+  runtimeSeconds   Float     @default(0) // cumulative seconds in RUNNING state
+  idleSeconds      Float     @default(0) // cumulative seconds in IDLE state
+  downtimeSeconds  Float     @default(0) // cumulative seconds in DOWN/MAINTENANCE
+  goodCount        Int       @default(0) // accepted parts produced
+  rejectCount      Int       @default(0) // rejected/scrap parts
+  cycleCount       Int       @default(0) // total cycle completions
+  currentCycleTime Float? // most recent cycle duration (seconds)
+  idealCycleTime   Float? // configured ideal cycle time (seconds)
+  temperature      Float?
+  alarmCode        String?
+  oee              Float     @default(0) // last calculated OEE 0-100
+  lastHeartbeat    DateTime? // timestamp of last heartbeat received
+  updatedAt        DateTime  @updatedAt
+
+  // MEDIUM fix: machineId is already @unique above, which Postgres already
+  // indexes — this explicit index was redundant (extra write overhead, no
+  // query benefit).
+}
+
+// Periodic OEE snapshots — one record per machine per calculation period
+model OEESnapshot {
+  id              String   @id @default(cuid())
+  machineId       String
+  machine         Machine  @relation(fields: [machineId], references: [id])
+  availability    Float    @default(0) // 0-100
+  performance     Float    @default(0) // 0-100
+  quality         Float    @default(0) // 0-100
+  oee             Float    @default(0) // 0-100
+  goodCount       Int      @default(0)
+  rejectCount     Int      @default(0)
+  runtimeSeconds  Float    @default(0)
+  downtimeSeconds Float    @default(0)
+  plannedSeconds  Float    @default(0) // planned production time for this period
+  periodStart     DateTime
+  periodEnd       DateTime
+  createdAt       DateTime @default(now())
+
+  @@index([machineId, periodStart])
 }
 
 // --------------------------------------------------------
@@ -405,7 +540,7 @@ model SignalMapping {
 // --------------------------------------------------------
 
 model Enterprise {
-  id        String   @id @default(cuid()) @map("_id")
+  id        String   @id @default(cuid())
   code      String   @unique
   name      String
   country   String?
@@ -415,48 +550,50 @@ model Enterprise {
 }
 
 model Plant {
-  id               String          @id @default(cuid()) @map("_id")
-  code             String          @unique
-  name             String
-  location         String?
-  enterpriseId     String
-  enterprise       Enterprise      @relation(fields: [enterpriseId], references: [id])
-  productionAreas  ProductionArea[]
-  shifts           Shift[]
-  createdAt        DateTime        @default(now())
+  id              String           @id @default(cuid())
+  code            String           @unique
+  name            String
+  location        String?
+  enterpriseId    String
+  enterprise      Enterprise       @relation(fields: [enterpriseId], references: [id])
+  productionAreas ProductionArea[]
+  shifts          Shift[]
+  edgeDevices     EdgeDevice[]
+  createdAt       DateTime         @default(now())
 }
 
 model ProductionArea {
-  id               String          @id @default(cuid()) @map("_id")
-  code             String
-  name             String
-  plantId          String
-  plant            Plant           @relation(fields: [plantId], references: [id])
-  productionLines  ProductionLine[]
+  id              String           @id @default(cuid())
+  code            String
+  name            String
+  plantId         String
+  plant           Plant            @relation(fields: [plantId], references: [id])
+  productionLines ProductionLine[]
 }
 
 model ProductionLine {
-  id              String         @id @default(cuid()) @map("_id")
+  id              String          @id @default(cuid())
   code            String
   name            String
   areaId          String
-  area            ProductionArea @relation(fields: [areaId], references: [id])
-  targetCycleTime Float?         // seconds per unit
+  area            ProductionArea  @relation(fields: [areaId], references: [id])
+  targetCycleTime Float? // seconds per unit
   machines        Machine[]
   schedules       ShiftSchedule[]
+  edgeDevices     EdgeDevice[]
 }
 
 model MachineComponent {
-  id               String    @id @default(cuid()) @map("_id")
-  machineId        String
-  machine          Machine   @relation(fields: [machineId], references: [id])
-  componentName    String
-  partNumber       String?
-  installDate      DateTime?
-  lastMaintenance  DateTime?
-  nextMaintenance  DateTime?
-  lifespan         Int?      // hours
-  hoursRun         Float     @default(0)
+  id              String    @id @default(cuid())
+  machineId       String
+  machine         Machine   @relation(fields: [machineId], references: [id])
+  componentName   String
+  partNumber      String?
+  installDate     DateTime?
+  lastMaintenance DateTime?
+  nextMaintenance DateTime?
+  lifespan        Int? // hours
+  hoursRun        Float     @default(0)
 }
 
 // --------------------------------------------------------
@@ -464,34 +601,34 @@ model MachineComponent {
 // --------------------------------------------------------
 
 model EventRule {
-  id              String        @id @default(cuid()) @map("_id")
+  id              String         @id @default(cuid())
   name            String
   description     String?
-  isActive        Boolean       @default(true)
-  conditionType   String        // TELEMETRY_THRESHOLD, DOWNTIME_DURATION, QUALITY_FAIL, MACHINE_STATUS
-  conditionConfig String        // JSON: { "signalId": "...", "operator": ">", "value": 80 }
-  cooldownMinutes Int           @default(5) // prevent repeated triggers
+  isActive        Boolean        @default(true)
+  conditionType   String // TELEMETRY_THRESHOLD, DOWNTIME_DURATION, QUALITY_FAIL, MACHINE_STATUS
+  conditionConfig String // JSON: { "signalId": "...", "operator": ">", "value": 80 }
+  cooldownMinutes Int            @default(5) // prevent repeated triggers
   triggers        EventTrigger[]
   actions         EventAction[]
-  createdAt       DateTime      @default(now())
+  createdAt       DateTime       @default(now())
 }
 
 model EventAction {
-  id            String    @id @default(cuid()) @map("_id")
+  id            String    @id @default(cuid())
   ruleId        String
   rule          EventRule @relation(fields: [ruleId], references: [id])
-  actionType    String    // SEND_NOTIFICATION, CREATE_DOWNTIME, PAUSE_WORKFLOW, CREATE_MAINTENANCE_REQUEST, LOG_EVENT
-  actionConfig  String    // JSON config
+  actionType    String // SEND_NOTIFICATION, CREATE_DOWNTIME, PAUSE_WORKFLOW, CREATE_MAINTENANCE_REQUEST, LOG_EVENT
+  actionConfig  String // JSON config
   sequence      Int       @default(1) // execution order
   executedCount Int       @default(0)
 }
 
 model EventTrigger {
-  id              String    @id @default(cuid()) @map("_id")
+  id              String    @id @default(cuid())
   ruleId          String
   rule            EventRule @relation(fields: [ruleId], references: [id])
   triggeredAt     DateTime  @default(now())
-  triggerData     String    // JSON snapshot of the condition data
+  triggerData     String // JSON snapshot of the condition data
   actionsExecuted Int       @default(0)
   status          String    @default("PROCESSING") // PROCESSING, COMPLETED, FAILED
 }
@@ -501,31 +638,31 @@ model EventTrigger {
 // --------------------------------------------------------
 
 model Lot {
-  id                       String    @id @default(cuid()) @map("_id")
-  lotNumber                String    @unique
+  id                       String          @id @default(cuid())
+  lotNumber                String          @unique
   productId                String
-  product                  Product   @relation(fields: [productId], references: [id])
+  product                  Product         @relation(fields: [productId], references: [id])
   supplierId               String?
-  receivedAt               DateTime  @default(now())
+  receivedAt               DateTime        @default(now())
   expiryDate               DateTime?
   quantity                 Float
-  unit                     String    @default("EA")
-  status                   String    @default("AVAILABLE") // AVAILABLE, IN_USE, CONSUMED, QUARANTINE
+  unit                     String          @default("EA")
+  status                   String          @default("AVAILABLE") // AVAILABLE, IN_USE, CONSUMED, QUARANTINE
   certificateOfConformance String?
   batches                  Batch[]
   materialUsages           MaterialUsage[]
 }
 
 model Batch {
-  id                  String              @id @default(cuid()) @map("_id")
-  batchNumber         String              @unique
+  id                  String               @id @default(cuid())
+  batchNumber         String               @unique
   workOrderId         String
-  workOrder           WorkOrder           @relation(fields: [workOrderId], references: [id])
+  workOrder           WorkOrder            @relation(fields: [workOrderId], references: [id])
   lotId               String?
-  lot                 Lot?                @relation(fields: [lotId], references: [id])
+  lot                 Lot?                 @relation(fields: [lotId], references: [id])
   quantity            Int
-  status              String              @default("IN_PROGRESS") // IN_PROGRESS, COMPLETED, SCRAPPED, ON_HOLD
-  startedAt           DateTime            @default(now())
+  status              String               @default("IN_PROGRESS") // IN_PROGRESS, COMPLETED, SCRAPPED, ON_HOLD
+  startedAt           DateTime             @default(now())
   completedAt         DateTime?
   serialNumbers       SerialNumber[]
   traceabilityRecords TraceabilityRecord[]
@@ -533,20 +670,20 @@ model Batch {
 }
 
 model SerialNumber {
-  id                  String              @id @default(cuid()) @map("_id")
-  serial              String              @unique
+  id                  String               @id @default(cuid())
+  serial              String               @unique
   batchId             String
-  batch               Batch               @relation(fields: [batchId], references: [id])
+  batch               Batch                @relation(fields: [batchId], references: [id])
   productId           String
-  product             Product             @relation(fields: [productId], references: [id])
-  status              String              @default("ACTIVE") // ACTIVE, SCRAPPED, SHIPPED, RETURNED
-  manufacturedAt      DateTime            @default(now())
+  product             Product              @relation(fields: [productId], references: [id])
+  status              String               @default("ACTIVE") // ACTIVE, SCRAPPED, SHIPPED, RETURNED
+  manufacturedAt      DateTime             @default(now())
   shippedAt           DateTime?
   traceabilityRecords TraceabilityRecord[]
 }
 
 model MaterialUsage {
-  id         String        @id @default(cuid()) @map("_id")
+  id         String        @id @default(cuid())
   batchId    String
   batch      Batch         @relation(fields: [batchId], references: [id])
   lotId      String
@@ -560,18 +697,25 @@ model MaterialUsage {
 }
 
 model TraceabilityRecord {
-  id             String        @id @default(cuid()) @map("_id")
+  id             String        @id @default(cuid())
   batchId        String?
   batch          Batch?        @relation(fields: [batchId], references: [id])
   serialNumberId String?
   serialNumber   SerialNumber? @relation(fields: [serialNumberId], references: [id])
-  eventType      String        // MATERIAL_RECEIVED, PRODUCTION_START, OPERATION_COMPLETE, QUALITY_CHECK, SHIPMENT
+  eventType      String // MATERIAL_RECEIVED, PRODUCTION_START, OPERATION_COMPLETE, QUALITY_CHECK, SHIPMENT
   machineId      String?
   operatorId     String?
   taskId         String?
   task           WorkflowTask? @relation(fields: [taskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  data           String        // JSON: measurement values, quantities, etc.
+  data           String // JSON: measurement values, quantities, etc.
   timestamp      DateTime      @default(now())
+
+  // MEDIUM fix: the core genealogy-query table ("all events for this
+  // batch/serial/machine") had no indexes on any of its lookup columns.
+  @@index([batchId])
+  @@index([serialNumberId])
+  @@index([taskId])
+  @@index([machineId])
 }
 
 // --------------------------------------------------------
@@ -579,15 +723,15 @@ model TraceabilityRecord {
 // --------------------------------------------------------
 
 model DowntimeCategory {
-  id      String          @id @default(cuid()) @map("_id")
-  code    String          @unique
+  id      String           @id @default(cuid())
+  code    String           @unique
   name    String
-  type    String          // PLANNED, UNPLANNED
+  type    String // PLANNED, UNPLANNED
   reasons DowntimeReason[]
 }
 
 model DowntimeReason {
-  id         String           @id @default(cuid()) @map("_id")
+  id         String           @id @default(cuid())
   code       String           @unique
   name       String
   categoryId String
@@ -596,21 +740,27 @@ model DowntimeReason {
 }
 
 model DowntimeEvent {
-  id               String          @id @default(cuid()) @map("_id")
+  id               String          @id @default(cuid())
   machineId        String
   machine          Machine         @relation(fields: [machineId], references: [id])
+  workOrderId      String?
+  workOrder        WorkOrder?      @relation(fields: [workOrderId], references: [id])
   reasonId         String?
   reason           DowntimeReason? @relation(fields: [reasonId], references: [id])
   startTime        DateTime        @default(now())
   endTime          DateTime?
   durationMinutes  Float?
-  reportedBy       String?         // operator userId
+  durationSeconds  Float?
+  reportedBy       String? // operator userId or 'system' for auto-created events
   rootCause        String?
   correctiveAction String?
   status           String          @default("OPEN") // OPEN, CLOSED, DISPUTED
   shiftId          String?
   shift            Shift?          @relation(fields: [shiftId], references: [id])
-  impactedOrders   String?         // JSON array of workOrderIds
+  impactedOrders   String? // JSON array of workOrderIds
+
+  @@index([machineId, status])
+  @@index([startTime])
 }
 
 // --------------------------------------------------------
@@ -618,44 +768,59 @@ model DowntimeEvent {
 // --------------------------------------------------------
 
 model Shift {
-  id            String          @id @default(cuid()) @map("_id")
-  plantId       String
-  plant         Plant           @relation(fields: [plantId], references: [id])
-  code          String
-  name          String          // Morning, Afternoon, Night
-  startTime     String          // "06:00"
-  endTime       String          // "14:00"
-  durationHours Float
-  schedules     ShiftSchedule[]
+  id             String          @id @default(cuid())
+  plantId        String
+  plant          Plant           @relation(fields: [plantId], references: [id])
+  code           String
+  name           String // Morning, Afternoon, Night
+  startTime      String // "06:00"
+  endTime        String // "14:00"
+  durationHours  Float
+  schedules      ShiftSchedule[]
   downtimeEvents DowntimeEvent[]
+  workOrders     WorkOrder[]
+}
+
+model ShiftTemplate {
+  id             String          @id @default(cuid())
+  name           String          @unique
+  startTime      String // "06:00"
+  endTime        String // "14:00"
+  targetQuantity Int?
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  schedules      ShiftSchedule[]
 }
 
 model ShiftSchedule {
-  id               String          @id @default(cuid()) @map("_id")
-  shiftId          String
-  shift            Shift           @relation(fields: [shiftId], references: [id])
+  id               String           @id @default(cuid())
+  shiftId          String?
+  shift            Shift?           @relation(fields: [shiftId], references: [id])
+  templateId       String?
+  template         ShiftTemplate?   @relation(fields: [templateId], references: [id])
   productionLineId String
-  productionLine   ProductionLine  @relation(fields: [productionLineId], references: [id])
+  productionLine   ProductionLine   @relation(fields: [productionLineId], references: [id])
   date             DateTime
   targetQuantity   Int
-  status           String          @default("SCHEDULED") // SCHEDULED, ACTIVE, COMPLETED
+  status           String           @default("SCHEDULED") // SCHEDULED, ACTIVE, COMPLETED
   operatorShifts   OperatorShift[]
   shiftProduction  ShiftProduction?
 }
 
 model OperatorShift {
-  id         String        @id @default(cuid()) @map("_id")
+  id         String        @id @default(cuid())
   userId     String
   user       User          @relation(fields: [userId], references: [id])
   scheduleId String
   schedule   ShiftSchedule @relation(fields: [scheduleId], references: [id])
-  role       String        // PRIMARY_OPERATOR, BACKUP, SUPERVISOR
+  role       String // PRIMARY_OPERATOR, BACKUP, SUPERVISOR
   clockIn    DateTime?
   clockOut   DateTime?
 }
 
 model ShiftProduction {
-  id                String        @id @default(cuid()) @map("_id")
+  id                String        @id @default(cuid())
   scheduleId        String        @unique
   schedule          ShiftSchedule @relation(fields: [scheduleId], references: [id])
   actualQuantity    Int           @default(0)
@@ -675,15 +840,15 @@ model ShiftProduction {
 // --------------------------------------------------------
 
 model SkillCategory {
-  id          String         @id @default(cuid()) @map("_id")
-  code        String         @unique
-  name        String         // CNC_OPERATION, WELDING, QUALITY_INSPECTION, FORKLIFT
+  id          String          @id @default(cuid())
+  code        String          @unique
+  name        String // CNC_OPERATION, WELDING, QUALITY_INSPECTION, FORKLIFT
   description String?
   skills      OperatorSkill[]
 }
 
 model OperatorSkill {
-  id             String          @id @default(cuid()) @map("_id")
+  id             String          @id @default(cuid())
   userId         String
   user           User            @relation(fields: [userId], references: [id])
   categoryId     String
@@ -696,7 +861,7 @@ model OperatorSkill {
 }
 
 model Certification {
-  id                  String        @id @default(cuid()) @map("_id")
+  id                  String        @id @default(cuid())
   skillId             String
   skill               OperatorSkill @relation(fields: [skillId], references: [id])
   userId              String
@@ -710,11 +875,11 @@ model Certification {
 }
 
 model TrainingRecord {
-  id            String   @id @default(cuid()) @map("_id")
+  id            String   @id @default(cuid())
   userId        String
   user          User     @relation(fields: [userId], references: [id])
   trainingName  String
-  trainingType  String   // ON_THE_JOB, CLASSROOM, E_LEARNING, SIMULATOR
+  trainingType  String // ON_THE_JOB, CLASSROOM, E_LEARNING, SIMULATOR
   completedAt   DateTime
   score         Float?
   passThreshold Float?
@@ -728,47 +893,47 @@ model TrainingRecord {
 // --------------------------------------------------------
 
 model Document {
-  id               String              @id @default(cuid()) @map("_id")
-  documentNumber   String              @unique
+  id               String               @id @default(cuid())
+  documentNumber   String               @unique
   title            String
-  type             String              // SOP, WORK_INSTRUCTION, DRAWING, SPECIFICATION, CERTIFICATE
+  type             String // SOP, WORK_INSTRUCTION, DRAWING, SPECIFICATION, CERTIFICATE
   category         String?
   currentVersionId String?
-  status           String              @default("DRAFT") // DRAFT, REVIEW, APPROVED, OBSOLETE
+  status           String               @default("DRAFT") // DRAFT, REVIEW, APPROVED, OBSOLETE
   versions         DocumentVersion[]
   assignments      DocumentAssignment[]
-  createdAt        DateTime            @default(now())
+  createdAt        DateTime             @default(now())
   createdBy        String
 }
 
 model DocumentVersion {
-  id                String   @id @default(cuid()) @map("_id")
+  id                String    @id @default(cuid())
   documentId        String
-  document          Document @relation(fields: [documentId], references: [id])
+  document          Document  @relation(fields: [documentId], references: [id])
   versionNumber     Int
-  revision          String   // A, B, C or 1.0, 1.1, 2.0
+  revision          String // A, B, C or 1.0, 1.1, 2.0
   filePath          String
-  fileType          String   // PDF, DOCX, DWG
+  fileType          String // PDF, DOCX, DWG
   fileSize          Int
   checksum          String
   changeDescription String?
   approvedBy        String?
   approvedAt        DateTime?
-  createdAt         DateTime @default(now())
+  createdAt         DateTime  @default(now())
   createdBy         String
 }
 
 model DocumentAssignment {
-  id              String   @id @default(cuid()) @map("_id")
-  documentId      String
-  document        Document @relation(fields: [documentId], references: [id])
-  assignmentType  String   // TASK, MACHINE, PRODUCT, WORKFLOW, WORK_CENTER
-  referenceId     String   // ID of the assigned entity
-  mandatory       Boolean  @default(false)
-  readAcknowledged Boolean @default(false)
-  acknowledgedBy  String?
-  acknowledgedAt  DateTime?
-  assignedAt      DateTime @default(now())
+  id               String    @id @default(cuid())
+  documentId       String
+  document         Document  @relation(fields: [documentId], references: [id])
+  assignmentType   String // TASK, MACHINE, PRODUCT, WORKFLOW, WORK_CENTER
+  referenceId      String // ID of the assigned entity
+  mandatory        Boolean   @default(false)
+  readAcknowledged Boolean   @default(false)
+  acknowledgedBy   String?
+  acknowledgedAt   DateTime?
+  assignedAt       DateTime  @default(now())
 }
 
 // --------------------------------------------------------
@@ -776,40 +941,40 @@ model DocumentAssignment {
 // --------------------------------------------------------
 
 model ScheduledJob {
-  id             String                  @id @default(cuid()) @map("_id")
-  workOrderId    String                  @unique
-  workOrder      WorkOrder               @relation(fields: [workOrderId], references: [id])
+  id             String                 @id @default(cuid())
+  workOrderId    String                 @unique
+  workOrder      WorkOrder              @relation(fields: [workOrderId], references: [id])
   machineId      String?
-  machine        Machine?                @relation(fields: [machineId], references: [id])
+  machine        Machine?               @relation(fields: [machineId], references: [id])
   operatorId     String?
   scheduledStart DateTime
   scheduledEnd   DateTime
   actualStart    DateTime?
   actualEnd      DateTime?
-  duration       Float                   // minutes
-  priority       Int                     @default(1)
-  status         String                  @default("SCHEDULED") // SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED, RESCHEDULED
+  duration       Float // minutes
+  priority       Int                    @default(1)
+  status         String                 @default("SCHEDULED") // SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED, RESCHEDULED
   constraints    SchedulingConstraint[]
-  createdAt      DateTime                @default(now())
+  createdAt      DateTime               @default(now())
   optimizedAt    DateTime?
 }
 
 model SchedulingConstraint {
-  id             String       @id @default(cuid()) @map("_id")
+  id             String       @id @default(cuid())
   jobId          String
   job            ScheduledJob @relation(fields: [jobId], references: [id])
-  constraintType String       // MACHINE_CAPACITY, OPERATOR_AVAILABILITY, MATERIAL_AVAILABILITY, MAINTENANCE_WINDOW, DEPENDENCY
+  constraintType String // MACHINE_CAPACITY, OPERATOR_AVAILABILITY, MATERIAL_AVAILABILITY, MAINTENANCE_WINDOW, DEPENDENCY
   description    String
-  data           String       // JSON constraint data
+  data           String // JSON constraint data
   isSatisfied    Boolean      @default(false)
 }
 
 model MaintenanceWindow {
-  id             String    @id @default(cuid()) @map("_id")
+  id             String    @id @default(cuid())
   machineId      String
   machine        Machine   @relation(fields: [machineId], references: [id])
   title          String
-  type           String    // PREVENTIVE, CORRECTIVE, CALIBRATION
+  type           String // PREVENTIVE, CORRECTIVE, CALIBRATION
   scheduledStart DateTime
   scheduledEnd   DateTime
   actualStart    DateTime?
@@ -824,10 +989,10 @@ model MaintenanceWindow {
 // --------------------------------------------------------
 
 model NotificationChannel {
-  id            String             @id @default(cuid()) @map("_id")
+  id            String             @id @default(cuid())
   name          String
-  type          String             // EMAIL, SMS, WEBHOOK, ANDON, MOBILE_PUSH
-  config        String             // JSON: { "to": "...", "url": "...", "topic": "..." }
+  type          String // EMAIL, SMS, WEBHOOK, ANDON, MOBILE_PUSH
+  config        String // JSON: { "to": "...", "url": "...", "topic": "..." }
   isActive      Boolean            @default(true)
   createdAt     DateTime           @default(now())
   notifications Notification[]
@@ -835,27 +1000,27 @@ model NotificationChannel {
 }
 
 model NotificationRule {
-  id            String              @id @default(cuid()) @map("_id")
+  id            String              @id @default(cuid())
   name          String
-  eventType     String              // MACHINE_DOWN, QUALITY_FAIL, TASK_OVERDUE, SHIFT_START, ORDER_COMPLETE
+  eventType     String // MACHINE_DOWN, QUALITY_FAIL, TASK_OVERDUE, SHIFT_START, ORDER_COMPLETE
   channelId     String
   channel       NotificationChannel @relation(fields: [channelId], references: [id])
-  recipientRole String?             // OPERATOR, SUPERVISOR, ADMIN (null = all)
-  template      String              // message template with {{variables}}
+  recipientRole String? // OPERATOR, SUPERVISOR, ADMIN (null = all)
+  template      String // message template with {{variables}}
   isActive      Boolean             @default(true)
   createdAt     DateTime            @default(now())
 }
 
 model Notification {
-  id            String              @id @default(cuid()) @map("_id")
+  id            String              @id @default(cuid())
   channelId     String
   channel       NotificationChannel @relation(fields: [channelId], references: [id])
   recipientId   String?
   subject       String
   body          String
   status        String              @default("PENDING") // PENDING, SENT, FAILED, READ
-  priority      String              @default("NORMAL")  // LOW, NORMAL, HIGH, CRITICAL
-  referenceType String?             // MACHINE, ORDER, TASK, QUALITY_GATE
+  priority      String              @default("NORMAL") // LOW, NORMAL, HIGH, CRITICAL
+  referenceType String? // MACHINE, ORDER, TASK, QUALITY_GATE
   referenceId   String?
   createdAt     DateTime            @default(now())
   sentAt        DateTime?
@@ -868,56 +1033,58 @@ model Notification {
 // --------------------------------------------------------
 
 model AndonBoard {
-  id           String         @id @default(cuid()) @map("_id")
-  code         String         @unique
-  name         String
-  location     String?
-  plantId      String?
-  type         String         @default("PHYSICAL") // PHYSICAL, DIGITAL, TV_DISPLAY
-  isActive     Boolean        @default(true)
-  ipAddress    String?
-  displays     AndonDisplay[]
-  events       AndonEvent[]
-  createdAt    DateTime       @default(now())
+  id        String         @id @default(cuid())
+  code      String         @unique
+  name      String
+  location  String?
+  plantId   String?
+  type      String         @default("PHYSICAL") // PHYSICAL, DIGITAL, TV_DISPLAY
+  isActive  Boolean        @default(true)
+  ipAddress String?
+  displays  AndonDisplay[]
+  events    AndonEvent[]
+  createdAt DateTime       @default(now())
 }
 
 model AndonDisplay {
-  id          String     @id @default(cuid()) @map("_id")
-  boardId     String
-  board       AndonBoard @relation(fields: [boardId], references: [id])
-  zone        String     // e.g. "LINE_1", "CELL_A"
-  currentColor String    @default("GREEN") // GREEN, YELLOW, RED, BLUE, WHITE, OFF
-  message     String?
-  updatedAt   DateTime   @default(now())
+  id           String     @id @default(cuid())
+  boardId      String
+  board        AndonBoard @relation(fields: [boardId], references: [id])
+  zone         String // e.g. "LINE_1", "CELL_A"
+  currentColor String     @default("GREEN") // GREEN, YELLOW, RED, BLUE, WHITE, OFF
+  message      String?
+  updatedAt    DateTime   @default(now())
 }
 
 model AndonEvent {
-  id          String     @id @default(cuid()) @map("_id")
-  boardId     String
-  board       AndonBoard @relation(fields: [boardId], references: [id])
-  machineId   String?
-  triggeredBy String?    // userId or "SYSTEM"
-  reason      String
-  severity    String     @default("WARNING") // INFO, WARNING, CRITICAL
-  color       String     // GREEN, YELLOW, RED
-  message     String
-  acknowledged Boolean   @default(false)
+  id             String     @id @default(cuid())
+  boardId        String
+  board          AndonBoard @relation(fields: [boardId], references: [id])
+  machineId      String?
+  triggeredBy    String? // userId or "SYSTEM"
+  reason         String
+  severity       String     @default("WARNING") // INFO, WARNING, CRITICAL
+  color          String // GREEN, YELLOW, RED
+  message        String
+  acknowledged   Boolean    @default(false)
   acknowledgedBy String?
   acknowledgedAt DateTime?
-  resolvedAt  DateTime?
-  timestamp   DateTime   @default(now())
+  resolvedAt     DateTime?
+  timestamp      DateTime   @default(now())
+
+  @@index([resolvedAt, timestamp])
 }
 
 model AndonMessage {
-  id          String   @id @default(cuid()) @map("_id")
-  boardId     String?
-  zoneCode    String?
-  messageType String   // PRODUCTION_COUNT, SHIFT_TARGET, QUALITY_ALERT, DOWNTIME, CUSTOM
-  content     String
-  priority    Int      @default(1)
-  displaySeconds Int   @default(10)
-  expiresAt   DateTime?
-  createdAt   DateTime @default(now())
+  id             String    @id @default(cuid())
+  boardId        String?
+  zoneCode       String?
+  messageType    String // PRODUCTION_COUNT, SHIFT_TARGET, QUALITY_ALERT, DOWNTIME, CUSTOM
+  content        String
+  priority       Int       @default(1)
+  displaySeconds Int       @default(10)
+  expiresAt      DateTime?
+  createdAt      DateTime  @default(now())
 }
 
 // --------------------------------------------------------
@@ -925,49 +1092,56 @@ model AndonMessage {
 // --------------------------------------------------------
 
 model ProcessParameter {
-  id            String         @id @default(cuid()) @map("_id")
-  machineId     String
-  productId     String?
-  parameterName String
-  unit          String?
-  nominalValue  Float?
-  upperSpecLimit Float?
-  lowerSpecLimit Float?
+  id                String         @id @default(cuid())
+  machineId         String
+  productId         String?
+  parameterName     String
+  unit              String?
+  nominalValue      Float?
+  upperSpecLimit    Float?
+  lowerSpecLimit    Float?
   upperControlLimit Float?
   lowerControlLimit Float?
-  isActive      Boolean        @default(true)
-  spcRecords    SPCRecord[]
-  controlLimits ControlLimit[]
-  createdAt     DateTime       @default(now())
+  isActive          Boolean        @default(true)
+  spcRecords        SPCRecord[]
+  controlLimits     ControlLimit[]
+  createdAt         DateTime       @default(now())
 }
 
 model SPCRecord {
-  id           String           @id @default(cuid()) @map("_id")
-  parameterId  String
-  parameter    ProcessParameter @relation(fields: [parameterId], references: [id])
-  value        Float
-  sampleSize   Int              @default(1)
-  subgroupId   String?
-  taskId       String?
-  operatorId   String?
-  machineId    String
-  inControl    Boolean          @default(true)
-  violationType String?         // WESTERN_ELECTRIC_1, NELSON_1, etc.
-  measuredAt   DateTime         @default(now())
+  id            String           @id @default(cuid())
+  parameterId   String
+  parameter     ProcessParameter @relation(fields: [parameterId], references: [id])
+  value         Float
+  sampleSize    Int              @default(1)
+  subgroupId    String?
+  taskId        String?
+  operatorId    String?
+  machineId     String
+  inControl     Boolean          @default(true)
+  violationType String? // WESTERN_ELECTRIC_1, NELSON_1, etc.
+  measuredAt    DateTime         @default(now())
+
+  // MEDIUM fix: SPC time-series data queried by parameter/machine/time had
+  // no indexes at all.
+  @@index([parameterId, measuredAt])
+  @@index([machineId, measuredAt])
 }
 
 model ControlLimit {
-  id           String           @id @default(cuid()) @map("_id")
+  id           String           @id @default(cuid())
   parameterId  String
   parameter    ProcessParameter @relation(fields: [parameterId], references: [id])
-  ucl          Float            // Upper Control Limit
-  lcl          Float            // Lower Control Limit
-  centerLine   Float            // Mean / X-bar
+  ucl          Float // Upper Control Limit
+  lcl          Float // Lower Control Limit
+  centerLine   Float // Mean / X-bar
   sigma        Float
-  cp           Float?           // Process Capability
-  cpk          Float?           // Process Capability Index
+  cp           Float? // Process Capability
+  cpk          Float? // Process Capability Index
   sampleCount  Int
   calculatedAt DateTime         @default(now())
+
+  @@index([parameterId, calculatedAt])
 }
 
 // --------------------------------------------------------
@@ -975,56 +1149,56 @@ model ControlLimit {
 // --------------------------------------------------------
 
 model Recipe {
-  id          String              @id @default(cuid()) @map("_id")
-  code        String              @unique
+  id          String                    @id @default(cuid())
+  code        String                    @unique
   name        String
   productId   String
-  version     Int                 @default(1)
-  status      String              @default("DRAFT") // DRAFT, APPROVED, ACTIVE, OBSOLETE
+  version     Int                       @default(1)
+  status      String                    @default("DRAFT") // DRAFT, APPROVED, ACTIVE, OBSOLETE
   description String?
   approvedBy  String?
   approvedAt  DateTime?
   parameters  RecipeParameter[]
   versions    RecipeVersion[]
   assignments MachineRecipeAssignment[]
-  createdAt   DateTime            @default(now())
+  createdAt   DateTime                  @default(now())
   createdBy   String
 }
 
 model RecipeParameter {
-  id          String  @id @default(cuid()) @map("_id")
-  recipeId    String
-  recipe      Recipe  @relation(fields: [recipeId], references: [id])
+  id            String  @id @default(cuid())
+  recipeId      String
+  recipe        Recipe  @relation(fields: [recipeId], references: [id])
   parameterName String
-  unit        String?
-  nominalValue String
-  minValue    String?
-  maxValue    String?
-  tolerance   Float?
-  isSetpoint  Boolean @default(true) // true = send to machine, false = monitor only
-  plcAddress  String? // Modbus register or OPC-UA NodeId to write
-  sequence    Int     @default(1)
+  unit          String?
+  nominalValue  String
+  minValue      String?
+  maxValue      String?
+  tolerance     Float?
+  isSetpoint    Boolean @default(true) // true = send to machine, false = monitor only
+  plcAddress    String? // Modbus register or OPC-UA NodeId to write
+  sequence      Int     @default(1)
 }
 
 model RecipeVersion {
-  id          String   @id @default(cuid()) @map("_id")
-  recipeId    String
-  recipe      Recipe   @relation(fields: [recipeId], references: [id])
-  version     Int
-  parameters  String   // JSON snapshot of parameters at this version
-  changedBy   String
-  changeNote  String?
-  createdAt   DateTime @default(now())
+  id         String   @id @default(cuid())
+  recipeId   String
+  recipe     Recipe   @relation(fields: [recipeId], references: [id])
+  version    Int
+  parameters String // JSON snapshot of parameters at this version
+  changedBy  String
+  changeNote String?
+  createdAt  DateTime @default(now())
 }
 
 model MachineRecipeAssignment {
-  id          String    @id @default(cuid()) @map("_id")
+  id          String   @id @default(cuid())
   machineId   String
   recipeId    String
-  recipe      Recipe    @relation(fields: [recipeId], references: [id])
-  assignedAt  DateTime  @default(now())
+  recipe      Recipe   @relation(fields: [recipeId], references: [id])
+  assignedAt  DateTime @default(now())
   assignedBy  String
-  status      String    @default("PENDING") // PENDING, DOWNLOADED, ACTIVE, COMPLETED
+  status      String   @default("PENDING") // PENDING, DOWNLOADED, ACTIVE, COMPLETED
   workOrderId String?
 }
 
@@ -1033,28 +1207,28 @@ model MachineRecipeAssignment {
 // --------------------------------------------------------
 
 model MachineHealthScore {
-  id              String   @id @default(cuid()) @map("_id")
-  machineId       String
-  overallScore    Float    // 0-100, higher = healthier
-  vibrationScore  Float?
+  id               String   @id @default(cuid())
+  machineId        String
+  overallScore     Float // 0-100, higher = healthier
+  vibrationScore   Float?
   temperatureScore Float?
-  currentScore    Float?
-  runtimeScore    Float?
-  calculatedAt    DateTime @default(now())
-  modelVersion    String   @default("v1")
+  currentScore     Float?
+  runtimeScore     Float?
+  calculatedAt     DateTime @default(now())
+  modelVersion     String   @default("v1")
 }
 
 model HealthPrediction {
-  id                  String    @id @default(cuid()) @map("_id")
-  machineId           String
-  predictionType      String    // FAILURE_PROBABILITY, RUL (Remaining Useful Life), MAINTENANCE_NEEDED
-  value               Float     // probability 0-1 or hours remaining
-  confidence          Float?    // model confidence 0-1
+  id                   String    @id @default(cuid())
+  machineId            String
+  predictionType       String // FAILURE_PROBABILITY, RUL (Remaining Useful Life), MAINTENANCE_NEEDED
+  value                Float // probability 0-1 or hours remaining
+  confidence           Float? // model confidence 0-1
   predictedFailureDate DateTime?
-  recommendedAction   String?
-  featureSnapshot     String    // JSON: signal values used for prediction
-  modelVersion        String    @default("v1")
-  createdAt           DateTime  @default(now())
+  recommendedAction    String?
+  featureSnapshot      String // JSON: signal values used for prediction
+  modelVersion         String    @default("v1")
+  createdAt            DateTime  @default(now())
 }
 
 // --------------------------------------------------------
@@ -1062,24 +1236,24 @@ model HealthPrediction {
 // --------------------------------------------------------
 
 model CopilotSession {
-  id          String          @id @default(cuid()) @map("_id")
-  userId      String?
-  context     String          @default("{}") // JSON: current machine, order, shift context
-  queries     CopilotQuery[]
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @default(now())
+  id        String         @id @default(cuid())
+  userId    String?
+  context   String         @default("{}") // JSON: current machine, order, shift context
+  queries   CopilotQuery[]
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @default(now())
 }
 
 model CopilotQuery {
-  id          String         @id @default(cuid()) @map("_id")
-  sessionId   String
-  session     CopilotSession @relation(fields: [sessionId], references: [id])
-  question    String
-  intent      String?        // MACHINE_STOP_ANALYSIS, OEE_QUERY, QUALITY_ANALYSIS, SCHEDULE_QUERY
-  answer      String
-  dataUsed    String         // JSON: what DB tables/records were queried
-  confidence  Float?         // 0-1
-  timestamp   DateTime       @default(now())
+  id         String         @id @default(cuid())
+  sessionId  String
+  session    CopilotSession @relation(fields: [sessionId], references: [id])
+  question   String
+  intent     String? // MACHINE_STOP_ANALYSIS, OEE_QUERY, QUALITY_ANALYSIS, SCHEDULE_QUERY
+  answer     String
+  dataUsed   String // JSON: what DB tables/records were queried
+  confidence Float? // 0-1
+  timestamp  DateTime       @default(now())
 }
 
 // --------------------------------------------------------
@@ -1087,18 +1261,18 @@ model CopilotQuery {
 // --------------------------------------------------------
 
 model Tenant {
-  id          String        @id @default(cuid()) @map("_id")
-  code        String        @unique
-  name        String
-  plan        String        @default("STANDARD") // STANDARD, PROFESSIONAL, ENTERPRISE
-  isActive    Boolean       @default(true)
-  users       TenantUser[]
-  settings    TenantSettings?
-  createdAt   DateTime      @default(now())
+  id        String          @id @default(cuid())
+  code      String          @unique
+  name      String
+  plan      String          @default("STANDARD") // STANDARD, PROFESSIONAL, ENTERPRISE
+  isActive  Boolean         @default(true)
+  users     TenantUser[]
+  settings  TenantSettings?
+  createdAt DateTime        @default(now())
 }
 
 model TenantUser {
-  id       String @id @default(cuid()) @map("_id")
+  id       String @id @default(cuid())
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id])
   userId   String
@@ -1106,31 +1280,18 @@ model TenantUser {
 }
 
 model TenantSettings {
-  id                String  @id @default(cuid()) @map("_id")
-  tenantId          String  @unique
-  tenant            Tenant  @relation(fields: [tenantId], references: [id])
-  timezone          String  @default("UTC")
-  language          String  @default("en")
-  oeeTarget         Float   @default(85)
-  qualityTarget     Float   @default(99)
-  enableDemoMode    Boolean @default(false)
+  id                    String  @id @default(cuid())
+  tenantId              String  @unique
+  tenant                Tenant  @relation(fields: [tenantId], references: [id])
+  timezone              String  @default("UTC")
+  language              String  @default("en")
+  oeeTarget             Float   @default(85)
+  qualityTarget         Float   @default(99)
+  enableDemoMode        Boolean @default(false)
   enablePredictiveMaint Boolean @default(true)
-  enableSPC         Boolean @default(true)
-  customLogoUrl     String?
-  maxMachines       Int     @default(100)
-}
-
-// --------------------------------------------------------
-// DEMO MODE
-// --------------------------------------------------------
-
-model DemoScenario {
-  id          String   @id @default(cuid()) @map("_id")
-  name        String
-  description String?
-  isActive    Boolean  @default(false)
-  config      String   // JSON: simulation config
-  createdAt   DateTime @default(now())
+  enableSPC             Boolean @default(true)
+  customLogoUrl         String?
+  maxMachines           Int     @default(100)
 }
 
 // ============================================================
@@ -1138,8 +1299,8 @@ model DemoScenario {
 // ============================================================
 
 model PipeSpoolLine {
-  id             String   @id @default(cuid()) @map("_id")
-  lineNumber     String   @unique
+  id             String             @id @default(cuid())
+  lineNumber     String             @unique
   area           String?
   service        String?
   pidNumber      String?
@@ -1155,58 +1316,62 @@ model PipeSpoolLine {
   paintSystem    String?
   testMedium     String?
   testPressure   Float?
-  revision       String   @default("A")
-  status         String   @default("ACTIVE")
-  isDeleted      Boolean  @default(false)
+  revision       String             @default("A")
+  status         String             @default("ACTIVE")
+  isDeleted      Boolean            @default(false)
   deletedAt      DateTime?
   notes          String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
   spools         PipeSpool[]
   drawings       IsometricDrawing[]
 }
 
 model IsometricDrawing {
-  id             String   @id @default(cuid()) @map("_id")
-  drawingNumber  String   @unique
-  title          String?
-  lineId         String
-  line           PipeSpoolLine @relation(fields: [lineId], references: [id])
-  revision       String   @default("A")
-  status         String   @default("IFR")
-  isDeleted      Boolean  @default(false)
-  deletedAt      DateTime?
-  filePath       String?
-  fileType       String?
-  checksum       String?
-  issuedDate     DateTime?
-  issuedBy       String?
-  approvedBy     String?
-  notes          String?
-  createdAt      DateTime @default(now())
-  spools         PipeSpool[]
+  id            String        @id @default(cuid())
+  drawingNumber String        @unique
+  title         String?
+  lineId        String
+  line          PipeSpoolLine @relation(fields: [lineId], references: [id])
+  revision      String        @default("A")
+  status        String        @default("IFR")
+  isDeleted     Boolean       @default(false)
+  deletedAt     DateTime?
+  filePath      String?
+  fileType      String?
+  checksum      String?
+  issuedDate    DateTime?
+  issuedBy      String?
+  approvedBy    String?
+  notes         String?
+  createdAt     DateTime      @default(now())
+  spools        PipeSpool[]
 }
 
 model PipeSpool {
-  id              String   @id @default(cuid()) @map("_id")
-  spoolId         String   @unique
+  id              String               @id @default(cuid())
+  spoolId         String               @unique
   lineId          String
-  line            PipeSpoolLine @relation(fields: [lineId], references: [id])
+  line            PipeSpoolLine        @relation(fields: [lineId], references: [id])
   drawingId       String?
-  drawing         IsometricDrawing? @relation(fields: [drawingId], references: [id])
-  rfidTag1        String?  @unique
+  drawing         IsometricDrawing?    @relation(fields: [drawingId], references: [id])
+  workOrderId     String?
+  workOrder       WorkOrder?           @relation(fields: [workOrderId], references: [id])
+  rfidTag1        String?              @unique
   rfidTag2        String?
-  barcode         String?  @unique
+  barcode         String?              @unique
   material        String?
   size            String?
   schedule        String?
+  heatNumberId    String?
+  heatNumberRel   HeatNumber?          @relation(fields: [heatNumberId], references: [id])
   heatNumber      String?
   certNumber      String?
   paintCode       String?
   weight          Float?
   fabricatedBy    String?
   fabricationDate DateTime?
-  status          String   @default("FABRICATING")
+  status          String               @default("FABRICATING")
   storageZone     String?
   storageRack     String?
   storageRow      String?
@@ -1215,9 +1380,11 @@ model PipeSpool {
   receivedBy      String?
   issuedAt        DateTime?
   issuedTo        String?
+  testLoopId      String?
+  testLoop        PressureTestLoop?    @relation(fields: [testLoopId], references: [id])
   notes           String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
   joints          SpoolJoint[]
   inspections     SpoolInspection[]
   pressureTests   PressureTestRecord[]
@@ -1225,15 +1392,20 @@ model PipeSpool {
   approvals       SpoolApproval[]
   ncrs            NCRRecord[]
   yardLocations   YardLocation[]
+  completions     Completion[]
+  pwhtCycles      PWHTCycle[]
+  mdrSpools       MDRSpool[]
+  deletedAt       DateTime?
+  deletedBy       String?
 }
 
 model SpoolJoint {
-  id             String   @id @default(cuid()) @map("_id")
-  jointId        String   @unique
+  id             String            @id @default(cuid())
+  jointId        String            @unique
   spoolId        String
-  spool          PipeSpool @relation(fields: [spoolId], references: [id])
-  jointType      String   @default("FIELD_WELD")
-  rfidTag1       String?  @unique
+  spool          PipeSpool         @relation(fields: [spoolId], references: [id])
+  jointType      String            @default("FIELD_WELD")
+  rfidTag1       String?           @unique
   rfidTag2       String?
   barcode        String?
   size           String?
@@ -1242,137 +1414,170 @@ model SpoolJoint {
   welderId       String?
   pipeFitter     String?
   fitUpInspector String?
-  ndeRequired    Boolean  @default(true)
+  ndeRequired    Boolean           @default(true)
   ndeType        String?
   ndePercent     Int?
-  status         String   @default("PENDING")
-  holdFlag       Boolean  @default(false)
+  status         String            @default("PENDING")
+  holdFlag       Boolean           @default(false)
   holdReason     String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
   inspections    SpoolInspection[]
   weldRecords    WeldRecord[]
   ndeRecords     NDERecord[]
   documents      SpoolDocument[]
   approvals      SpoolApproval[]
   ncrs           NCRRecord[]
+  deletedAt      DateTime?
+  deletedBy      String?
 }
 
 model ITPTemplate {
-  id          String   @id @default(cuid()) @map("_id")
+  id          String            @id @default(cuid())
   name        String
   description String?
-  type        String   @default("SPOOL")
-  isActive    Boolean  @default(true)
-  isDeleted   Boolean  @default(false)
+  type        String            @default("SPOOL")
+  isActive    Boolean           @default(true)
+  isDeleted   Boolean           @default(false)
   deletedAt   DateTime?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime          @default(now())
   steps       ITPStep[]
   inspections SpoolInspection[]
 }
 
 model ITPStep {
-  id                 String   @id @default(cuid()) @map("_id")
+  id                 String            @id @default(cuid())
   itpId              String
-  itp                ITPTemplate @relation(fields: [itpId], references: [id])
+  itp                ITPTemplate       @relation(fields: [itpId], references: [id])
   sequence           Int
   code               String?
   description        String
   activity           String?
-  checkType          String   @default("REVIEW")
+  checkType          String            @default("REVIEW")
   discipline         String?
-  inspectorRole      String   @default("QC_INSPECTOR")
+  inspectorRole      String            @default("QC_INSPECTOR")
   referenceDoc       String?
   acceptanceCriteria String?
-  mandatory          Boolean  @default(true)
-  isDeleted          Boolean  @default(false)
+  mandatory          Boolean           @default(true)
+  isDeleted          Boolean           @default(false)
   deletedAt          DateTime?
   inspections        SpoolInspection[]
 }
 
 model SpoolInspection {
-  id             String   @id @default(cuid()) @map("_id")
+  id             String          @id @default(cuid())
   itpId          String?
-  itp            ITPTemplate? @relation(fields: [itpId], references: [id])
+  itp            ITPTemplate?    @relation(fields: [itpId], references: [id])
   itpStepId      String?
-  itpStep        ITPStep? @relation(fields: [itpStepId], references: [id])
+  itpStep        ITPStep?        @relation(fields: [itpStepId], references: [id])
   spoolId        String?
-  spool          PipeSpool? @relation(fields: [spoolId], references: [id])
+  spool          PipeSpool?      @relation(fields: [spoolId], references: [id])
   jointId        String?
-  joint          SpoolJoint? @relation(fields: [jointId], references: [id])
+  joint          SpoolJoint?     @relation(fields: [jointId], references: [id])
   inspectionType String
   result         String
   defectCode     String?
   defectList     String?
   inspector      String
-  inspectorRole  String   @default("QC_INSPECTOR")
+  inspectorId    String?
+  inspectorUser  User?           @relation("InspectionInspector", fields: [inspectorId], references: [id])
+  inspectorRole  String          @default("QC_INSPECTOR")
   rfidScanned1   String?
   rfidScanned2   String?
   barcodeScanned String?
-  clientPresent  Boolean  @default(false)
+  clientPresent  Boolean         @default(false)
   clientApproved Boolean?
   clientName     String?
   notes          String?
-  inspectedAt    DateTime @default(now())
+  inspectedAt    DateTime        @default(now())
   documents      SpoolDocument[]
   approvals      SpoolApproval[]
+  deletedAt      DateTime?
+  deletedBy      String?
+}
+
+model Completion {
+  id          String     @id @default(cuid())
+  workOrderId String
+  workOrder   WorkOrder  @relation(fields: [workOrderId], references: [id])
+  spoolId     String?
+  spool       PipeSpool? @relation(fields: [spoolId], references: [id])
+  status      String     @default("COMPLETE")
+  completedAt DateTime   @default(now())
+  completedBy String?
+  notes       String?
 }
 
 model WeldRecord {
-  id           String   @id @default(cuid()) @map("_id")
-  weldNumber   String?
-  jointId      String
-  joint        SpoolJoint @relation(fields: [jointId], references: [id])
-  welderId     String?
-  welderStamp  String?
-  wps          String?
-  pqr          String?
-  weldProcess  String?
-  rootPass     String?
-  fillPass     String?
-  capPass      String?
-  preheatTemp  Float?
-  postHeatTemp Float?
-  weldDate     DateTime?
-  status       String   @default("IN_PROGRESS")
-  repairCount  Int      @default(0)
-  notes        String?
-  createdAt    DateTime @default(now())
-  documents    SpoolDocument[]
+  id            String          @id @default(cuid())
+  weldNumber    String?
+  jointId       String
+  joint         SpoolJoint      @relation(fields: [jointId], references: [id])
+  welderId      String?
+  welderStamp   String?
+  wps           String?
+  wpsId         String?
+  wpsRecord     WPS?            @relation(fields: [wpsId], references: [id])
+  pqr           String?
+  fillerBatchId String?
+  fillerBatch   FillerBatch?    @relation(fields: [fillerBatchId], references: [id])
+  weldProcess   String?
+  rootPass      String?
+  fillPass      String?
+  capPass       String?
+  preheatTemp   Float?
+  postHeatTemp  Float?
+  weldDate      DateTime?
+  status        String          @default("IN_PROGRESS")
+  repairCount   Int             @default(0)
+  notes         String?
+  createdAt     DateTime        @default(now())
+  documents     SpoolDocument[]
+
+  // MEDIUM fix: every sibling "number" field in this domain (ncrNumber,
+  // pqrNumber, wpsNumber, heatNo, mdrNumber, ...) is @unique — weldNumber
+  // had no constraint at all, allowing duplicate weld report numbers on the
+  // same joint. Scoped to jointId rather than global, since weld numbering
+  // is per-joint in this domain, not plant-wide. (Verified zero existing
+  // duplicate rows before adding.)
+  @@unique([jointId, weldNumber])
 }
 
 model NDERecord {
-  id              String   @id @default(cuid()) @map("_id")
-  ndeNumber       String?
-  jointId         String
-  joint           SpoolJoint @relation(fields: [jointId], references: [id])
-  ndeType         String
-  technique       String?
-  inspector       String?
-  procedure       String?
-  extent          String?
-  result          String   @default("PENDING")
-  defectType      String?
-  defectLocation  String?
-  repairRequired  Boolean  @default(false)
-  holdFlag        Boolean  @default(false)
-  holdReason      String?
-  xrayFilm        String?
-  reportPath      String?
-  examinedAt      DateTime?
-  reportedAt      DateTime?
-  reviewedBy      String?
-  notes           String?
-  createdAt       DateTime @default(now())
-  documents       SpoolDocument[]
+  id             String          @id @default(cuid())
+  ndeNumber      String?
+  jointId        String
+  joint          SpoolJoint      @relation(fields: [jointId], references: [id])
+  ndeType        String
+  technique      String?
+  inspector      String?
+  procedure      String?
+  extent         String?
+  result         String          @default("PENDING")
+  defectType     String?
+  defectLocation String?
+  repairRequired Boolean         @default(false)
+  holdFlag       Boolean         @default(false)
+  holdReason     String?
+  xrayFilm       String?
+  reportPath     String?
+  examinedAt     DateTime?
+  reportedAt     DateTime?
+  reviewedBy     String?
+  notes          String?
+  createdAt      DateTime        @default(now())
+  documents      SpoolDocument[]
+
+  // MEDIUM fix: same missing-uniqueness gap as WeldRecord.weldNumber above.
+  @@unique([jointId, ndeNumber])
 }
 
 model PressureTestRecord {
-  id              String   @id @default(cuid()) @map("_id")
+  id              String            @id @default(cuid())
   testNumber      String?
   spoolId         String
-  spool           PipeSpool @relation(fields: [spoolId], references: [id])
-  testType        String   @default("HYDRO")
+  spool           PipeSpool         @relation(fields: [spoolId], references: [id])
+  testType        String            @default("HYDRO")
   testMedium      String?
   testPressure    Float?
   designPressure  Float?
@@ -1382,31 +1587,37 @@ model PressureTestRecord {
   clientWitness   String?
   gaugeId         String?
   calibrationDate DateTime?
-  result          String   @default("PENDING")
+  result          String            @default("PENDING")
   failurePoint    String?
-  repairCount     Int      @default(0)
+  repairCount     Int               @default(0)
+  testLoopId      String?
+  testLoopRecord  PressureTestLoop? @relation(fields: [testLoopId], references: [id])
   certificateNo   String?
   certificatePath String?
   notes           String?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime          @default(now())
   documents       SpoolDocument[]
   approvals       SpoolApproval[]
+
+  // MEDIUM fix: same missing-uniqueness gap as WeldRecord.weldNumber above,
+  // scoped to spoolId (pressure tests are per-spool, not per-joint).
+  @@unique([spoolId, testNumber])
 }
 
 model NCRRecord {
-  id               String   @id @default(cuid()) @map("_id")
-  ncrNumber        String   @unique
+  id               String          @id @default(cuid())
+  ncrNumber        String          @unique
   title            String
   relatedType      String
   spoolId          String?
-  spool            PipeSpool? @relation(fields: [spoolId], references: [id])
+  spool            PipeSpool?      @relation(fields: [spoolId], references: [id])
   jointId          String?
-  joint            SpoolJoint? @relation(fields: [jointId], references: [id])
-  severity         String   @default("MINOR")
-  status           String   @default("OPEN")
+  joint            SpoolJoint?     @relation(fields: [jointId], references: [id])
+  severity         String          @default("MINOR")
+  status           String          @default("OPEN")
   issueDescription String
   detectedBy       String?
-  detectedAt       DateTime @default(now())
+  detectedAt       DateTime        @default(now())
   rootCause        String?
   disposition      String?
   correctiveAction String?
@@ -1414,90 +1625,630 @@ model NCRRecord {
   closedBy         String?
   closedAt         DateTime?
   dueDate          DateTime?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
   documents        SpoolDocument[]
   approvals        SpoolApproval[]
 }
 
 model SpoolDocument {
-  id             String   @id @default(cuid()) @map("_id")
+  id             String              @id @default(cuid())
   documentType   String
   fileName       String
   filePath       String
   fileSize       Int?
   mimeType       String?
-  isDeleted      Boolean  @default(false)
+  isDeleted      Boolean             @default(false)
   deletedAt      DateTime?
   relatedType    String
   spoolId        String?
-  spool          PipeSpool? @relation(fields: [spoolId], references: [id])
+  spool          PipeSpool?          @relation(fields: [spoolId], references: [id])
   jointId        String?
-  joint          SpoolJoint? @relation(fields: [jointId], references: [id])
+  joint          SpoolJoint?         @relation(fields: [jointId], references: [id])
   inspectionId   String?
-  inspection     SpoolInspection? @relation(fields: [inspectionId], references: [id])
+  inspection     SpoolInspection?    @relation(fields: [inspectionId], references: [id])
   weldId         String?
-  weld           WeldRecord? @relation(fields: [weldId], references: [id])
+  weld           WeldRecord?         @relation(fields: [weldId], references: [id])
   ndeId          String?
-  nde            NDERecord? @relation(fields: [ndeId], references: [id])
+  nde            NDERecord?          @relation(fields: [ndeId], references: [id])
   pressureTestId String?
   pressureTest   PressureTestRecord? @relation(fields: [pressureTestId], references: [id])
   ncrId          String?
-  ncr            NCRRecord? @relation(fields: [ncrId], references: [id])
+  ncr            NCRRecord?          @relation(fields: [ncrId], references: [id])
   uploadedBy     String
-  uploadedAt     DateTime @default(now())
+  uploadedAt     DateTime            @default(now())
   description    String?
+
+  // MEDIUM fix: "get all documents for X" (7 nullable polymorphic FKs) had
+  // no indexes on any of them — a certain hot path.
+  @@index([spoolId])
+  @@index([jointId])
+  @@index([inspectionId])
+  @@index([weldId])
+  @@index([ndeId])
+  @@index([pressureTestId])
+  @@index([ncrId])
 }
 
 model SpoolApproval {
-  id             String   @id @default(cuid()) @map("_id")
+  id             String              @id @default(cuid())
   relatedType    String
   spoolId        String?
-  spool          PipeSpool? @relation(fields: [spoolId], references: [id])
+  spool          PipeSpool?          @relation(fields: [spoolId], references: [id])
   jointId        String?
-  joint          SpoolJoint? @relation(fields: [jointId], references: [id])
+  joint          SpoolJoint?         @relation(fields: [jointId], references: [id])
   inspectionId   String?
-  inspection     SpoolInspection? @relation(fields: [inspectionId], references: [id])
+  inspection     SpoolInspection?    @relation(fields: [inspectionId], references: [id])
   pressureTestId String?
   pressureTest   PressureTestRecord? @relation(fields: [pressureTestId], references: [id])
   ncrId          String?
-  ncr            NCRRecord? @relation(fields: [ncrId], references: [id])
+  ncr            NCRRecord?          @relation(fields: [ncrId], references: [id])
   approverRole   String
   approverName   String
   status         String
   comments       String?
   signature      String?
-  approvedAt     DateTime @default(now())
+  approvedAt     DateTime            @default(now())
+
+  // MEDIUM fix: same polymorphic-FK indexing gap as SpoolDocument above.
+  @@index([spoolId])
+  @@index([jointId])
+  @@index([inspectionId])
+  @@index([pressureTestId])
+  @@index([ncrId])
 }
 
 model YardLocation {
-  id          String   @id @default(cuid()) @map("_id")
+  id          String     @id @default(cuid())
   zone        String
   rack        String?
   row         String?
   position    String?
-  fullAddress String   @unique
-  capacity    Int      @default(1)
-  occupied    Boolean  @default(false)
+  fullAddress String     @unique
+  capacity    Int        @default(1)
+  occupied    Boolean    @default(false)
   spoolId     String?
   spool       PipeSpool? @relation(fields: [spoolId], references: [id])
   notes       String?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime   @default(now())
 }
 
 // ── Pipe Spool Alerts ─────────────────────────────────────────────────────────
 
 model SpoolAlert {
-  id          String   @id @default(cuid()) @map("_id")
-  type        String   // HOLD_PLACED | NCR_RAISED | INSPECTION_FAILED | APPROVAL_REQUIRED | NDE_HOLD
-  severity    String   @default("INFO")  // INFO | WARNING | CRITICAL
-  title       String
-  message     String
-  link        String?
-  read        Boolean  @default(false)
-  readAt      DateTime?
-  spoolId     String?
-  jointId     String?
-  ncrId       String?
-  createdAt   DateTime @default(now())
+  id        String    @id @default(cuid())
+  type      String // HOLD_PLACED | NCR_RAISED | INSPECTION_FAILED | APPROVAL_REQUIRED | NDE_HOLD
+  severity  String    @default("INFO") // INFO | WARNING | CRITICAL
+  title     String
+  message   String
+  link      String?
+  read      Boolean   @default(false)
+  readAt    DateTime?
+  spoolId   String?
+  jointId   String?
+  ncrId     String?
+  createdAt DateTime  @default(now())
+}
+
+// ── Pipe Fabrication — Extended Traceability Models ───────────────────────────
+
+model PQR {
+  id           String    @id @default(cuid())
+  pqrNumber    String    @unique
+  title        String?
+  revision     String?
+  testType     String?
+  baseMetals   String?
+  filerMetals  String?
+  weldProcess  String?
+  testDate     DateTime?
+  testLab      String?
+  testWelderId String?
+  approved     Boolean   @default(false)
+  approvedBy   String?
+  approvedAt   DateTime?
+  expiresAt    DateTime?
+  filePath     String?
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  wpsRecords   WPS[]
+}
+
+model WPS {
+  id             String                @id @default(cuid())
+  wpsNumber      String                @unique
+  title          String?
+  revision       String?
+  pqrId          String?
+  pqr            PQR?                  @relation(fields: [pqrId], references: [id])
+  weldProcess    String?
+  baseMetalP1    String?
+  baseMetalP2    String?
+  fillerClass    String?
+  preheatMin     Float?
+  interpassMax   Float?
+  postHeatTemp   Float?
+  jointDesign    String?
+  position       String?
+  isActive       Boolean               @default(true)
+  approvedBy     String?
+  approvedAt     DateTime?
+  filePath       String?
+  notes          String?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  weldRecords    WeldRecord[]
+  qualifications WelderQualification[]
+}
+
+model WelderQualification {
+  id              String    @id @default(cuid())
+  welderName      String
+  welderStamp     String    @unique
+  userId          String?
+  user            User?     @relation(fields: [userId], references: [id])
+  qualifiedWpsIds String[]
+  qualifiedWps    WPS[]
+  processes       String[]
+  positions       String[]
+  materialGroups  String[]
+  thicknessMin    Float?
+  thicknessMax    Float?
+  diameterMin     Float?
+  diameterMax     Float?
+  qualifiedAt     DateTime?
+  expiresAt       DateTime?
+  renewedAt       DateTime?
+  isActive        Boolean   @default(true)
+  certificateNo   String?
+  certificatePath String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model HeatNumber {
+  id               String                @id @default(cuid())
+  heatNo           String                @unique
+  material         String?
+  grade            String?
+  spec             String?
+  size             String?
+  supplier         String?
+  millName         String?
+  receivedDate     DateTime?
+  quantity         Float?
+  unit             String?
+  quarantined      Boolean               @default(false)
+  quarantineReason String?
+  notes            String?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  spools           PipeSpool[]
+  certificates     MaterialCertificate[]
+}
+
+model MaterialCertificate {
+  id           String     @id @default(cuid())
+  certNumber   String     @unique
+  heatNumberId String
+  heatNumber   HeatNumber @relation(fields: [heatNumberId], references: [id])
+  certType     String     @default("MTR")
+  supplier     String?
+  mill         String?
+  issuedDate   DateTime?
+  receivedDate DateTime?
+  chemComp     Json?
+  mechProps    Json?
+  filePath     String?
+  verified     Boolean    @default(false)
+  verifiedBy   String?
+  verifiedAt   DateTime?
+  notes        String?
+  createdAt    DateTime   @default(now())
+}
+
+model FillerBatch {
+  id              String       @id @default(cuid())
+  batchNumber     String       @unique
+  classification  String?
+  diameter        Float?
+  lotNumber       String?
+  supplier        String?
+  receivedDate    DateTime?
+  expiryDate      DateTime?
+  storageLocation String?
+  quantity        Float?
+  unit            String?
+  certPath        String?
+  isActive        Boolean      @default(true)
+  notes           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  weldRecords     WeldRecord[]
+}
+
+model PWHTCycle {
+  id             String    @id @default(cuid())
+  cycleNumber    String?
+  spoolId        String
+  spool          PipeSpool @relation(fields: [spoolId], references: [id])
+  furnaceId      String?
+  chargeNumber   String?
+  heatingRate    Float?
+  soakTemp       Float?
+  soakDuration   Int?
+  coolingRate    Float?
+  startAt        DateTime?
+  endAt          DateTime?
+  operator       String?
+  hardnessBefore Float?
+  hardnessAfter  Float?
+  chartsPath     String?
+  result         String    @default("PENDING")
+  approved       Boolean   @default(false)
+  approvedBy     String?
+  approvedAt     DateTime?
+  notes          String?
+  createdAt      DateTime  @default(now())
+
+  // MEDIUM fix: same missing-uniqueness gap as WeldRecord.weldNumber above.
+  @@unique([spoolId, cycleNumber])
+}
+
+model PressureTestLoop {
+  id              String               @id @default(cuid())
+  loopNumber      String               @unique
+  description     String?
+  testType        String               @default("HYDRO")
+  testMedium      String?
+  designPressure  Float?
+  testPressure    Float?
+  holdTime        Int?
+  blindFlange     String?
+  gaugeId         String?
+  witnessedBy     String?
+  clientWitness   String?
+  status          String               @default("PENDING")
+  scheduledDate   DateTime?
+  testedAt        DateTime?
+  certificateNo   String?
+  certificatePath String?
+  notes           String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  spools          PipeSpool[]
+  testRecords     PressureTestRecord[]
+}
+
+model MDR {
+  id          String     @id @default(cuid())
+  mdrNumber   String     @unique
+  title       String?
+  revision    String?
+  projectRef  String?
+  status      String     @default("DRAFT")
+  preparedBy  String?
+  reviewedBy  String?
+  approvedBy  String?
+  preparedAt  DateTime?
+  reviewedAt  DateTime?
+  approvedAt  DateTime?
+  submittedAt DateTime?
+  filePath    String?
+  notes       String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  mdrSpools   MDRSpool[]
+}
+
+model MDRSpool {
+  id      String    @id @default(cuid())
+  mdrId   String
+  mdr     MDR       @relation(fields: [mdrId], references: [id])
+  spoolId String
+  spool   PipeSpool @relation(fields: [spoolId], references: [id])
+  addedAt DateTime  @default(now())
+
+  @@unique([mdrId, spoolId])
+}
+
+// ── Phase 4 — Production Integrity Layer ─────────────────────────────────────
+
+model AuditChain {
+  id           String   @id @default(cuid())
+  entityType   String
+  entityId     String
+  action       String
+  userId       String?
+  previousHash String
+  currentHash  String
+  payload      String
+  timestamp    DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([timestamp])
+}
+
+model ElectronicSignature {
+  id          String   @id @default(cuid())
+  userId      String
+  entityType  String
+  entityId    String
+  reason      String
+  ipAddress   String?
+  timestamp   DateTime @default(now())
+  // Industry-readiness: SHA-256 hash of the canonical JSON of the record
+  // state at the moment it was signed. Lets verifySignatureForEntity()
+  // detect whether the record changed between signing and the approval
+  // action actually committing — previously a signature only proved *who*
+  // signed *something* for this entity, not that it matched what's being
+  // approved right now.
+  payloadHash String?
+
+  @@index([entityType, entityId])
+  @@index([userId])
+}
+
+// ── Phase 8 — MQTT Runtime Ingestion ─────────────────────────────────────────
+
+// Active alarm events from shop-floor MQTT; deduplicated per machine+code
+model AlarmEvent {
+  id             String    @id @default(cuid())
+  machineId      String
+  machine        Machine   @relation(fields: [machineId], references: [id])
+  alarmCode      String
+  severity       String    @default("LOW") // LOW | MEDIUM | HIGH | CRITICAL
+  message        String?
+  startTime      DateTime  @default(now())
+  endTime        DateTime?
+  acknowledged   Boolean   @default(false)
+  acknowledgedBy String?
+
+  @@index([machineId, acknowledged])
+  @@index([machineId, alarmCode, endTime])
+}
+
+// OPC-UA / MQTT signal-to-MES field mapping per machine
+model MachineSignalMap {
+  machineId  String
+  machine    Machine @relation(fields: [machineId], references: [id])
+  signalName String
+  mqttTopic  String
+  opcNodeId  String?
+  dataType   String // FLOAT | INT | BOOL | STRING
+  isRequired Boolean @default(false)
+
+  @@id([machineId, signalName])
+  @@index([mqttTopic])
+}
+
+// ── Phase 10 — Industrial Historian ──────────────────────────────────────────
+
+// Append-only time-series record for every tagged signal value received
+model HistorianRecord {
+  id             String   @id @default(cuid())
+  machineId      String
+  machine        Machine  @relation(fields: [machineId], references: [id])
+  signalType     String // STATUS | COUNT | REJECT | TEMPERATURE | ALARM | DOWNTIME | OEE
+  tagName        String
+  value          String // stored as string; consumers parse per dataType
+  quality        String   @default("GOOD") // GOOD | BAD | UNCERTAIN
+  timestamp      DateTime @default(now())
+  source         String // MQTT | OPCUA | EDGE_DEVICE | SYSTEM
+  retentionClass String   @default("HOT") // HOT | WARM | COLD
+
+  @@index([machineId, timestamp])
+  @@index([timestamp, retentionClass])
+  @@index([machineId, signalType, timestamp])
+}
+
+// ── Phase 9 — Edge Gateway Connectivity ──────────────────────────────────────
+
+// Physical or virtual edge gateway/PLC device on the shop floor
+model EdgeDevice {
+  id               String          @id @default(cuid())
+  name             String
+  deviceType       String // PLC | OPCUA_GATEWAY | MQTT_GATEWAY | SENSOR_NODE
+  ipAddress        String
+  port             Int
+  protocol         String // OPCUA | MQTT | MODBUS | REST
+  status           String          @default("OFFLINE") // ONLINE | OFFLINE | ERROR
+  lastSeen         DateTime?
+  plantId          String?
+  plant            Plant?          @relation(fields: [plantId], references: [id])
+  productionLineId String?
+  productionLine   ProductionLine? @relation(fields: [productionLineId], references: [id])
+  tagMaps          PLCTagMap[]
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([status])
+  @@index([plantId])
+  @@index([productionLineId])
+}
+
+// Tag-to-machine signal mapping for a PLC or OPC-UA gateway device
+model PLCTagMap {
+  id           String     @id @default(cuid())
+  edgeDeviceId String
+  edgeDevice   EdgeDevice @relation(fields: [edgeDeviceId], references: [id])
+  machineId    String
+  machine      Machine    @relation(fields: [machineId], references: [id])
+  tagName      String
+  mqttTopic    String?
+  opcNodeId    String?
+  signalType   String // STATUS | COUNT | REJECT | TEMPERATURE | ALARM | DOWNTIME
+  dataType     String // FLOAT | INT | BOOL | STRING
+  scaleFactor  Float?
+  enabled      Boolean    @default(true)
+
+  @@unique([edgeDeviceId, tagName])
+  @@index([machineId])
+  @@index([edgeDeviceId, enabled])
+}
+
+// ── Phase 11 — Finite-Capacity Production Scheduling ─────────────────────────
+
+// Production calendar: defines working days, shifts, holidays, maintenance windows
+model ProductionCalendar {
+  id                 String   @id @default(cuid())
+  name               String
+  calendarType       String // PLANT | LINE | MACHINE
+  timezone           String   @default("UTC")
+  workingDays        String // JSON: [1,2,3,4,5]  (0=Sun … 6=Sat)
+  shiftPattern       String // JSON: [{name,startHour,startMin,endHour,endMin}]
+  holidayRules       String? // JSON: [{date:"YYYY-MM-DD",name:"..."}]
+  maintenanceWindows String? // JSON: [{start:ISO,end:ISO,label:"..."}]
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+// Per-machine capability: constrains which work orders can run on which machine
+model MachineCapability {
+  id                 String  @id @default(cuid())
+  machineId          String
+  machine            Machine @relation(fields: [machineId], references: [id])
+  capabilityType     String // e.g., WELDING | CUTTING | ASSEMBLY | PAINTING
+  productCode        String? // null = applies to all products
+  maxCapacityPerHour Float // units per hour at 100% efficiency
+  idealCycleTime     Float // seconds per unit (canonical cycle time)
+  enabled            Boolean @default(true)
+
+  @@unique([machineId, capabilityType, productCode])
+  @@index([machineId, enabled])
+}
+
+// Finite-capacity schedule record: one per work order + machine assignment
+model ProductionSchedule {
+  id                       String    @id @default(cuid())
+  workOrderId              String
+  workOrder                WorkOrder @relation(fields: [workOrderId], references: [id])
+  machineId                String
+  machine                  Machine   @relation(fields: [machineId], references: [id])
+  plannedStart             DateTime
+  plannedEnd               DateTime
+  estimatedDurationMinutes Float
+  status                   String    @default("SCHEDULED") // SCHEDULED | IN_PROGRESS | COMPLETED | CANCELLED | DRIFTED
+  actualStart              DateTime?
+  actualEnd                DateTime?
+  driftMinutes             Float     @default(0)
+  notes                    String?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  @@index([machineId, plannedStart])
+  @@index([workOrderId])
+  @@index([status, plannedStart])
+}
+
+// Detected scheduling conflicts — persisted for querying and resolution
+model SchedulingConflict {
+  id           String     @id @default(cuid())
+  workOrderId  String?
+  workOrder    WorkOrder? @relation(fields: [workOrderId], references: [id])
+  machineId    String?
+  machine      Machine?   @relation(fields: [machineId], references: [id])
+  conflictType String // MACHINE_OVERBOOKED | SHIFT_OVERBOOKED | MAINTENANCE_CONFLICT | MACHINE_DOWN | CAPABILITY_MISMATCH
+  severity     String     @default("CRITICAL") // CRITICAL | WARNING | INFO
+  description  String
+  isBlocking   Boolean    @default(true)
+  detectedAt   DateTime   @default(now())
+  resolvedAt   DateTime?
+
+  @@index([workOrderId])
+  @@index([machineId, resolvedAt])
+  @@index([conflictType, resolvedAt])
+}
+
+// ── Phase 12 — Product Master, BOM, Routing ───────────────────────────────────
+
+// Bill of Materials header — one BOM per product per revision
+model BillOfMaterial {
+  id          String    @id @default(cuid())
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id])
+  revision    String    @default("A")
+  description String?
+  isActive    Boolean   @default(true)
+  items       BOMItem[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([productId, revision])
+  @@index([productId, isActive])
+}
+
+// BOM line item — one row per component required
+model BOMItem {
+  id            String         @id @default(cuid())
+  bomId         String
+  bom           BillOfMaterial @relation(fields: [bomId], references: [id])
+  componentCode String // references Product.sku of the component
+  description   String?
+  quantity      Float // must be > 0
+  unitOfMeasure String         @default("EA")
+  scrapFactor   Float? // fractional allowance e.g. 0.05 = 5% extra
+
+  @@unique([bomId, componentCode])
+  @@index([bomId])
+  @@index([componentCode])
+}
+
+// Routing header — ordered sequence of manufacturing operations for a product
+model Routing {
+  id          String             @id @default(cuid())
+  productId   String
+  product     Product            @relation(fields: [productId], references: [id])
+  routingCode String             @unique
+  description String?
+  revision    String             @default("A")
+  isActive    Boolean            @default(true)
+  operations  RoutingOperation[]
+  workOrders  WorkOrder[]
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@index([productId, isActive])
+}
+
+// Individual operation within a routing
+model RoutingOperation {
+  id                    String  @id @default(cuid())
+  routingId             String
+  routing               Routing @relation(fields: [routingId], references: [id])
+  operationCode         String
+  operationName         String
+  sequence              Int // execution order; unique per routing
+  machineCapabilityType String // maps to MachineCapability.capabilityType
+  estimatedCycleTime    Float // minutes per unit
+  setupTime             Float   @default(0) // minutes
+  inspectionRequired    Boolean @default(false)
+  requiredSkill         String? // operator skill code
+
+  @@unique([routingId, sequence])
+  @@unique([routingId, operationCode])
+  @@index([routingId])
+  @@index([machineCapabilityType])
+}
+
+// Material consumption record per work order — actual vs planned per component
+model MaterialConsumption {
+  id              String    @id @default(cuid())
+  workOrderId     String
+  workOrder       WorkOrder @relation(fields: [workOrderId], references: [id])
+  productId       String
+  product         Product   @relation(fields: [productId], references: [id])
+  componentCode   String // references Product.sku of the consumed component
+  plannedQuantity Float
+  actualQuantity  Float     @default(0)
+  scrapQuantity   Float     @default(0)
+  issuedAt        DateTime  @default(now())
+  issuedBy        String?
+
+  @@index([workOrderId])
+  @@index([productId])
+  @@index([componentCode])
 }

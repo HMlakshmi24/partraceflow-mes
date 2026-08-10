@@ -3,11 +3,18 @@ import { prisma } from '@/lib/services/database';
 import { onFitUpInspectionPass } from '@/lib/spoolFlow';
 import { requireSpoolAction } from '@/lib/spoolRBAC';
 import { AuditService, EventType } from '@/lib/services/AuditService';
+import { requireRole } from '@/lib/api-auth';
+import { verifySignatureForEntity } from '@/lib/services/ElectronicSignatureService';
+
+const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
 // Spool must have progressed past storage/issue before inspection can be recorded
 const INSPECTION_BLOCKED_STATUSES = ['FABRICATING', 'RECEIVED', 'IN_STORAGE'];
 
 export async function GET(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
@@ -53,6 +60,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const body = await req.json();
     const { action, id, ...data } = body;
@@ -63,6 +73,37 @@ export async function POST(req: NextRequest) {
 
       const before = await prisma.spoolInspection.findUnique({ where: { id } });
       if (!before) return NextResponse.json({ error: 'Inspection not found' }, { status: 404 });
+
+      // Quality guard: passing a joint inspection requires joint to be in NDE_PENDING.
+      // FIT_UP-type inspections happen earlier in the joint lifecycle (see
+      // JOINT_TRANSITIONS: PENDING → FIT_UP, well before WELDED → NDE_PENDING)
+      // and are gated/advanced by onFitUpInspectionPass below instead — without
+      // this exclusion, no FIT_UP inspection could ever pass, since a joint is
+      // never simultaneously in its pre-weld stage and NDE_PENDING.
+      if (data.result === 'PASS' && before.jointId && before.inspectionType !== 'FIT_UP') {
+        const joint = await prisma.spoolJoint.findUnique({
+          where: { id: before.jointId },
+          select: { status: true, jointId: true },
+        });
+        if (joint && joint.status !== 'NDE_PENDING') {
+          return NextResponse.json(
+            { error: `Cannot pass inspection — joint ${joint.jointId} must be in NDE_PENDING status (currently: ${joint.status}).` },
+            { status: 422 },
+          );
+        }
+      }
+
+      // HIGH-8 fix: recording a pass/fail inspection result requires a valid
+      // electronic signature for this exact record, not just the role check.
+      if (!guard.userId) return NextResponse.json({ error: 'Unauthenticated' }, { status: 401 });
+      const sigCheck = await verifySignatureForEntity({
+        signatureId: data.signatureId,
+        userId: guard.userId,
+        entityType: 'SpoolInspection',
+        entityId: id,
+        payload: { result: data.result, notes: data.notes ?? null, clientApproved: !!data.clientApproved },
+      });
+      if (!sigCheck.ok) return NextResponse.json({ error: sigCheck.error }, { status: 403 });
 
       const inspection = await prisma.spoolInspection.update({
         where: { id },
@@ -81,7 +122,7 @@ export async function POST(req: NextRequest) {
         userId: guard.userId,
       });
       // Flow: fit-up inspection PASS → advance joint to FIT_UP
-      if (inspection.jointId && data.result === 'PASS') {
+      if (inspection.jointId && data.result === 'PASS' && inspection.inspectionType === 'FIT_UP') {
         await onFitUpInspectionPass(inspection.jointId).catch(() => {});
       }
       return NextResponse.json({ inspection });

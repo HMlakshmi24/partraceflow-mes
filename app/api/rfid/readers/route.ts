@@ -5,14 +5,22 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getReaderHealth, heartbeat } from '@/lib/connectors/rfidConnector';
+import { requireRole } from '@/lib/api-auth';
 
-export async function GET() {
+const RFID_ROLES = ['ADMIN', 'SUPERVISOR', 'MAINTENANCE'];
+
+export async function GET(req: NextRequest) {
+  const authError = await requireRole(req, RFID_ROLES);
+  if (authError) return authError;
   const readers = getReaderHealth();
   const online = readers.filter(r => r.status === 'ONLINE').length;
   return NextResponse.json({ readers, online, total: readers.length });
 }
 
 export async function POST(req: NextRequest) {
+  const authError = await requireRole(req, RFID_ROLES);
+  if (authError) return authError;
+
   const { readerId } = await req.json();
   if (!readerId) return NextResponse.json({ error: 'readerId required' }, { status: 400 });
   heartbeat(readerId);

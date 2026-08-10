@@ -6,12 +6,15 @@ import { z } from 'zod';
 import { ValidationError, BusinessLogicError } from '@/lib/utils/validation';
 import { ErrorHandler, withRetry } from '@/lib/utils/errorHandler';
 import { getNextActions } from '@/lib/orderStateMachine';
-import { OrderLifecycleService } from '@/lib/services/OrderLifecycleService';
+import { fkMachine } from '@/lib/fkValidation';
 
 const createOrderSchema = z.object({
     orderNumber: z.string().min(3, "Order # must be at least 3 chars"),
     productId: z.string().min(1, "Product required"),
     quantity: z.coerce.number().min(1, "Quantity must be > 0"),
+    machineId: z.string().optional(),
+    priority: z.coerce.number().int().min(1).max(4).optional(),
+    dueDate: z.string().optional(),
 });
 
 export async function getProducts() {
@@ -34,6 +37,9 @@ export async function createManufacturingOrder(formData: FormData): Promise<void
             orderNumber: formData.get('orderNumber'),
             productId: formData.get('productId'),
             quantity: formData.get('quantity'),
+            machineId: formData.get('machineId') || undefined,
+            priority: formData.get('priority') || undefined,
+            dueDate: formData.get('dueDate') || undefined,
         };
 
         const validation = createOrderSchema.safeParse(raw);
@@ -41,7 +47,7 @@ export async function createManufacturingOrder(formData: FormData): Promise<void
             throw new ValidationError('Invalid order data', validation.error.issues[0].path.join('.'));
         }
 
-        const { orderNumber, productId, quantity } = validation.data;
+        const { orderNumber, productId, quantity, machineId, priority, dueDate } = validation.data;
 
         // Additional business validation
         const productExists = await prisma.product.findUnique({ where: { id: productId } });
@@ -54,45 +60,31 @@ export async function createManufacturingOrder(formData: FormData): Promise<void
             throw new BusinessLogicError('Order number already exists', 'DUPLICATE_ORDER');
         }
 
-        // Create work order with transaction
+        if (machineId) {
+            const machineErr = await fkMachine(machineId);
+            if (machineErr) throw new ValidationError(machineErr, 'machineId');
+        }
+
+        const resolvedDueDate = dueDate ? new Date(dueDate) : new Date(Date.now() + 86400000 * 7);
+
+        // Create work order — starts at PLANNED; supervisor releases via status transition
         await prisma.$transaction(async (tx) => {
-            // 1. Create Work Order
             const wo = await tx.workOrder.create({
                 data: {
                     orderNumber,
                     quantity,
                     productId,
-                    status: 'RELEASED',
-                    dueDate: new Date(Date.now() + 86400000 * 7)
+                    status: 'PLANNED',
+                    priority: priority ?? 2,
+                    dueDate: resolvedDueDate,
+                    ...(machineId ? { machineId } : {}),
                 }
             });
 
-            // 2. Create workflow instance and tasks
-            const steps = await tx.workflowStepDef.findMany({ orderBy: { sequence: 'asc' } });
-            
-            if (steps.length > 0) {
-                const instance = await tx.workflowInstance.create({
-                    data: {
-                        workOrderId: wo.id,
-                        status: 'ACTIVE'
-                    }
-                });
-
-                // Create tasks for each step
-                const tasks = steps.map(step => ({
-                    instanceId: instance.id,
-                    stepDefId: step.id,
-                    status: 'PENDING' as const
-                }));
-
-                await tx.workflowTask.createMany({ data: tasks });
-            }
-
-            // 3. Log the event
             await tx.systemEvent.create({
                 data: {
-                    eventType: 'ORDER_RELEASE',
-                    details: `Released ${orderNumber} for ${quantity} units of ${productExists.name}`
+                    eventType: 'ORDER_CREATED',
+                    details: `Created ${orderNumber} for ${quantity} units of ${productExists.name}`
                 }
             });
 
@@ -102,7 +94,7 @@ export async function createManufacturingOrder(formData: FormData): Promise<void
                     action: 'CREATED',
                     performedBy: 'system',
                     role: 'SYSTEM',
-                    notes: `Order ${orderNumber} created and released for ${quantity} units of ${productExists.name}`,
+                    notes: `Order ${orderNumber} created (PLANNED) for ${quantity} units of ${productExists.name}`,
                 }
             });
         });
@@ -151,93 +143,3 @@ export async function getManufacturingOrders() {
     }
 }
 
-export async function updateWorkOrderStatus(orderId: string, status: string) {
-    try {
-        const validStatuses = ['RELEASED', 'IN_PROGRESS', 'QC_PENDING', 'APPROVED', 'REWORK', 'ON_HOLD', 'COMPLETED', 'CANCELLED'];
-        if (!validStatuses.includes(status)) {
-            throw new ValidationError('Invalid work order status', 'status');
-        }
-
-        const updatedOrder = await OrderLifecycleService.transitionOrder({
-            orderId,
-            newStatus: status,
-            performedBy: 'system',
-            role: 'SYSTEM',
-            notes: `Legacy ERP action moved order to ${status}`,
-            enforceRole: false,
-        });
-
-        revalidatePath('/planner');
-        revalidatePath('/dashboard');
-        
-        return updatedOrder;
-    } catch (error) {
-        ErrorHandler.logError(error, { 
-            operation: 'updateWorkOrderStatus',
-            orderId,
-            status
-        });
-        
-        if (error instanceof ValidationError) {
-            throw error;
-        }
-        
-        throw new Error('Failed to update work order status');
-    }
-}
-
-export async function deleteWorkOrder(orderId: string) {
-    try {
-        // Check if order has active tasks
-        const order = await prisma.workOrder.findUnique({
-            where: { id: orderId },
-            include: {
-                workflowInstances: {
-                    include: {
-                        tasks: {
-                            where: { status: 'IN_PROGRESS' }
-                        }
-                    }
-                }
-            }
-        });
-
-        if (!order) {
-            throw new ValidationError('Work order not found', 'orderId');
-        }
-
-        const hasActiveTasks = order.workflowInstances.some(instance => 
-            instance.tasks.length > 0
-        );
-
-        if (hasActiveTasks) {
-            throw new BusinessLogicError('Cannot delete order with active tasks', 'ACTIVE_TASKS_EXIST');
-        }
-
-        await prisma.workOrder.delete({
-            where: { id: orderId }
-        });
-
-        await prisma.systemEvent.create({
-            data: {
-                eventType: 'ORDER_DELETED',
-                details: `Order ${order.orderNumber} was deleted`
-            }
-        });
-
-        revalidatePath('/planner');
-        revalidatePath('/dashboard');
-        
-    } catch (error) {
-        ErrorHandler.logError(error, { 
-            operation: 'deleteWorkOrder',
-            orderId
-        });
-        
-        if (error instanceof ValidationError || error instanceof BusinessLogicError) {
-            throw error;
-        }
-        
-        throw new Error('Failed to delete work order');
-    }
-}

@@ -6,9 +6,12 @@
  */
 
 import { cookies } from 'next/headers';
-import { verifySessionToken, SESSION_COOKIE } from '@/lib/auth';
+import { verifySessionToken, SESSION_COOKIE, isSessionValid } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 import { apiError } from '@/lib/apiResponse';
+import { prisma } from '@/lib/services/database';
+
+// ── Approval RBAC additions ───────────────────────────────────────────────────
 
 // Permission matrix
 
@@ -61,6 +64,14 @@ export const SPOOL_PERMISSIONS = {
   // Admin
   DELETE_RECORD:         ['ADMIN'],
   BULK_IMPORT:           ['SUPERVISOR', 'ADMIN'],
+
+  // Phase 4 — Production Integrity
+  APPROVE_WORK_ORDER:    ['SUPERVISOR', 'ADMIN'],
+  APPROVE_MDR:           ['QUALITY', 'SUPERVISOR', 'ADMIN'],
+  APPROVE_PWHT:          ['QUALITY', 'SUPERVISOR', 'ADMIN'],
+  APPROVE_COMPLETION:    ['SUPERVISOR', 'ADMIN'],
+  SOFT_DELETE:           ['SUPERVISOR', 'ADMIN'],
+  VERIFY_AUDIT_CHAIN:    ['QUALITY', 'SUPERVISOR', 'ADMIN'],
 } as const;
 
 export type SpoolPermission = keyof typeof SPOOL_PERMISSIONS;
@@ -86,7 +97,18 @@ export async function getSessionUser(): Promise<{ userId: string; username: stri
     if (!token) return null;
     const payload = verifySessionToken(token);
     if (!payload) return null;
-    return { userId: payload.userId, username: payload.username, role: payload.role };
+
+    // DB liveness check: verify user still active and role/version unchanged
+    const dbUser = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: { isActive: true, role: true, sessionVersion: true },
+    }).catch(() => null);
+
+    if (!dbUser) return null;
+    if (!isSessionValid(payload.sessionVersion, dbUser.sessionVersion, dbUser.isActive)) return null;
+
+    // Use DB role (in case admin changed it since token was issued)
+    return { userId: payload.userId, username: payload.username, role: dbUser.role };
   } catch {
     return null;
   }

@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState, useTransition, useRef } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { createManufacturingOrder } from '@/lib/actions/erp';
 import {
     ShoppingCart, Search, Eye, Printer, X, CheckCircle, Clock,
     AlertCircle, Ban, Plus, Package, Play, Send, Pause, RefreshCw,
-    Activity, User, Cpu, FileText, Zap, ChevronRight,
+    Activity, User, Cpu, FileText, ChevronRight,
 } from 'lucide-react';
 import styles from './planner.module.css';
 import {
@@ -137,6 +137,7 @@ function ActivityItem({ act, isLast }: { act: any; isLast: boolean }) {
 
 export default function PlannerPage() {
     const [products,     setProducts]     = useState<any[]>([]);
+    const [machines,     setMachines]     = useState<any[]>([]);
     const [orders,       setOrders]       = useState<any[]>([]);
     const [filtered,     setFiltered]     = useState<any[]>([]);
     const [isLoading,    setIsLoading]    = useState(true);
@@ -149,14 +150,15 @@ export default function PlannerPage() {
     const [activities,   setActivities]   = useState<any[]>([]);
     const [activeTab,    setActiveTab]    = useState<'details' | 'timeline'>('details');
 
-    const [userRole, setUserRole]      = useState<string>('ADMIN');
+    const [userRole, setUserRole]      = useState<string>('');
     const [msg, setMsg]               = useState<{ text: string; type: 'success' | 'error' } | null>(null);
-    const [isPending, startTransition] = useTransition();
 
-    // Demo Mode auto-simulation
-    const [demoMode,     setDemoMode]    = useState(false);
-    const [demoRunning,  setDemoRunning] = useState(false);
-    const demoRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    useEffect(() => {
+        fetch('/api/session').then(r => r.json())
+            .then(d => { if (d.role) setUserRole(d.role); })
+            .catch(() => {});
+    }, []);
+    const [isPending, startTransition] = useTransition();
 
     const showMsg = (text: string, type: 'success' | 'error' = 'success') => {
         setMsg({ text, type });
@@ -164,72 +166,33 @@ export default function PlannerPage() {
     };
 
     const loadData = async () => {
+        setIsLoading(true);
         try {
-            const res = await fetch('/api/orders').catch(() => null);
-            if (res?.ok) {
-                const data = await res.json();
-                setProducts(data.products || []);
-                setOrders(data.orders   || []);
-            } else {
-                setProducts([
-                    { id: '1', sku: 'PMP-HG-101', name: 'Pump Housing Assembly' },
-                    { id: '2', sku: 'VLV-WU-202', name: 'Valve Welding Unit'     },
-                ]);
+            const [ordersRes, productsRes, machinesRes] = await Promise.all([
+                fetch('/api/orders'),
+                fetch('/api/products'),
+                fetch('/api/machines'),
+            ]);
+            if (ordersRes.ok) {
+                const d = await ordersRes.json();
+                const list = d.orders ?? d ?? [];
+                setOrders(list);
+                setFiltered(list);
             }
-        } finally { setIsLoading(false); }
+            if (productsRes.ok) {
+                const d = await productsRes.json();
+                setProducts(d.products ?? d ?? []);
+            }
+            if (machinesRes.ok) {
+                const d = await machinesRes.json();
+                setMachines(d.machines ?? d ?? []);
+            }
+        } catch { /* network error */ }
+        setIsLoading(false);
     };
 
-    useEffect(() => {
-        fetch('/api/session').then(r => r.json()).then(d => { if (d?.role) setUserRole(d.role); }).catch(() => {});
-        loadData();
-    }, []);
+    useEffect(() => { loadData(); }, []);
 
-    useEffect(() => {
-        let result = [...orders];
-        const q = searchText.trim().toLowerCase();
-        if (q) result = result.filter(o =>
-            o.orderNumber?.toLowerCase().includes(q) ||
-            o.product?.name?.toLowerCase().includes(q) ||
-            o.product?.sku?.toLowerCase().includes(q)
-        );
-        if (statusFilter !== 'All Status') result = result.filter(o => o.status === statusFilter);
-        setFiltered(result);
-        setPage(1);
-    }, [searchText, statusFilter, orders]);
-
-    // Demo Mode interval
-    useEffect(() => {
-        if (demoMode && !demoRef.current) {
-            setDemoRunning(true);
-            demoRef.current = setInterval(async () => {
-                try {
-                    const res = await fetch('/api/demo/simulate', { method: 'POST' });
-                    const data = await res.json();
-                    if (data.updates?.length > 0) {
-                        showMsg(`[Demo] ${data.updates.map((u: any) => `${u.orderNumber}: ${u.from} → ${u.to}`).join(' | ')}`);
-                    }
-                    await loadData();
-                    // Refresh open modal if any
-                    if (viewOrder?.id) {
-                        const r = await fetch(`/api/orders/${viewOrder.id}`);
-                        const d = await r.json();
-                        setViewOrder(d);
-                        const ra = await fetch(`/api/orders/${viewOrder.id}/activity`);
-                        setActivities(await ra.json());
-                    }
-                } catch {}
-            }, 8000); // every 8s
-        }
-        if (!demoMode && demoRef.current) {
-            clearInterval(demoRef.current);
-            demoRef.current = null;
-            setDemoRunning(false);
-        }
-        return () => {};
-    }, [demoMode]);
-
-    // Cleanup on unmount
-    useEffect(() => () => { if (demoRef.current) clearInterval(demoRef.current); }, []);
 
     const totalPages   = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     const pageOrders   = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -271,12 +234,25 @@ export default function PlannerPage() {
         w.document.close();
     };
 
-    const handleStatusChange = async (id: string, newStatus: string, orderNumber?: string) => {
+    const handleStatusChange = async (id: string, newStatus: string, orderNumber?: string, notes?: string) => {
         try {
+            let statusNotes = notes;
+            if (newStatus === 'CANCELLED' && !statusNotes) {
+                const reason = prompt(`Reason for cancelling ${orderNumber ?? 'this order'}:\n(minimum 5 characters)`);
+                if (!reason || reason.trim().length < 5) {
+                    showMsg('Cancellation requires a reason (minimum 5 characters).', 'error');
+                    return;
+                }
+                statusNotes = reason.trim();
+            }
+            if (newStatus === 'ON_HOLD' && !statusNotes) {
+                const reason = prompt(`Reason for placing ${orderNumber ?? 'this order'} on hold:`);
+                if (reason) statusNotes = reason.trim();
+            }
             const res = await fetch(`/api/orders/${id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: newStatus }),
+                body: JSON.stringify({ status: newStatus, notes: statusNotes }),
             });
             const data = await res.json();
             if (res.ok) {
@@ -332,23 +308,6 @@ export default function PlannerPage() {
                         </div>
                     </div>
 
-                    {/* Demo Mode Toggle */}
-                    <button
-                        onClick={() => setDemoMode(d => !d)}
-                        style={{
-                            display: 'flex', alignItems: 'center', gap: 8,
-                            padding: '0.55rem 1.2rem', borderRadius: 999,
-                            border: `2px solid ${demoMode ? '#10b981' : 'rgba(255,255,255,0.35)'}`,
-                            background: demoMode ? '#10b98122' : 'rgba(255,255,255,0.1)',
-                            color: demoMode ? '#10b981' : '#fff',
-                            fontWeight: 800, fontSize: 13, cursor: 'pointer',
-                            transition: 'all 0.2s',
-                        }}
-                    >
-                        <Zap size={14} style={{ animation: demoRunning ? 'pulse 1s infinite' : 'none' }} />
-                        Demo Mode: {demoMode ? 'ON' : 'OFF'}
-                        {demoRunning && <span style={{ fontSize: 10, opacity: 0.75 }}>auto-simulating…</span>}
-                    </button>
                 </div>
             </div>
 
@@ -379,7 +338,7 @@ export default function PlannerPage() {
                                 startTransition(async () => {
                                     try {
                                         await createManufacturingOrder(fd);
-                                        showMsg('Order released to shop floor!');
+                                        showMsg('Work order created (PLANNED). Release it to start production.');
                                         await loadData();
                                     } catch (e: any) {
                                         showMsg(e.message || 'Failed to create order', 'error');
@@ -405,16 +364,37 @@ export default function PlannerPage() {
                                     </div>
                                     <div className={styles.formGroup}>
                                         <label className={styles.formLabel}>Priority</label>
-                                        <select name="priority" className={styles.formSelect} style={{ minHeight: 42 }}>
+                                        <select name="priority" defaultValue="2" className={styles.formSelect} style={{ minHeight: 42 }}>
                                             <option value="1">1 — Low</option>
                                             <option value="2">2 — Normal</option>
-                                            <option value="3" selected>3 — High</option>
+                                            <option value="3">3 — High</option>
                                             <option value="4">4 — URGENT</option>
                                         </select>
                                     </div>
+                                    <div className={styles.formGroup}>
+                                        <label className={styles.formLabel}>Machine (optional)</label>
+                                        <select name="machineId" className={styles.formSelect} style={{ minHeight: 42 }}>
+                                            <option value="">— Unassigned —</option>
+                                            {machines.map((m: any) => (
+                                                <option key={m.id} value={m.id} disabled={m.status === 'DOWN' || m.status === 'MAINTENANCE'}>
+                                                    {m.code}{m.name ? ` — ${m.name}` : ''}{m.status === 'DOWN' ? ' [DOWN]' : m.status === 'MAINTENANCE' ? ' [MAINT]' : ''}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className={styles.formGroup}>
+                                        <label className={styles.formLabel}>Due Date</label>
+                                        <input
+                                            name="dueDate"
+                                            type="date"
+                                            defaultValue={new Date(Date.now() + 86400000 * 7).toISOString().slice(0, 10)}
+                                            className={styles.formInput}
+                                            style={{ minHeight: 42 }}
+                                        />
+                                    </div>
                                 </div>
                                 <button type="submit" className={styles.submitButton} disabled={isPending} style={{ width: '100%', minHeight: 48, fontSize: '1rem' }}>
-                                    {isPending ? 'Releasing to Shop Floor…' : 'Release to Shop Floor'}
+                                    {isPending ? 'Creating Work Order…' : 'Create Work Order (PLANNED)'}
                                 </button>
                             </form>
 
@@ -527,7 +507,7 @@ export default function PlannerPage() {
                                                         </button>
                                                         {!isTerminal(order.status) && (
                                                             <button className={styles.actionIcon}
-                                                                onClick={() => { if (confirm(`Cancel ${order.orderNumber}?`)) handleStatusChange(order.id, 'CANCELLED', order.orderNumber); }}
+                                                                onClick={() => handleStatusChange(order.id, 'CANCELLED', order.orderNumber)}
                                                                 style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#ef4444', borderColor: 'rgba(239,68,68,0.3)' }}>
                                                                 <X size={12} /> Cancel
                                                             </button>
@@ -672,10 +652,7 @@ export default function PlannerPage() {
                                                 const color = STATUS_COLORS[nextStatus] ?? '#64748b';
                                                 return (
                                                     <button key={nextStatus}
-                                                        onClick={() => {
-                                                            if (isCancel && !confirm(`Cancel order ${viewOrder.orderNumber}?`)) return;
-                                                            handleStatusChange(viewOrder.id, nextStatus, viewOrder.orderNumber);
-                                                        }}
+                                                        onClick={() => handleStatusChange(viewOrder.id, nextStatus, viewOrder.orderNumber)}
                                                         style={{
                                                             minHeight: 40, padding: '0 14px', borderRadius: '0.6rem',
                                                             border: isCancel ? 'none' : `1px solid ${color}40`,
@@ -720,3 +697,4 @@ export default function PlannerPage() {
         </div>
     );
 }
+

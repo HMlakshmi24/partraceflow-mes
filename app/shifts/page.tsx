@@ -1,26 +1,37 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Clock, Users, Play, Square, LogIn, LogOut, Plus, TrendingUp, Calendar, ChevronRight } from 'lucide-react';
+import { Clock, Users, Play, Square, LogIn, LogOut, Plus, TrendingUp, Calendar, ChevronRight, Settings } from 'lucide-react';
+
+interface ShiftTemplate {
+    id: string;
+    name: string;
+    startTime: string;
+    endTime: string;
+    targetQuantity: number | null;
+    isActive: boolean;
+}
 
 interface ShiftSchedule {
     id: string;
     date: string;
     status: 'PLANNED' | 'ACTIVE' | 'COMPLETED';
     targetQuantity: number;
-    shift: { name: string; type: string; startTime: string; endTime: string; durationHours: number };
+    shift?: { name: string; type?: string; startTime: string; endTime: string; durationHours: number } | null;
+    template?: { name: string; startTime: string; endTime: string } | null;
     operatorShifts: { id: string; userId: string; role: string; clockIn: string; clockOut?: string; user: { username: string } }[];
     shiftProduction?: { actualQuantity: number; goodQuantity: number; scrapQuantity: number; oee?: number; availability?: number; performance?: number; quality?: number };
 }
 
-interface Shift {
-    id: string;
-    name: string;
-    type: string;
-    startTime: string;
-    endTime: string;
-    durationHours: number;
-    plant?: { name: string };
+// Resolved display values from whichever source populated the schedule
+function resolveShiftInfo(s: ShiftSchedule) {
+    const src = s.template ?? s.shift;
+    return {
+        name: src?.name ?? 'Shift',
+        startTime: src?.startTime ?? '',
+        endTime: src?.endTime ?? '',
+        type: s.shift?.type ?? 'DAY',
+    };
 }
 
 const STATUS_COLOR: Record<string, { bg: string; text: string; border: string }> = {
@@ -33,39 +44,75 @@ const SHIFT_COLORS: Record<string, string> = {
     DAY: '#f59e0b', EVENING: '#8b5cf6', NIGHT: '#1d4ed8',
 };
 
+// ── Validation helpers (mirror server-side rules) ─────────────────────────────
+
+function validateTemplate(name: string, startTime: string, endTime: string, qty: string): string | null {
+    if (!name.trim()) return 'Name is required';
+    const timeRe = /^([01]\d|2[0-3]):[0-5]\d$/;
+    if (!timeRe.test(startTime)) return 'Start time must be HH:MM (e.g. 06:00)';
+    if (!timeRe.test(endTime)) return 'End time must be HH:MM (e.g. 14:00)';
+    if (startTime === endTime) return 'End time must differ from start time';
+    if (qty !== '' && (isNaN(Number(qty)) || Number(qty) <= 0)) return 'Target quantity must be greater than 0';
+    return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function ShiftsPage() {
     const [schedules, setSchedules] = useState<ShiftSchedule[]>([]);
-    const [shifts, setShifts] = useState<Shift[]>([]);
+    const [templates, setTemplates] = useState<ShiftTemplate[]>([]);
     const [loading, setLoading] = useState(true);
     const [selected, setSelected] = useState<ShiftSchedule | null>(null);
     const [showCreate, setShowCreate] = useState(false);
+    const [showCreateTemplate, setShowCreateTemplate] = useState(false);
     const [toastMsg, setToastMsg] = useState<{ text: string; ok: boolean } | null>(null);
     const [clockInUser, setClockInUser] = useState('');
 
     // Create schedule form
-    const [newShiftId, setNewShiftId] = useState('');
+    const [newTemplateId, setNewTemplateId] = useState('');
     const [newDate, setNewDate] = useState(new Date().toISOString().split('T')[0]);
-    const [newTarget, setNewTarget] = useState('350');
+    const [newTarget, setNewTarget] = useState('');
+
+    // Create template form
+    const [tplName, setTplName] = useState('');
+    const [tplStart, setTplStart] = useState('');
+    const [tplEnd, setTplEnd] = useState('');
+    const [tplQty, setTplQty] = useState('');
+    const [tplSaving, setTplSaving] = useState(false);
+
+    const getErrorMessage = (err: unknown): string => err instanceof Error ? err.message : 'Failed';
 
     const toast = (text: string, ok = true) => {
         setToastMsg({ text, ok });
         setTimeout(() => setToastMsg(null), 3500);
     };
 
+    const loadTemplates = useCallback(async () => {
+        try {
+            const res = await fetch('/api/shift-templates');
+            if (res.ok) {
+                const d = await res.json();
+                setTemplates(d.templates ?? []);
+            }
+        } catch { /* ignore */ }
+    }, []);
+
     const load = useCallback(async () => {
         try {
             const res = await fetch('/api/shifts');
             if (res.ok) {
                 const d = await res.json();
-                setShifts(d.shifts ?? []);
                 setSchedules(d.schedules ?? []);
-                if (d.schedules?.length && !selected) setSelected(d.schedules[0]);
+                setSelected(curr => curr ?? d.schedules?.[0] ?? null);
             }
         } catch { /* ignore */ }
         setLoading(false);
     }, []);
 
-    useEffect(() => { load(); }, [load]);
+    useEffect(() => {
+        load();
+        loadTemplates();
+    }, [load, loadTemplates]);
 
     const post = async (body: object) => {
         const res = await fetch('/api/shifts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -76,35 +123,65 @@ export default function ShiftsPage() {
 
     const handleStart = async (id: string) => {
         try { await post({ action: 'start_shift', scheduleId: id }); toast('Shift started'); load(); }
-        catch (e: any) { toast(e.message, false); }
+        catch (err) { toast(getErrorMessage(err), false); }
     };
 
     const handleClose = async (id: string) => {
         try { await post({ action: 'close_shift', scheduleId: id }); toast('Shift closed'); load(); }
-        catch (e: any) { toast(e.message, false); }
+        catch (err) { toast(getErrorMessage(err), false); }
     };
 
     const handleClockIn = async (scheduleId: string) => {
         if (!clockInUser.trim()) { toast('Enter username', false); return; }
         try { await post({ action: 'clock_in', scheduleId, userId: clockInUser.trim(), role: 'OPERATOR' }); toast(`${clockInUser} clocked in`); setClockInUser(''); load(); }
-        catch (e: any) { toast(e.message, false); }
+        catch (err) { toast(getErrorMessage(err), false); }
     };
 
     const handleClockOut = async (scheduleId: string, userId: string) => {
         try { await post({ action: 'clock_out', scheduleId, userId }); toast(`${userId} clocked out`); load(); }
-        catch (e: any) { toast(e.message, false); }
+        catch (err) { toast(getErrorMessage(err), false); }
     };
 
     const handleCreateSchedule = async () => {
-        if (!newShiftId) { toast('Select a shift template', false); return; }
+        if (!newTemplateId) { toast('Select a shift template', false); return; }
+        const targetNum = newTarget.trim() ? parseInt(newTarget) : undefined;
+        if (newTarget.trim() && (!targetNum || targetNum <= 0)) { toast('Target quantity must be greater than 0', false); return; }
         try {
-            await post({ action: 'create_schedule', shiftId: newShiftId, date: newDate, targetQuantity: parseInt(newTarget) || 350 });
-            toast('Schedule created'); setShowCreate(false); load();
-        } catch (e: any) { toast(e.message, false); }
+            await post({ action: 'create_schedule', templateId: newTemplateId, date: newDate, targetQuantity: targetNum });
+            toast('Shift scheduled'); setShowCreate(false); setNewTemplateId(''); setNewTarget(''); load();
+        } catch (err) { toast(getErrorMessage(err), false); }
     };
 
-    const activeSchedule = schedules.find(s => s.status === 'ACTIVE');
+    const handleCreateTemplate = async () => {
+        const err = validateTemplate(tplName, tplStart, tplEnd, tplQty);
+        if (err) { toast(err, false); return; }
+
+        setTplSaving(true);
+        try {
+            const res = await fetch('/api/shift-templates', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: tplName.trim().split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' '),
+                    startTime: tplStart,
+                    endTime: tplEnd,
+                    targetQuantity: tplQty ? parseInt(tplQty) : undefined,
+                }),
+            });
+            const d = await res.json();
+            if (!res.ok) throw new Error(d.error ?? 'Failed');
+            toast(`Template "${tplName.trim()}" created`);
+            setTplName(''); setTplStart(''); setTplEnd(''); setTplQty('');
+            setShowCreateTemplate(false);
+            await loadTemplates();
+            // Pre-select the new template
+            setNewTemplateId(d.template.id);
+        } catch (err) { toast(getErrorMessage(err), false); }
+        finally { setTplSaving(false); }
+    };
+
     const todaySchedules = schedules.filter(s => s.date.startsWith(new Date().toISOString().split('T')[0]));
+    const activeTemplates = templates.filter(t => t.isActive);
 
     return (
         <div style={{ padding: '1.5rem', fontFamily: 'inherit', background: 'var(--background)', minHeight: '100vh' }}>
@@ -121,9 +198,14 @@ export default function ShiftsPage() {
                         Manage shifts, operator clock-in/out, and production targets
                     </p>
                 </div>
-                <button onClick={() => setShowCreate(true)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1.25rem', borderRadius: '0.6rem', border: 'none', background: '#3b82f6', color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: '0.9rem' }}>
-                    <Plus size={16} /> Schedule Shift
-                </button>
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <button onClick={() => setShowCreateTemplate(true)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1.25rem', borderRadius: '0.6rem', border: '1px solid #d1d5db', background: 'var(--card-bg)', color: 'var(--foreground)', fontWeight: 600, cursor: 'pointer', fontSize: '0.9rem' }}>
+                        <Settings size={16} /> Shift Templates
+                    </button>
+                    <button onClick={() => setShowCreate(true)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1.25rem', borderRadius: '0.6rem', border: 'none', background: '#3b82f6', color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: '0.9rem' }}>
+                        <Plus size={16} /> Schedule Shift
+                    </button>
+                </div>
             </div>
 
             {/* KPI row */}
@@ -154,11 +236,12 @@ export default function ShiftsPage() {
                             <div style={{ background: 'var(--card-bg)', borderRadius: '1rem', border: '1px solid #e5e7eb', padding: '3rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
                                 <Clock size={40} style={{ opacity: 0.3, marginBottom: '0.75rem' }} />
                                 <p style={{ fontWeight: 600 }}>No shifts scheduled</p>
-                                <p style={{ fontSize: '0.85rem' }}>Click "Schedule Shift" to create one.</p>
+                                <p style={{ fontSize: '0.85rem' }}>Click &quot;Schedule Shift&quot; to create one.</p>
                             </div>
                         ) : schedules.map(s => {
+                            const info = resolveShiftInfo(s);
                             const cfg = STATUS_COLOR[s.status];
-                            const shiftColor = SHIFT_COLORS[s.shift?.type ?? 'DAY'] ?? 'var(--muted-foreground)';
+                            const shiftColor = SHIFT_COLORS[info.type] ?? 'var(--muted-foreground)';
                             const activeOps = s.operatorShifts.filter(o => !o.clockOut);
                             const prod = s.shiftProduction;
                             return (
@@ -167,8 +250,8 @@ export default function ShiftsPage() {
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                                             <div style={{ width: 10, height: 10, borderRadius: '50%', background: shiftColor }} />
                                             <div>
-                                                <div style={{ fontWeight: 700, fontSize: '1rem' }}>{s.shift?.name ?? 'Shift'}</div>
-                                                <div style={{ fontSize: '0.78rem', color: 'var(--muted-foreground)' }}>{new Date(s.date).toLocaleDateString()} · {s.shift?.startTime} – {s.shift?.endTime}</div>
+                                                <div style={{ fontWeight: 700, fontSize: '1rem' }}>{info.name}</div>
+                                                <div style={{ fontSize: '0.78rem', color: 'var(--muted-foreground)' }}>{new Date(s.date).toLocaleDateString()} · {info.startTime} – {info.endTime}</div>
                                             </div>
                                         </div>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -286,32 +369,131 @@ export default function ShiftsPage() {
                 </div>
             )}
 
-            {/* Create schedule modal */}
+            {/* ── Schedule Shift modal ──────────────────────────────────────── */}
             {showCreate && (
                 <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-                    <div style={{ background: 'var(--card-bg)', borderRadius: '1rem', padding: '2rem', width: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                    <div style={{ background: 'var(--card-bg)', borderRadius: '1rem', padding: '2rem', width: 460, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
                         <h2 style={{ margin: '0 0 1.5rem', fontSize: '1.2rem', fontWeight: 700 }}>Schedule a Shift</h2>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                             <div>
-                                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--foreground)', marginBottom: '0.4rem' }}>Shift Template</label>
-                                <select value={newShiftId} onChange={e => setNewShiftId(e.target.value)} style={{ width: '100%', padding: '0.6rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.9rem' }}>
-                                    <option value="">— Select —</option>
-                                    {shifts.map(s => <option key={s.id} value={s.id}>{s.name} ({s.startTime}–{s.endTime})</option>)}
-                                </select>
-                                {shifts.length === 0 && <div style={{ fontSize: '0.78rem', color: '#f59e0b', marginTop: '0.3rem' }}>No shift templates yet. Seed demo data first.</div>}
+                                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>Shift Template</label>
+                                {activeTemplates.length === 0 ? (
+                                    <div style={{ padding: '0.85rem 1rem', borderRadius: '0.5rem', border: '1px dashed #fbbf24', background: '#fffbeb', color: '#92400e', fontSize: '0.85rem' }}>
+                                        No shift templates available. Create one first.
+                                        <button
+                                            onClick={() => { setShowCreate(false); setShowCreateTemplate(true); }}
+                                            style={{ marginLeft: '0.75rem', padding: '3px 10px', borderRadius: '0.3rem', border: 'none', background: '#f59e0b', color: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem' }}
+                                        >
+                                            Create Template
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <select
+                                        value={newTemplateId}
+                                        onChange={e => {
+                                            setNewTemplateId(e.target.value);
+                                            const t = activeTemplates.find(t => t.id === e.target.value);
+                                            if (t?.targetQuantity && !newTarget) setNewTarget(String(t.targetQuantity));
+                                        }}
+                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.9rem' }}
+                                    >
+                                        <option value="">— Select —</option>
+                                        {activeTemplates.map(t => (
+                                            <option key={t.id} value={t.id}>{t.name} ({t.startTime}–{t.endTime})</option>
+                                        ))}
+                                    </select>
+                                )}
                             </div>
                             <div>
-                                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--foreground)', marginBottom: '0.4rem' }}>Date</label>
+                                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>Date</label>
                                 <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} style={{ width: '100%', padding: '0.6rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.9rem', boxSizing: 'border-box' }} />
                             </div>
                             <div>
-                                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: 'var(--foreground)', marginBottom: '0.4rem' }}>Target Quantity</label>
-                                <input type="number" value={newTarget} onChange={e => setNewTarget(e.target.value)} style={{ width: '100%', padding: '0.6rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.9rem', boxSizing: 'border-box' }} />
+                                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>Target Quantity <span style={{ color: '#9ca3af', fontWeight: 400 }}>(optional — uses template default if blank)</span></label>
+                                <input type="number" min="1" value={newTarget} onChange={e => setNewTarget(e.target.value)} placeholder="e.g. 350" style={{ width: '100%', padding: '0.6rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.9rem', boxSizing: 'border-box' }} />
                             </div>
                         </div>
                         <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
-                            <button onClick={() => setShowCreate(false)} style={{ flex: 1, padding: '0.75rem', borderRadius: '0.5rem', border: '1px solid #e5e7eb', background: 'var(--card-bg)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
-                            <button onClick={handleCreateSchedule} style={{ flex: 1, padding: '0.75rem', borderRadius: '0.5rem', border: 'none', background: '#3b82f6', color: '#fff', cursor: 'pointer', fontWeight: 600 }}>Create</button>
+                            <button onClick={() => { setShowCreate(false); setNewTemplateId(''); setNewTarget(''); }} style={{ flex: 1, padding: '0.75rem', borderRadius: '0.5rem', border: '1px solid #e5e7eb', background: 'var(--card-bg)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+                            <button onClick={handleCreateSchedule} disabled={activeTemplates.length === 0} style={{ flex: 1, padding: '0.75rem', borderRadius: '0.5rem', border: 'none', background: activeTemplates.length === 0 ? '#d1d5db' : '#3b82f6', color: '#fff', cursor: activeTemplates.length === 0 ? 'not-allowed' : 'pointer', fontWeight: 600 }}>Create</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Create Shift Template modal ───────────────────────────────── */}
+            {showCreateTemplate && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+                    <div style={{ background: 'var(--card-bg)', borderRadius: '1rem', padding: '2rem', width: 460, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                        <h2 style={{ margin: '0 0 0.25rem', fontSize: '1.2rem', fontWeight: 700 }}>Create Shift Template</h2>
+                        <p style={{ margin: '0 0 1.5rem', fontSize: '0.85rem', color: 'var(--muted-foreground)' }}>Templates define shift times that can be reused when scheduling.</p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            <div>
+                                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>Name <span style={{ color: '#ef4444' }}>*</span></label>
+                                <input
+                                    value={tplName}
+                                    onChange={e => setTplName(e.target.value)}
+                                    placeholder="e.g. Morning Shift"
+                                    style={{ width: '100%', padding: '0.6rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.9rem', boxSizing: 'border-box' }}
+                                />
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>Start Time <span style={{ color: '#ef4444' }}>*</span></label>
+                                    <input
+                                        type="time"
+                                        value={tplStart}
+                                        onChange={e => setTplStart(e.target.value)}
+                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.9rem', boxSizing: 'border-box' }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>End Time <span style={{ color: '#ef4444' }}>*</span></label>
+                                    <input
+                                        type="time"
+                                        value={tplEnd}
+                                        onChange={e => setTplEnd(e.target.value)}
+                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.9rem', boxSizing: 'border-box' }}
+                                    />
+                                </div>
+                            </div>
+                            {tplStart && tplEnd && tplStart === tplEnd && (
+                                <div style={{ fontSize: '0.8rem', color: '#ef4444' }}>End time must differ from start time</div>
+                            )}
+                            <div>
+                                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>Default Target Quantity <span style={{ color: '#9ca3af', fontWeight: 400 }}>(optional)</span></label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    value={tplQty}
+                                    onChange={e => setTplQty(e.target.value)}
+                                    placeholder="e.g. 350"
+                                    style={{ width: '100%', padding: '0.6rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.9rem', boxSizing: 'border-box' }}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Existing templates list */}
+                        {templates.length > 0 && (
+                            <div style={{ marginTop: '1.25rem', borderTop: '1px solid #f1f5f9', paddingTop: '1rem' }}>
+                                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--muted-foreground)', marginBottom: '0.5rem' }}>Existing Templates</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: 140, overflowY: 'auto' }}>
+                                    {templates.map(t => (
+                                        <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.4rem 0.6rem', borderRadius: '0.35rem', background: 'var(--surface-muted)', fontSize: '0.82rem' }}>
+                                            <span style={{ fontWeight: 600 }}>{t.name}</span>
+                                            <span style={{ color: 'var(--muted-foreground)' }}>{t.startTime}–{t.endTime}{t.targetQuantity ? ` · ${t.targetQuantity} units` : ''}</span>
+                                            {!t.isActive && <span style={{ fontSize: '0.72rem', color: '#9ca3af', marginLeft: '0.5rem' }}>inactive</span>}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
+                            <button onClick={() => { setShowCreateTemplate(false); setTplName(''); setTplStart(''); setTplEnd(''); setTplQty(''); }} style={{ flex: 1, padding: '0.75rem', borderRadius: '0.5rem', border: '1px solid #e5e7eb', background: 'var(--card-bg)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+                            <button onClick={handleCreateTemplate} disabled={tplSaving} style={{ flex: 1, padding: '0.75rem', borderRadius: '0.5rem', border: 'none', background: tplSaving ? '#93c5fd' : '#3b82f6', color: '#fff', cursor: tplSaving ? 'not-allowed' : 'pointer', fontWeight: 600 }}>
+                                {tplSaving ? 'Saving…' : 'Create Template'}
+                            </button>
                         </div>
                     </div>
                 </div>

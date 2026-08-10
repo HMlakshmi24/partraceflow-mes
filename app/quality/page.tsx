@@ -4,21 +4,33 @@ import { CheckCircle, XCircle, Camera, Save, Clipboard, TrendingUp, ChevronDown,
 import { useEffect, useState } from 'react';
 import styles from './quality.module.css';
 
-interface Measurements { diameter: string; weight: string; torque: string; }
 interface VisualChecks { surfaceFinish: boolean; colorMatch: boolean; labelAlignment: boolean; }
 
-const SPECS = {
-    diameter: { min: 24.9, max: 25.1, unit: 'mm', placeholder: 'Spec: 25.0 ±0.1' },
-    weight: { min: 135, max: 145, unit: 'g', placeholder: 'Spec: 140 ±5' },
-    torque: { min: 12.5, max: 999, unit: 'Nm', placeholder: 'Min: 12.5' },
-};
+interface QualitySpec {
+    id: string;
+    parameterName: string;
+    unit: string | null;
+    nominalValue: number | null;
+    lowerSpecLimit: number | null;
+    upperSpecLimit: number | null;
+}
 
-function specStatus(field: keyof typeof SPECS, val: string): 'ok' | 'fail' | 'none' {
-    if (!val) return 'none';
+function specStatus(spec: QualitySpec | null, val: string): 'ok' | 'fail' | 'none' {
+    if (!val || !spec) return 'none';
     const n = parseFloat(val);
     if (isNaN(n)) return 'none';
-    const s = SPECS[field];
-    return n >= s.min && n <= s.max ? 'ok' : 'fail';
+    const min = spec.lowerSpecLimit ?? -Infinity;
+    const max = spec.upperSpecLimit ?? Infinity;
+    return n >= min && n <= max ? 'ok' : 'fail';
+}
+
+function specPlaceholder(spec: QualitySpec): string {
+    const parts: string[] = [];
+    if (spec.nominalValue != null) parts.push(`Nom: ${spec.nominalValue}`);
+    if (spec.lowerSpecLimit != null) parts.push(`Min: ${spec.lowerSpecLimit}`);
+    if (spec.upperSpecLimit != null) parts.push(`Max: ${spec.upperSpecLimit}`);
+    if (spec.unit) parts.push(spec.unit);
+    return parts.join(' | ') || 'Enter value';
 }
 
 // ── Supervisor Approval Panel ──────────────────────────────────────────────
@@ -156,12 +168,14 @@ export default function QualityGatePage() {
     const [orderId, setOrderId] = useState('');
     const [failedChecks, setFailedChecks] = useState<any[]>([]);
     const [showFailed, setShowFailed] = useState(false);
-    const [inspector] = useState('Inspector_01');
+    const [inspector, setInspector] = useState('');
     const [status, setStatus] = useState<'PENDING' | 'PASS' | 'FAIL' | 'REWORK'>('PENDING');
     const [notes, setNotes] = useState('');
     const [defectType, setDefect] = useState('');
-    const [measurements, setMeas] = useState<Measurements>({ diameter: '', weight: '', torque: '' });
+    const [specs, setSpecs] = useState<QualitySpec[]>([]);
+    const [measurements, setMeas] = useState<Record<string, string>>({});
     const [visuals, setVisuals] = useState<VisualChecks>({ surfaceFinish: false, colorMatch: false, labelAlignment: false });
+    const [evidenceFiles, setEvidenceFiles] = useState<File[]>([]);
     const [submitting, setSubmit] = useState(false);
     const [result, setResult] = useState<{ success: boolean; message: string; orderStatus?: string } | null>(null);
     const [history, setHistory] = useState<any[]>([]);
@@ -178,15 +192,19 @@ export default function QualityGatePage() {
         setApprovalKey(k => k + 1);
     }
 
-    // Load orders for inspection
+    useEffect(() => {
+        fetch('/api/session').then(r => r.json())
+            .then(d => { if (d.username) setInspector(d.username); })
+            .catch(() => {});
+    }, []);
+
     useEffect(() => {
         fetch('/api/quality')
             .then(r => r.json())
             .then(data => {
                 if (Array.isArray(data)) setOrders(data);
-                else if (data?.error) console.warn('[Quality] API error:', data.error);
             })
-            .catch(err => console.error('[Quality] fetch failed:', err));
+            .catch(() => {});
         // Load failed QC records
         fetch('/api/quality?result=FAIL&limit=50')
             .then(r => r.json())
@@ -194,23 +212,41 @@ export default function QualityGatePage() {
             .catch(() => {});
     }, []);
 
-    // Load inspection history when order selected
     useEffect(() => {
-        if (!orderId) { setHistory([]); return; }
+        if (!orderId) { setHistory([]); setSpecs([]); setMeas({}); return; }
+        // Bug fix (found via audit): switching the order dropdown quickly
+        // (A -> B) fired two new fetches without cancelling A's in-flight
+        // ones. If A's response arrived after B's — a plausible network
+        // race, not a contrived edge case — it silently overwrote B's
+        // already-loaded specs/history while `orderId` still correctly
+        // showed B, so the PASS/FAIL auto-suggestion and out-of-spec
+        // highlighting were computed against the wrong order's spec limits.
+        // `ignore` gates every setState in this effect's callbacks so only
+        // the most recent order's response can ever apply.
+        let ignore = false;
         fetch(`/api/quality?orderId=${orderId}`)
             .then(r => r.json())
-            .then(data => { if (Array.isArray(data)) setHistory(data); })
+            .then(data => { if (!ignore && Array.isArray(data)) setHistory(data); })
             .catch(() => { });
+        fetch(`/api/quality?specs=${orderId}`)
+            .then(r => r.json())
+            .then(data => {
+                if (ignore) return;
+                const s: QualitySpec[] = data.specs ?? [];
+                setSpecs(s);
+                const init: Record<string, string> = {};
+                s.forEach(sp => { init[sp.id] = ''; });
+                setMeas(init);
+            })
+            .catch(() => { });
+        return () => { ignore = true; };
     }, [orderId]);
 
-    // Auto-suggest outcome based on measurements + visual checks
     const autoSuggest = (): 'PASS' | 'FAIL' | null => {
         const allVisual = visuals.surfaceFinish && visuals.colorMatch && visuals.labelAlignment;
-        const dSt = specStatus('diameter', measurements.diameter);
-        const wSt = specStatus('weight', measurements.weight);
-        const tSt = specStatus('torque', measurements.torque);
-        if (dSt === 'fail' || wSt === 'fail' || tSt === 'fail') return 'FAIL';
-        if (allVisual && dSt === 'ok' && wSt === 'ok' && tSt === 'ok') return 'PASS';
+        const specResults = specs.map(sp => specStatus(sp, measurements[sp.id] ?? ''));
+        if (specResults.some(r => r === 'fail')) return 'FAIL';
+        if (allVisual && specs.length > 0 && specResults.every(r => r === 'ok')) return 'PASS';
         return null;
     };
 
@@ -230,7 +266,7 @@ export default function QualityGatePage() {
                     result: status === 'FAIL' ? 'FAIL' : status,
                     notes,
                     defectType: defectType || null,
-                    measurements: { diameter: measurements.diameter, weight: measurements.weight, torque: measurements.torque },
+                    measurements: Object.fromEntries(specs.map(sp => [sp.parameterName, measurements[sp.id] ?? ''])),
                     visualChecks: visuals,
                 })
             });
@@ -242,8 +278,11 @@ export default function QualityGatePage() {
                 const d3 = await r3.json();
                 if (Array.isArray(d3)) setHistory(d3);
                 setStatus('PENDING'); setNotes(''); setDefect('');
-                setMeas({ diameter: '', weight: '', torque: '' });
+                const resetMeas: Record<string, string> = {};
+                specs.forEach(sp => { resetMeas[sp.id] = ''; });
+                setMeas(resetMeas);
                 setVisuals({ surfaceFinish: false, colorMatch: false, labelAlignment: false });
+                setEvidenceFiles([]);
             } else {
                 setResult({ success: false, message: data.error || 'Submission failed' });
             }
@@ -314,7 +353,7 @@ export default function QualityGatePage() {
                             style={{ fontSize: '1rem', fontWeight: 700, fontFamily: 'monospace', background: 'rgba(255,255,255,0.15)', color: 'white', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '0.5rem', padding: '0.5rem 2rem 0.5rem 0.75rem', cursor: 'pointer', appearance: 'none', minWidth: '260px' }}
                         >
                             {orders.length === 0
-                                ? <option value="" style={{ color: 'var(--foreground)', background: 'var(--card-bg)' }}>— No orders found (seed demo data) —</option>
+                                ? <option value="" style={{ color: 'var(--foreground)', background: 'var(--card-bg)' }}>— No orders available —</option>
                                 : <><option value="" style={{ color: 'var(--foreground)', background: 'var(--card-bg)' }}>— Select Order —</option>
                                     {orders.map(o => (
                                         <option key={o.id} value={o.id} style={{ color: 'var(--foreground)', background: 'var(--card-bg)' }}>
@@ -356,6 +395,13 @@ export default function QualityGatePage() {
                 </div>
             )}
 
+            {!orderId && (
+                <div style={{ margin: '0 1rem', padding: '1rem 1.5rem', background: 'rgba(59,130,246,0.08)', border: '2px dashed rgba(59,130,246,0.3)', borderRadius: '0.75rem', textAlign: 'center' }}>
+                    <p style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--foreground)', marginBottom: '0.25rem' }}>Select a Work Order to begin inspection</p>
+                    <p style={{ fontSize: '0.85rem', color: 'var(--muted-foreground)' }}>Use the dropdown in the top-right corner to choose an order in QC_PENDING status.</p>
+                </div>
+            )}
+
             <div className={styles.content}>
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '2rem' }}>
                     {/* LEFT: INSPECTION FORM */}
@@ -392,37 +438,41 @@ export default function QualityGatePage() {
                         {/* MEASUREMENTS */}
                         <div className={styles.section}>
                             <h3 className={styles.sectionTitle}><TrendingUp size={20} /> 2. Key Measurements</h3>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                                {([
-                                    ['diameter', 'Diameter (mm)'],
-                                    ['weight', 'Weight (g)'],
-                                    ['torque', 'Torque Test (Nm)'],
-                                ] as [keyof typeof SPECS, string][]).map(([field, label]) => {
-                                    const st = specStatus(field, measurements[field as keyof Measurements]);
-                                    return (
-                                        <div key={field}>
-                                            <label style={{ display: 'block', fontSize: '0.9rem', marginBottom: '0.5rem', color: 'var(--muted-foreground)' }}>{label}</label>
-                                            <div style={{ position: 'relative' }}>
-                                                <input
-                                                    type="number"
-                                                    step="0.01"
-                                                    placeholder={SPECS[field].placeholder}
-                                                    className={styles.input}
-                                                    value={measurements[field as keyof Measurements]}
-                                                    onChange={e => setMeas(m => ({ ...m, [field]: e.target.value }))}
-                                                    style={{ borderColor: st === 'ok' ? '#10b981' : st === 'fail' ? '#ef4444' : undefined, paddingRight: '2.5rem' }}
-                                                />
-                                                {st !== 'none' && (
-                                                    <span style={{ position: 'absolute', right: '0.6rem', top: '50%', transform: 'translateY(-50%)' }}>
-                                                        {st === 'ok' ? <CheckCircle size={16} color="#10b981" /> : <XCircle size={16} color="#ef4444" />}
-                                                    </span>
-                                                )}
+                            {specs.length === 0 ? (
+                                <div style={{ color: 'var(--muted-foreground)', fontSize: '0.88rem', padding: '0.75rem', background: 'var(--surface-muted)', borderRadius: '0.5rem' }}>
+                                    {orderId ? 'No inspection parameters configured for this product. Define process parameters in the SPC module.' : 'Select a work order to load inspection parameters.'}
+                                </div>
+                            ) : (
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                    {specs.map(sp => {
+                                        const st = specStatus(sp, measurements[sp.id] ?? '');
+                                        return (
+                                            <div key={sp.id}>
+                                                <label style={{ display: 'block', fontSize: '0.9rem', marginBottom: '0.5rem', color: 'var(--muted-foreground)' }}>
+                                                    {sp.parameterName}{sp.unit ? ` (${sp.unit})` : ''}
+                                                </label>
+                                                <div style={{ position: 'relative' }}>
+                                                    <input
+                                                        type="number"
+                                                        step="0.01"
+                                                        placeholder={specPlaceholder(sp)}
+                                                        className={styles.input}
+                                                        value={measurements[sp.id] ?? ''}
+                                                        onChange={e => setMeas(m => ({ ...m, [sp.id]: e.target.value }))}
+                                                        style={{ borderColor: st === 'ok' ? '#10b981' : st === 'fail' ? '#ef4444' : undefined, paddingRight: '2.5rem' }}
+                                                    />
+                                                    {st !== 'none' && (
+                                                        <span style={{ position: 'absolute', right: '0.6rem', top: '50%', transform: 'translateY(-50%)' }}>
+                                                            {st === 'ok' ? <CheckCircle size={16} color="#10b981" /> : <XCircle size={16} color="#ef4444" />}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {st === 'fail' && <div style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '0.25rem' }}>Out of specification!</div>}
                                             </div>
-                                            {st === 'fail' && <div style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '0.25rem' }}>Out of specification!</div>}
-                                        </div>
-                                    );
-                                })}
-                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
                         </div>
 
                         {/* DEFECT TYPE (shown for REWORK/FAIL) */}
@@ -451,13 +501,31 @@ export default function QualityGatePage() {
                         {/* EVIDENCE CAPTURE */}
                         <div className={styles.section}>
                             <h3 className={styles.sectionTitle}><Camera size={20} /> {status === 'REWORK' || status === 'FAIL' ? '4' : '3'}. Evidence Capture</h3>
-                            <div style={{ border: '2px dashed var(--card-border)', borderRadius: '0.75rem', padding: '2rem', textAlign: 'center', color: 'var(--muted-foreground)', cursor: 'pointer', transition: 'all 0.2s', background: 'var(--surface-muted)' }}
-                                onDragOver={e => e.preventDefault()}
-                                onClick={() => alert('In a production system, this opens the camera or file browser. Evidence files stored in document management.')}>
-                                <Camera size={48} style={{ margin: '0 auto', marginBottom: '1rem', opacity: 0.5 }} />
-                                <p>Click or drag photos to attach evidence</p>
-                                <p style={{ fontSize: '0.8rem', marginTop: '0.5rem' }}>(JPG, PNG, PDF supported)</p>
-                            </div>
+                            <label style={{ border: '2px dashed var(--card-border)', borderRadius: '0.75rem', padding: evidenceFiles.length > 0 ? '1rem' : '2rem', textAlign: 'center', color: 'var(--muted-foreground)', cursor: 'pointer', transition: 'all 0.2s', background: 'var(--surface-muted)', display: 'block' }}>
+                                <input type="file" accept="image/*,.pdf" multiple style={{ display: 'none' }} onChange={e => {
+                                    const files = Array.from(e.target.files ?? []);
+                                    setEvidenceFiles(prev => [...prev, ...files]);
+                                }} />
+                                {evidenceFiles.length === 0 ? (
+                                    <>
+                                        <Camera size={48} style={{ margin: '0 auto', marginBottom: '1rem', opacity: 0.5 }} />
+                                        <p>Click or drag photos to attach evidence</p>
+                                        <p style={{ fontSize: '0.8rem', marginTop: '0.5rem' }}>(JPG, PNG, PDF — max 10MB each)</p>
+                                    </>
+                                ) : (
+                                    <p style={{ fontSize: '0.85rem', fontWeight: 600 }}>+ Add more files</p>
+                                )}
+                            </label>
+                            {evidenceFiles.length > 0 && (
+                                <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                                    {evidenceFiles.map((f, i) => (
+                                        <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.4rem 0.75rem', background: 'var(--surface-muted)', borderRadius: '0.4rem', fontSize: '0.85rem' }}>
+                                            <span style={{ color: 'var(--foreground)', fontWeight: 500 }}>{f.name} <span style={{ color: 'var(--muted-foreground)' }}>({(f.size / 1024).toFixed(0)} KB)</span></span>
+                                            <button onClick={() => setEvidenceFiles(prev => prev.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontWeight: 700, fontSize: '1rem' }}>×</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
 
                         {/* INSPECTION HISTORY */}
@@ -534,14 +602,28 @@ export default function QualityGatePage() {
                                     onChange={e => setNotes(e.target.value)}
                                 />
 
+                                {status === 'PASS' && !Object.values(visuals).every(Boolean) && (
+                                    <div style={{ padding: '0.65rem 0.85rem', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '0.5rem', color: '#ef4444', fontSize: '0.82rem', fontWeight: 600, marginTop: '0.75rem' }}>
+                                        All visual checks must pass before submitting PASS. ({Object.values(visuals).filter(Boolean).length}/3 completed)
+                                    </div>
+                                )}
+
                                 <button
                                     onClick={handleSubmit}
                                     className={styles.submitButton}
-                                    style={{ width: '100%', marginTop: '1rem' }}
-                                    disabled={status === 'PENDING' || submitting || !orderId || !isQCAllowed}
+                                    style={{ width: '100%', marginTop: '0.75rem' }}
+                                    disabled={
+                                        status === 'PENDING' || submitting || !orderId || !isQCAllowed
+                                        || (status === 'PASS' && !Object.values(visuals).every(Boolean))
+                                    }
                                 >
                                     <Save size={18} style={{ display: 'inline', marginRight: '6px' }} />
-                                    {submitting ? 'Submitting...' : !orderId ? 'Select an Order' : !isQCAllowed ? `Order not in QC_PENDING` : status === 'PENDING' ? 'Select Outcome' : `Submit ${status}`}
+                                    {submitting ? 'Submitting...'
+                                        : !orderId ? 'Select an Order'
+                                        : !isQCAllowed ? 'Order not in QC_PENDING'
+                                        : status === 'PENDING' ? 'Select Outcome'
+                                        : (status === 'PASS' && !Object.values(visuals).every(Boolean)) ? `Complete All Checks First (${Object.values(visuals).filter(Boolean).length}/3)`
+                                        : `Submit ${status}`}
                                 </button>
 
                                 {/* Result summary card */}
@@ -552,11 +634,11 @@ export default function QualityGatePage() {
                                             {Object.values(visuals).filter(Boolean).length}/3
                                         </strong>
                                     </div>
-                                    {(['diameter', 'weight', 'torque'] as (keyof typeof SPECS)[]).map(f => (
-                                        <div key={f} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                            <span>{f.charAt(0).toUpperCase() + f.slice(1)}</span>
-                                            <strong style={{ color: specStatus(f, measurements[f as keyof Measurements]) === 'ok' ? '#10b981' : specStatus(f, measurements[f as keyof Measurements]) === 'fail' ? '#ef4444' : '#9ca3af' }}>
-                                                {measurements[f as keyof Measurements] || '—'} {measurements[f as keyof Measurements] ? SPECS[f].unit : ''}
+                                    {specs.map(sp => (
+                                        <div key={sp.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                            <span>{sp.parameterName}</span>
+                                            <strong style={{ color: specStatus(sp, measurements[sp.id] ?? '') === 'ok' ? '#10b981' : specStatus(sp, measurements[sp.id] ?? '') === 'fail' ? '#ef4444' : '#9ca3af' }}>
+                                                {measurements[sp.id] || '—'}{sp.unit ? ` ${sp.unit}` : ''}
                                             </strong>
                                         </div>
                                     ))}

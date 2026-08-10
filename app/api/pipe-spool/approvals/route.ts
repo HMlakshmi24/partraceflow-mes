@@ -4,8 +4,14 @@ import { requireSpoolAction } from '@/lib/spoolRBAC';
 import { ApproveSpoolSchema, validationError } from '@/lib/validation';
 import { apiError, apiSuccess } from '@/lib/apiResponse';
 import { AuditService } from '@/lib/services/AuditService';
+import { requireRole } from '@/lib/api-auth';
+
+const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
 export async function GET(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const { searchParams } = new URL(req.url);
     const spoolId = searchParams.get('spoolId');
@@ -32,6 +38,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const body = await req.json();
     const parsed = ApproveSpoolSchema.safeParse(body);
@@ -138,11 +147,20 @@ export async function POST(req: NextRequest) {
       return apiSuccess({ approval });
     }
 
+    // ── bare id update / create (non-status field patch) ─────────────────────
+    // Approval/rejection of a record must go through the approve/reject actions
+    // above; strip status-defining fields here so this fallback can't be used
+    // to self-approve (CRIT-3 fix).
     if (id) {
-      const approval = await prisma.spoolApproval.update({ where: { id }, data });
+      const guard = await requireSpoolAction('APPROVE_SPOOL');
+      if (guard instanceof NextResponse) return guard;
+      const { status: _status, approvedAt: _approvedAt, approverName: _approverName, signature: _signature, ...safeData } = data;
+      const approval = await prisma.spoolApproval.update({ where: { id }, data: safeData });
       return apiSuccess({ approval });
     }
 
+    const guard = await requireSpoolAction('APPROVE_SPOOL');
+    if (guard instanceof NextResponse) return guard;
     const approval = await prisma.spoolApproval.create({ data });
     return apiSuccess({ approval });
   } catch (e: any) {

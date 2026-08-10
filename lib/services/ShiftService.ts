@@ -51,7 +51,7 @@ export class ShiftService {
       include: { shift: true }
     })
 
-    if (production && schedule) {
+    if (production && schedule && schedule.shift) {
       const shiftMinutes = schedule.shift.durationHours * 60
       const netOperatingTime = shiftMinutes - production.plannedDowntime - production.unplannedDowntime
       const availability = netOperatingTime / shiftMinutes

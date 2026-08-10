@@ -1,9 +1,8 @@
-/**
- * Industry-Ready Error Handling for MES
- * Provides comprehensive error handling, logging, and user feedback
- */
-
+﻿import { prisma } from '@/lib/services/database';
+import { createLogger } from '@/lib/logger';
 import { ValidationError, BusinessLogicError, SystemError } from './validation';
+
+const log = createLogger('errorHandler');
 
 export interface APIResponse<T = any> {
     success: boolean;
@@ -38,10 +37,10 @@ export class ErrorHandler {
         }
         
         if (error instanceof SystemError) {
-            console.error('System Error:', {
+            log.error('system error', {
                 message: error.message,
-                originalError: error.originalError,
-                timestamp
+                originalError: error.originalError?.message,
+                timestamp,
             });
             
             return {
@@ -53,11 +52,7 @@ export class ErrorHandler {
         }
         
         if (error instanceof Error) {
-            console.error('Unexpected Error:', {
-                message: error.message,
-                stack: error.stack,
-                timestamp
-            });
+            log.error('unexpected error', { message: error.message, timestamp });
             
             return {
                 success: false,
@@ -67,7 +62,7 @@ export class ErrorHandler {
             };
         }
         
-        console.error('Unknown Error:', error);
+        log.error('unknown error', { error: String(error) });
         
         return {
             success: false,
@@ -104,10 +99,7 @@ export class ErrorHandler {
             context
         };
         
-        console.error('MES Error Log:', JSON.stringify(logEntry, null, 2));
-        
-        // In production, you would send this to a logging service
-        // await sendToLoggingService(logEntry);
+        log.error('MES error', logEntry);
     }
 }
 
@@ -130,13 +122,11 @@ export function createSystemError(component: string, operation: string, message:
 
 // Database Transaction Helper
 export async function withTransaction<T>(
-    transaction: (tx: any) => Promise<T>,
+    transaction: (tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]) => Promise<T>,
     errorMessage = 'Database transaction failed'
 ): Promise<T> {
     try {
-        // This would use Prisma's $transaction in a real implementation
-        // return await prisma.$transaction(transaction);
-        throw new Error('Transaction helper needs Prisma client');
+        return await prisma.$transaction(transaction);
     } catch (error) {
         throw new SystemError(errorMessage, error as Error);
     }
@@ -148,28 +138,26 @@ export async function withRetry<T>(
     maxRetries = 3,
     delay = 1000
 ): Promise<T> {
-    let lastError: Error;
-    
+    let lastError: Error = new Error('unknown');
+    let currentDelay = delay;
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
             return await operation();
         } catch (error) {
             lastError = error as Error;
-            
+
             if (attempt === maxRetries) {
-                throw new SystemError(
-                    `Operation failed after ${maxRetries} attempts`,
-                    lastError
-                );
+                throw new SystemError(`Operation failed after ${maxRetries} attempts`, lastError);
             }
-            
-            console.warn(`Attempt ${attempt} failed, retrying in ${delay}ms:`, lastError.message);
-            await new Promise(resolve => setTimeout(resolve, delay));
-            delay *= 2; // Exponential backoff
+
+            log.warn(`attempt ${attempt} failed, retrying`, { delayMs: currentDelay, message: lastError.message });
+            await new Promise(resolve => setTimeout(resolve, currentDelay));
+            currentDelay *= 2;
         }
     }
-    
-    throw lastError!;
+
+    throw lastError;
 }
 
 // Circuit Breaker Pattern
@@ -243,31 +231,26 @@ export async function healthCheck(): Promise<{
     timestamp: string;
 }> {
     const checks: Record<string, boolean> = {};
-    
+    const timestamp = new Date().toISOString();
+
+    // Real database ping
     try {
-        // Database health check
-        // checks.database = await checkDatabaseHealth();
-        checks.database = true; // Placeholder
-        
-        // External service health checks
-        // checks.erp = await checkERPHealth();
-        // checks.plc = await checkPLCHealth();
-        checks.erp = true; // Placeholder
-        checks.plc = true; // Placeholder
-        
-        const allHealthy = Object.values(checks).every(check => check);
-        const someHealthy = Object.values(checks).some(check => check);
-        
-        return {
-            status: allHealthy ? 'healthy' : someHealthy ? 'degraded' : 'unhealthy',
-            checks,
-            timestamp: new Date().toISOString()
-        };
-    } catch (error) {
-        return {
-            status: 'unhealthy',
-            checks,
-            timestamp: new Date().toISOString()
-        };
+        await prisma.$queryRaw`SELECT 1`;
+        checks.database = true;
+    } catch {
+        checks.database = false;
     }
+
+    // MQTT broker reachable
+    checks.mqtt = Boolean(process.env.MQTT_BROKER_URL);
+
+    const allHealthy  = Object.values(checks).every(v => v);
+    const someHealthy = Object.values(checks).some(v => v);
+
+    return {
+        status: allHealthy ? 'healthy' : someHealthy ? 'degraded' : 'unhealthy',
+        checks,
+        timestamp,
+    };
 }
+

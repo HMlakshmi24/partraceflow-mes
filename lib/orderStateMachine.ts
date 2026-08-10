@@ -3,15 +3,26 @@
  *
  * Enforces valid transitions and provides UI helpers.
  * PLANNED → RELEASED → IN_PROGRESS → QC_PENDING → APPROVED → COMPLETED
- *                                  ↘ REWORK ↗
+ *              ↘           ↘       ↘ REWORK ↗
  * Any non-terminal → ON_HOLD → resumes previous state
  * Any non-terminal → CANCELLED
+ *
+ * RELEASED/IN_PROGRESS → REWORK (bug fix, found via testing): quality checks
+ * happen per-task throughout production (see OrderLifecycleService.
+ * onQualityInspection, called from app/api/quality/route.ts for individual
+ * task-level QC, not just a single order-level gate) — a task can fail QC
+ * while the order is still RELEASED or IN_PROGRESS, well before the order as
+ * a whole reaches QC_PENDING. onQualityInspection's own status guard already
+ * assumed this was legal (it explicitly allows FAIL/REWORK from RELEASED and
+ * IN_PROGRESS); this table just didn't match, so any task-level QC failure
+ * recorded before QC_PENDING crashed with "Invalid workflow transition"
+ * instead of routing the order to rework.
  */
 
 export const VALID_TRANSITIONS: Record<string, string[]> = {
     PLANNED:     ['RELEASED', 'CANCELLED'],
-    RELEASED:    ['IN_PROGRESS', 'ON_HOLD', 'CANCELLED'],
-    IN_PROGRESS: ['QC_PENDING', 'ON_HOLD', 'CANCELLED'],
+    RELEASED:    ['IN_PROGRESS', 'ON_HOLD', 'REWORK', 'CANCELLED'],
+    IN_PROGRESS: ['QC_PENDING', 'ON_HOLD', 'REWORK', 'CANCELLED'],
     QC_PENDING:  ['APPROVED', 'REWORK', 'CANCELLED'],
     APPROVED:    ['COMPLETED'],
     REWORK:      ['IN_PROGRESS', 'CANCELLED'],
@@ -60,12 +71,22 @@ export const ORDER_ROLE_ACTION_MAP: Record<string, string[]> = {
     RELEASED:    ['ADMIN', 'PLANNER', 'SUPERVISOR'],
     IN_PROGRESS: ['ADMIN', 'OPERATOR', 'SUPERVISOR'],
     QC_PENDING:  ['ADMIN', 'OPERATOR', 'SUPERVISOR', 'QC', 'QUALITY'],
+    // Phase 4: APPROVED requires SUPERVISOR or ADMIN — OPERATOR and QUALITY cannot approve
     APPROVED:    ['ADMIN', 'SUPERVISOR'],
     REWORK:      ['ADMIN', 'SUPERVISOR', 'QC', 'QUALITY'],
     COMPLETED:   ['ADMIN', 'SUPERVISOR'],
     ON_HOLD:     ['ADMIN', 'SUPERVISOR', 'QC', 'QUALITY'],
     CANCELLED:   ['ADMIN', 'SUPERVISOR', 'PLANNER'],
 };
+
+/**
+ * Returns true if the given role is allowed to trigger the target transition.
+ * Used in order API routes to return 403 for unauthorized approvals.
+ */
+export function canRoleTransition(role: string, toStatus: string): boolean {
+    const allowed = ORDER_ROLE_ACTION_MAP[toStatus] ?? [];
+    return allowed.includes(role);
+}
 
 export function canTransition(from: string, to: string): boolean {
     return (VALID_TRANSITIONS[from] ?? []).includes(to);

@@ -1,6 +1,11 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { requireRole } from '@/lib/api-auth';
 
-export async function GET() {
+const ALL_ROLES = ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'QUALITY', 'QC', 'MAINTENANCE'];
+
+export async function GET(req: NextRequest) {
+    const authError = await requireRole(req, ALL_ROLES);
+    if (authError) return authError;
     const spec = {
         openapi: '3.0.0',
         info: {
@@ -22,7 +27,7 @@ export async function GET() {
             { name: 'Andon', description: 'Andon alert board system' },
             { name: 'Maintenance', description: 'Predictive maintenance health scores' },
             { name: 'Copilot', description: 'AI-powered MES Q&A' },
-            { name: 'System', description: 'Health, streaming, demo data' },
+            { name: 'System', description: 'Health, streaming, simulation' },
         ],
         paths: {
             '/health': {
@@ -239,29 +244,6 @@ export async function GET() {
                             content: { 'text/event-stream': { schema: { type: 'string' } } },
                         },
                     },
-                },
-            },
-            '/demo': {
-                get: {
-                    tags: ['System'],
-                    summary: 'Get demo data status (isSeeded, machine count, etc.)',
-                    responses: { '200': { description: 'Demo status object' } },
-                },
-                post: {
-                    tags: ['System'],
-                    summary: 'Seed demo data or run a simulation tick',
-                    requestBody: {
-                        required: true,
-                        content: {
-                            'application/json': {
-                                schema: {
-                                    type: 'object',
-                                    properties: { action: { type: 'string', enum: ['seed', 'tick'] } },
-                                },
-                            },
-                        },
-                    },
-                    responses: { '200': { description: 'Seed or tick result' } },
                 },
             },
             '/session': {

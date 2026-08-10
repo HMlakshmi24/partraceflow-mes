@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
  * Restricted to ADMIN/SUPERVISOR — external hardware uses the machine API key path.
  */
 export async function POST(req: NextRequest) {
-    const authError = requireRole(req, ['ADMIN', 'SUPERVISOR']);
+    const authError = await requireRole(req, ['ADMIN', 'SUPERVISOR']);
     if (authError) return authError;
 
     try {

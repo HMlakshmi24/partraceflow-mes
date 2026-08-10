@@ -1,10 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server'
+﻿import { NextRequest, NextResponse } from 'next/server'
+import { handleApiError } from '@/lib/apiResponse';
 import { DowntimeService } from '@/lib/services/DowntimeService'
 import { prisma } from '@/lib/services/database'
 import { requireRole } from '@/lib/api-auth'
+import { RuntimeEngine } from '@/lib/services/RuntimeEngine'
+import { createLogger } from '@/lib/logger'
+
+const log = createLogger('downtime');
 
 export async function GET(request: NextRequest) {
-  const authError = requireRole(request, ['ADMIN', 'SUPERVISOR', 'OPERATOR', 'PLANNER', 'MAINTENANCE', 'QC', 'QUALITY']);
+  const authError = await requireRole(request, ['ADMIN', 'SUPERVISOR', 'OPERATOR', 'PLANNER', 'MAINTENANCE', 'QC', 'QUALITY']);
   if (authError) return authError;
   try {
     const { searchParams } = new URL(request.url)
@@ -46,7 +51,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const authError = requireRole(request, ['ADMIN', 'SUPERVISOR', 'OPERATOR', 'MAINTENANCE']);
+  const authError = await requireRole(request, ['ADMIN', 'SUPERVISOR', 'OPERATOR', 'MAINTENANCE']);
   if (authError) return authError;
 
   try {
@@ -77,7 +82,7 @@ export async function POST(request: NextRequest) {
       // Log system event for visibility
       await prisma.systemEvent.create({
         data: { eventType: 'DOWNTIME_START', details: `Downtime started on ${data.machineId}: ${data.notes || 'No notes'}` }
-      }).catch((e) => { console.warn('[downtime] systemEvent.create failed (non-fatal):', e?.message); });
+      }).catch((e) => { log.warn('systemEvent.create failed (non-fatal)', { message: e?.message }); });
       return NextResponse.json({ success: true, downtimeEvent: event })
     }
 
@@ -105,12 +110,9 @@ export async function POST(request: NextRequest) {
       })
 
       // Bring machine back online + cascade resolve connected downtime.
-      // We treat the connected chain as a demo graph, so when one machine is fixed
-      // all connected DOWN machines should also recover.
-
       const { getConnectedChain } = await import('@/lib/services/machineGraph');
       const machine = await prisma.machine.findUnique({ where: { id: machineId }, select: { code: true } });
-      const connectedCodes = machine?.code ? getConnectedChain(machine.code as any) : [machine?.code].filter(Boolean);
+      const connectedCodes = machine?.code ? await getConnectedChain(machine.code) : [machine?.code].filter(Boolean);
 
       // Close any lingering OPEN downtime rows for the entire connected chain.
       // (If some machines don't have open events, updateMany is safe.)
@@ -126,25 +128,22 @@ export async function POST(request: NextRequest) {
               correctiveAction: data.resolutionNotes ?? 'Recovered by operator (cascade)',
             }
           });
-          await prisma.machine.updateMany({
-            where: { id: { in: ids } },
-            data: { status: 'RUNNING' }
-          });
+          // CRIT-5 fix: route each machine through RuntimeEngine (instead of a
+          // bare updateMany) so MachineRuntime.status stays in sync for the
+          // whole connected chain, not just the primary machine.
+          await Promise.all(ids.map(id => RuntimeEngine.upsertHeartbeat(id, { status: 'RUNNING' })));
         }
       }
 
       // Return the primary machine for UI.
-      const updated = await prisma.machine.update({
-        where: { id: machineId },
-        data: { status: 'RUNNING' }
-      })
+      await RuntimeEngine.upsertHeartbeat(machineId, { status: 'RUNNING' });
+      const updated = await prisma.machine.findUniqueOrThrow({ where: { id: machineId } });
 
       return NextResponse.json({ success: true, machine: updated })
     }
 
     return NextResponse.json({ error: 'Invalid action. Use start or end' }, { status: 400 })
   } catch (error) {
-    console.error('[POST /api/downtime]', error)
-    return NextResponse.json({ error: 'Failed to process downtime action' }, { status: 500 })
+        return handleApiError('[POST /api/downtime]', error);
   }
 }

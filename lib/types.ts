@@ -8,6 +8,7 @@ export interface MachineStatus {
   goodQuantity: number;
   scrapQuantity: number;
   status: 'running' | 'warning' | 'down' | 'stopped';
+  lastHeartbeat: string | null;
 }
 
 export interface KPI {

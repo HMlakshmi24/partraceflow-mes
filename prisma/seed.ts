@@ -1,89 +1,82 @@
-
 import { PrismaClient } from '@prisma/client';
-
-// Import explicit hash function since users should not be plaintext
 import { hashPassword } from '../lib/auth';
 
 const prisma = new PrismaClient();
 
 async function main() {
-    console.log('Seeding database...');
-    const hashedOperatorPassword = hashPassword('TempPass123!');
-    const hashedPlannerPassword = hashPassword('TempPass123!');
+    console.log('Seeding initial production data...');
 
-    // 1. Users
-    const operator = await prisma.user.upsert({
-        where: { username: 'operator' },
+    const hashedAdminPassword = hashPassword('ChangeMe@First1');
+
+    const admin = await prisma.user.upsert({
+        where: { username: 'admin' },
         update: {},
         create: {
-            username: 'operator',
-            role: 'OPERATOR',
-            passwordHash: hashedOperatorPassword,
+            username: 'admin',
+            role: 'ADMIN',
+            displayName: 'System Administrator',
+            passwordHash: hashedAdminPassword,
             mustChangePassword: true,
         },
     });
+    console.log('Admin user created:', admin.username, '(must change password on first login)');
 
-    const planner = await prisma.user.upsert({
-        where: { username: 'planner' },
-        update: {},
-        create: {
-            username: 'planner',
-            role: 'SUPERVISOR', // or PLANNER if you add that role
-            passwordHash: hashedPlannerPassword,
-            mustChangePassword: true,
-        },
-    });
-
-    console.log({ operator, planner });
-
-    // 2. Machines
-    const machine = await prisma.machine.upsert({
-        where: { code: 'M-001' },
-        update: {},
-        create: {
-            code: 'M-001',
-            name: 'CNC Milling Center',
-            status: 'IDLE',
-        },
-    });
-    console.log({ machine });
-
-    // 3. Products
-    const product = await prisma.product.upsert({
-        where: { sku: 'PART-101' },
-        update: {},
-        create: {
-            sku: 'PART-101',
-            name: 'Titanium Bracket',
-            description: 'Aerospace grade mounting bracket',
-        },
-    });
-    console.log({ product });
-
-    // 4. Workflow Steps (Basic Definition for now)
-    // In a real app, these might be linked deeper, but let's just create raw definitions if needed or rely on dynamic creation.
-    // For now, let's just make sure we have data.
-
-    // Create Workflow Step Definitions if not existing
-    const steps = [
-        { name: 'Prepare Material', sequence: 1 },
-        { name: 'CNC Machining', sequence: 2 },
-        { name: 'Quality Inspection', sequence: 3 },
-        { name: 'Final Assembly', sequence: 4 }
+    const downtimeCategories = [
+        { code: 'PLANNED', name: 'Planned Downtime', type: 'PLANNED' },
+        { code: 'UNPLANNED', name: 'Unplanned Downtime', type: 'UNPLANNED' },
     ];
 
-    for (const step of steps) {
-        // Since we don't have a unique key on name for StepDef (only ID), we check first or just create.
-        // For seeding, maybe just create if empty.
-        const existing = await prisma.workflowStepDef.findFirst({ where: { name: step.name } });
-        if (!existing) {
-            await prisma.workflowStepDef.create({
-                data: step
+    for (const cat of downtimeCategories) {
+        await prisma.downtimeCategory.upsert({
+            where: { code: cat.code },
+            update: {},
+            create: cat,
+        });
+    }
+
+    const reasons = [
+        { code: 'SETUP', name: 'Setup / Changeover', categoryCode: 'PLANNED' },
+        { code: 'PM', name: 'Preventive Maintenance', categoryCode: 'PLANNED' },
+        { code: 'BREAK', name: 'Scheduled Break', categoryCode: 'PLANNED' },
+        { code: 'BREAKDOWN', name: 'Machine Breakdown', categoryCode: 'UNPLANNED' },
+        { code: 'MATERIAL', name: 'Material Shortage', categoryCode: 'UNPLANNED' },
+        { code: 'QUALITY', name: 'Quality Hold', categoryCode: 'UNPLANNED' },
+        { code: 'TOOLING', name: 'Tool Failure', categoryCode: 'UNPLANNED' },
+        { code: 'OPERATOR', name: 'Operator Unavailable', categoryCode: 'UNPLANNED' },
+        { code: 'UTILITY', name: 'Utility Failure (Power/Air/Water)', categoryCode: 'UNPLANNED' },
+    ];
+
+    for (const r of reasons) {
+        const category = await prisma.downtimeCategory.findUnique({ where: { code: r.categoryCode } });
+        if (category) {
+            await prisma.downtimeReason.upsert({
+                where: { code: r.code },
+                update: {},
+                create: { code: r.code, name: r.name, categoryId: category.id },
             });
         }
     }
+    console.log('Downtime categories and reasons seeded');
 
-    console.log('Seeding finished.');
+    const skillCategories = [
+        { code: 'CNC_OPERATION', name: 'CNC Machine Operation' },
+        { code: 'WELDING', name: 'Welding' },
+        { code: 'QUALITY_INSPECTION', name: 'Quality Inspection' },
+        { code: 'ASSEMBLY', name: 'Assembly' },
+        { code: 'FORKLIFT', name: 'Forklift Operation' },
+        { code: 'MAINTENANCE', name: 'Equipment Maintenance' },
+    ];
+
+    for (const sc of skillCategories) {
+        await prisma.skillCategory.upsert({
+            where: { code: sc.code },
+            update: {},
+            create: sc,
+        });
+    }
+    console.log('Skill categories seeded');
+
+    console.log('Initial seed complete. Run /setup in the app to configure your enterprise, plant, and machines.');
 }
 
 main()

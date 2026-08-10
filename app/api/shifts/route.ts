@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
+import { handleApiError } from '@/lib/apiResponse';
 import { prisma } from '@/lib/services/database';
 import { ShiftService } from '@/lib/services/ShiftService';
 import { requireRole } from '@/lib/api-auth';
@@ -7,10 +8,13 @@ export async function GET(req: NextRequest) {
     try {
         const { searchParams } = new URL(req.url);
         const action = searchParams.get('action');
-        let plantId = searchParams.get('plantId') ?? 'PLANT-01';
+        let plantId = searchParams.get('plantId') ?? '';
         if (!searchParams.get('plantId')) {
             const firstShift = await prisma.shift.findFirst({ select: { plantId: true } });
             if (firstShift) plantId = firstShift.plantId;
+        }
+        if (!plantId) {
+            return NextResponse.json({ success: true, message: 'No shifts configured', shifts: [], schedules: [] });
         }
 
         if (action === 'current') {
@@ -28,21 +32,26 @@ export async function GET(req: NextRequest) {
         const [shifts, schedules] = await Promise.all([
             prisma.shift.findMany({ where: { plantId }, orderBy: { startTime: 'asc' } }),
             prisma.shiftSchedule.findMany({
-                where: { shift: { plantId } },
+                where: {
+                    OR: [
+                        { shift: { plantId } },
+                        { templateId: { not: null } },
+                    ],
+                },
                 include: {
                     shift: true,
+                    template: true,
                     operatorShifts: { include: { user: true } },
-                    shiftProduction: true
+                    shiftProduction: true,
                 },
                 orderBy: { date: 'desc' },
-                take: 30
+                take: 30,
             })
         ]);
 
         return NextResponse.json({ shifts, schedules });
     } catch (error) {
-        console.error('[GET /api/shifts]', error);
-        return NextResponse.json({ error: 'Failed to fetch shifts' }, { status: 500 });
+                return handleApiError('[GET /api/shifts]', error);
     }
 }
 
@@ -56,35 +65,99 @@ export async function POST(req: NextRequest) {
 
         // Scheduling and shift control require ADMIN/SUPERVISOR; clock-in/out also allow OPERATOR
         if (SUPERVISOR_ACTIONS.includes(action)) {
-            const authError = requireRole(req, ['ADMIN', 'SUPERVISOR']);
+            const authError = await requireRole(req, ['ADMIN', 'SUPERVISOR']);
             if (authError) return authError;
         } else {
-            const authError = requireRole(req, OPERATOR_SHIFT_ROLES);
+            const authError = await requireRole(req, OPERATOR_SHIFT_ROLES);
             if (authError) return authError;
         }
 
         if (action === 'create_schedule') {
-            const { shiftId, date, targetQuantity } = body;
-            if (!shiftId || !date) return NextResponse.json({ error: 'shiftId and date required' }, { status: 400 });
+            const { templateId, shiftId, date, targetQuantity, productionLineId } = body;
+            if (!date) return NextResponse.json({ error: 'date required' }, { status: 400 });
+            if (!templateId && !shiftId) return NextResponse.json({ error: 'templateId or shiftId required' }, { status: 400 });
 
-            // Find or auto-create a production line for this shift
+            // Bug fix (found via audit): this used to call
+            // prisma.productionLine.findFirst() with no filter — neither
+            // Shift nor ShiftTemplate has a relation to ProductionLine, so
+            // there was no way to derive the "right" one. In a plant with
+            // more than one production line (which the ISA-95 hierarchy
+            // this app models explicitly supports), every schedule silently
+            // landed on whichever line Prisma happened to return first,
+            // mis-tracking production for every other line. Now: an
+            // explicit productionLineId is honored if given; with exactly
+            // one line configured the old single-line-plant behavior still
+            // works (there's only one correct answer); with more than one
+            // and no productionLineId, this fails loudly instead of
+            // guessing wrong silently.
+            let productionLine;
+            if (productionLineId) {
+                productionLine = await prisma.productionLine.findUnique({ where: { id: productionLineId } });
+                if (!productionLine) {
+                    return NextResponse.json({ error: 'Production line not found' }, { status: 404 });
+                }
+            } else {
+                const lines = await prisma.productionLine.findMany({ take: 2 });
+                if (lines.length === 0) {
+                    return NextResponse.json({ error: 'No production lines configured' }, { status: 400 });
+                }
+                if (lines.length > 1) {
+                    return NextResponse.json(
+                        { error: 'Multiple production lines exist — productionLineId is required to disambiguate which line this schedule is for.' },
+                        { status: 400 },
+                    );
+                }
+                productionLine = lines[0];
+            }
+
+            let resolvedTarget = targetQuantity ?? 0;
+
+            if (templateId) {
+                const template = await prisma.shiftTemplate.findUnique({ where: { id: templateId } });
+                if (!template) return NextResponse.json({ error: 'Shift template not found' }, { status: 404 });
+                if (!template.isActive) return NextResponse.json({ error: 'Shift template is inactive' }, { status: 400 });
+                if (resolvedTarget === 0 && template.targetQuantity) resolvedTarget = template.targetQuantity;
+
+                const scheduledDate = new Date(date);
+                const dayStart = new Date(scheduledDate);
+                dayStart.setUTCHours(0, 0, 0, 0);
+                const dayEnd = new Date(dayStart.getTime() + 86400000);
+                const duplicate = await prisma.shiftSchedule.findFirst({
+                    where: { templateId, date: { gte: dayStart, lt: dayEnd } },
+                });
+                if (duplicate) {
+                    return NextResponse.json(
+                        { error: `A schedule for template "${template.name}" on ${scheduledDate.toISOString().slice(0, 10)} already exists` },
+                        { status: 409 },
+                    );
+                }
+
+                const schedule = await prisma.shiftSchedule.create({
+                    data: {
+                        templateId,
+                        productionLineId: productionLine.id,
+                        date: new Date(date),
+                        targetQuantity: resolvedTarget,
+                        status: 'SCHEDULED',
+                    },
+                    include: { template: true },
+                });
+                return NextResponse.json({ success: true, schedule });
+            }
+
+            // Legacy path: shiftId from Shift model
             const shift = await prisma.shift.findUnique({ where: { id: shiftId } });
             if (!shift) return NextResponse.json({ error: 'Shift not found' }, { status: 404 });
-
-            let productionLine = await prisma.productionLine.findFirst();
-            if (!productionLine) {
-                return NextResponse.json({ error: 'No production lines configured' }, { status: 400 });
-            }
 
             const schedule = await prisma.shiftSchedule.create({
                 data: {
                     shiftId,
                     productionLineId: productionLine.id,
                     date: new Date(date),
-                    targetQuantity: targetQuantity ?? 0,
-                    status: 'SCHEDULED'
+                    targetQuantity: resolvedTarget,
+                    status: 'SCHEDULED',
                 },
-                include: { shift: true }
+                include: { shift: true },
             });
             return NextResponse.json({ success: true, schedule });
         }
@@ -143,7 +216,6 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     } catch (error) {
-        console.error('[POST /api/shifts]', error);
-        return NextResponse.json({ error: 'Shift action failed' }, { status: 500 });
+                return handleApiError('[POST /api/shifts]', error);
     }
 }

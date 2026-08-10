@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server'
+﻿import { NextRequest, NextResponse } from 'next/server'
+import { handleApiError } from '@/lib/apiResponse';
 import { OEEService } from '@/lib/services/OEEService'
 import { prisma } from '@/lib/services/database'
 import { requireRole } from '@/lib/api-auth'
 
 export async function GET(request: NextRequest) {
-  const authError = requireRole(request, ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'QC', 'QUALITY']);
+  const authError = await requireRole(request, ['ADMIN', 'SUPERVISOR', 'PLANNER', 'OPERATOR', 'QC', 'QUALITY']);
   if (authError) return authError;
   try {
     const { searchParams } = new URL(request.url)
@@ -32,7 +33,7 @@ export async function GET(request: NextRequest) {
     }
 
     // All machines
-    const machines = await prisma.machine.findMany()
+    const machines = await prisma.machine.findMany({ take: 500 })
     const results = await Promise.allSettled(
       machines.map(m => OEEService.calculateOEE(m.id, fromDate, toDate))
     )
@@ -42,7 +43,6 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ machines: oeeData, period: { from: fromDate, to: toDate } })
   } catch (error) {
-    console.error('[GET /api/oee]', error)
-    return NextResponse.json({ error: 'Failed to calculate OEE' }, { status: 500 })
+        return handleApiError('[GET /api/oee]', error);
   }
 }

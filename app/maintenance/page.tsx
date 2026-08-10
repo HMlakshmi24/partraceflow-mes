@@ -25,7 +25,6 @@ const RISK_CONFIG: Record<string, { bg: string; border: string; text: string; ba
 
 function HealthGauge({ score }: { score: number }) {
     const color = score >= 80 ? '#10b981' : score >= 60 ? '#f59e0b' : score >= 40 ? '#ef4444' : '#db2777';
-    const rotation = -135 + (score / 100) * 270;
     return (
         <div style={{ position: 'relative', width: 80, height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <svg width="80" height="80" viewBox="0 0 80 80">
@@ -47,8 +46,9 @@ export default function MaintenancePage() {
     const [selected, setSelected] = useState<HealthPrediction | null>(null);
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
     const [filter, setFilter] = useState<'ALL' | 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'>('ALL');
+    const [msg, setMsg] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
 
-    const load = useCallback(async () => {
+    const loadData = useCallback(async () => {
         try {
             const res = await fetch('/api/maintenance/predict');
             if (res.ok) {
@@ -73,9 +73,9 @@ export default function MaintenancePage() {
         } catch { /* ignore */ }
         setLastRefresh(new Date());
         setLoading(false);
-    }, []);
+    }, [selected]);
 
-    useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
+    useEffect(() => { loadData(); const t = setInterval(loadData, 30000); return () => clearInterval(t); }, [loadData]);
 
     const filtered = filter === 'ALL' ? predictions : predictions.filter(p => p.riskLevel === filter);
     const critical = predictions.filter(p => p.riskLevel === 'CRITICAL').length;
@@ -84,6 +84,12 @@ export default function MaintenancePage() {
 
     return (
         <div style={{ padding: '1.5rem', fontFamily: 'inherit' }}>
+            {msg && (
+                <div style={{ position: 'fixed', top: '1rem', right: '1rem', zIndex: 1000, padding: '0.75rem 1.5rem', borderRadius: '0.5rem', fontWeight: 600, color: '#fff', background: msg.type === 'ok' ? '#10b981' : '#ef4444', boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>
+                    {msg.text}
+                    <button onClick={() => setMsg(null)} style={{ marginLeft: '1rem', background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>x</button>
+                </div>
+            )}
             {/* Header */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
                 <div>
@@ -94,7 +100,7 @@ export default function MaintenancePage() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     {lastRefresh && <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>Updated {lastRefresh.toLocaleTimeString()}</span>}
-                    <button onClick={load} style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '0.4rem', padding: '0.4rem 0.75rem', cursor: 'pointer', color: 'var(--foreground)', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem' }}>
+                    <button onClick={loadData} style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '0.4rem', padding: '0.4rem 0.75rem', cursor: 'pointer', color: 'var(--foreground)', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem' }}>
                         <RefreshCw size={14} /> Refresh
                     </button>
                 </div>
@@ -127,7 +133,7 @@ export default function MaintenancePage() {
                 <div style={{ background: 'var(--card-bg)', borderRadius: '1rem', border: '1px solid #e5e7eb', padding: '3rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
                     <Wrench size={48} style={{ opacity: 0.25, marginBottom: '1rem' }} />
                     <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>No machine health data available</p>
-                    <p style={{ fontSize: '0.85rem' }}>Seed demo data from <a href="/settings" style={{ color: '#3b82f6' }}>Settings</a> to generate health predictions.</p>
+                    <p style={{ fontSize: '0.85rem' }}>Register machines and connect telemetry sources to generate health predictions.</p>
                 </div>
             ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: '1.5rem' }}>
@@ -242,11 +248,21 @@ export default function MaintenancePage() {
                                 {/* Action buttons */}
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                                     <button style={{ padding: '0.75rem', borderRadius: '0.6rem', border: 'none', background: '#ef4444', color: '#fff', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
-                                        onClick={() => alert(`Maintenance work order created for ${selected.machineName}.\n\nIn production, this would create a Work Order in the ERP system and notify the maintenance team via Andon/email.`)}>
+                                        onClick={async () => {
+                                            try {
+                                                const res = await fetch('/api/maintenance/predict', {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ machineId: selected.machineId, action: 'create_work_order' }),
+                                                });
+                                                if (res.ok) setMsg({ type: 'ok', text: `Maintenance work order created for ${selected.machineName}` });
+                                                else setMsg({ type: 'error', text: 'Failed to create maintenance work order' });
+                                            } catch { setMsg({ type: 'error', text: 'Network error' }); }
+                                        }}>
                                         <Wrench size={16} /> Create Maintenance Work Order
                                     </button>
                                     <button style={{ padding: '0.75rem', borderRadius: '0.6rem', border: '1px solid #e5e7eb', background: 'var(--card-bg)', color: 'var(--foreground)', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
-                                        onClick={() => alert(`Refreshing health score for ${selected.machineName}...`)}>
+                                        onClick={() => { setLoading(true); loadData(); }}>
                                         <RefreshCw size={16} /> Refresh Health Score
                                     </button>
                                 </div>

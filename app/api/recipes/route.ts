@@ -1,10 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
+import { handleApiError } from '@/lib/apiResponse';
 import { prisma } from '@/lib/services/database';
 import { RecipeService } from '@/lib/services/RecipeService';
-import { requireRole } from '@/lib/api-auth';
+import { requireRole, getRequestSession } from '@/lib/api-auth';
+
+const RECIPE_STATUSES = ['DRAFT', 'APPROVED', 'ACTIVE', 'OBSOLETE'];
 
 export async function GET(req: NextRequest) {
-    const authError = requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR', 'OPERATOR']);
+    const authError = await requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR', 'OPERATOR']);
     if (authError) return authError;
 
     try {
@@ -83,14 +86,23 @@ export async function GET(req: NextRequest) {
 
         return NextResponse.json({ recipes: enrichedRecipes, products, machines });
     } catch (error) {
-        console.error('[GET /api/recipes]', error);
-        return NextResponse.json({ error: 'Failed to fetch recipes' }, { status: 500 });
+                return handleApiError('[GET /api/recipes]', error);
     }
 }
 
 export async function POST(req: NextRequest) {
-    const authError = requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR']);
+    const authError = await requireRole(req, ['ADMIN', 'PLANNER', 'SUPERVISOR']);
     if (authError) return authError;
+
+    // Bug fix (found via audit): every action below used to attribute
+    // creation/approval/assignment to `body.userId` — a client-supplied
+    // field, not the authenticated session. Any allowed role could submit
+    // `{"userId":"someone-elses-id"}` and have the action permanently
+    // recorded against an arbitrary identity in what's otherwise a
+    // compliance-relevant approval record. Attribution now always comes
+    // from the verified session.
+    const session = getRequestSession(req);
+    const actorName = session?.username ?? 'SYSTEM';
 
     try {
         const body = await req.json();
@@ -103,7 +115,7 @@ export async function POST(req: NextRequest) {
             }
             const recipe = await RecipeService.createRecipe({
                 code, name, productId, description,
-                createdBy: body.userId ?? 'SYSTEM',
+                createdBy: actorName,
                 parameters: parameters ?? []
             });
             return NextResponse.json({ success: true, recipe });
@@ -112,7 +124,7 @@ export async function POST(req: NextRequest) {
         if (action === 'approve') {
             const { recipeId } = body;
             if (!recipeId) return NextResponse.json({ error: 'recipeId required' }, { status: 400 });
-            const recipe = await RecipeService.approveRecipe(recipeId, body.userId ?? 'SUPERVISOR');
+            const recipe = await RecipeService.approveRecipe(recipeId, actorName);
             return NextResponse.json({ success: true, recipe });
         }
 
@@ -121,7 +133,7 @@ export async function POST(req: NextRequest) {
             if (!machineId || !recipeId) return NextResponse.json({ error: 'machineId and recipeId required' }, { status: 400 });
             const assignment = await RecipeService.assignToMachine({
                 machineId, recipeId,
-                assignedBy: body.userId ?? 'SYSTEM',
+                assignedBy: actorName,
                 workOrderId: body.workOrderId
             });
             return NextResponse.json({ success: true, assignment });
@@ -137,6 +149,17 @@ export async function POST(req: NextRequest) {
         if (action === 'update_status') {
             const { recipeId, status } = body;
             if (!recipeId || !status) return NextResponse.json({ error: 'recipeId and status required' }, { status: 400 });
+            if (!RECIPE_STATUSES.includes(status)) {
+                return NextResponse.json({ error: `status must be one of: ${RECIPE_STATUSES.join(', ')}` }, { status: 400 });
+            }
+            // Bug fix: this generic action used to accept status:'APPROVED'
+            // too, letting it silently skip the approve action's own
+            // authorization/attribution (approvedBy/approvedAt never got
+            // set on a recipe that then reported as approved). Approval
+            // must go through the dedicated action.
+            if (status === 'APPROVED') {
+                return NextResponse.json({ error: 'Use action:"approve" to approve a recipe, not update_status.' }, { status: 400 });
+            }
             const recipe = await prisma.recipe.update({
                 where: { id: recipeId },
                 data: { status }
@@ -146,7 +169,6 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     } catch (error) {
-        console.error('[POST /api/recipes]', error);
-        return NextResponse.json({ error: 'Recipe action failed' }, { status: 500 });
+                return handleApiError('[POST /api/recipes]', error);
     }
 }

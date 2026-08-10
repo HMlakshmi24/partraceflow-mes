@@ -1,0 +1,129 @@
+# Reads mes-app/.env automatically for ${VAR} substitution below.
+# Copy .env.example to .env and set POSTGRES_USER / POSTGRES_PASSWORD /
+# SESSION_SECRET / CRON_SECRET before running `docker-compose up` — see
+# README.md and .env.example for details.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: mes-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env — see .env.example}
+      POSTGRES_DB: partraceflow
+    # No host port published: only the `app` container (same Docker network)
+    # needs to reach Postgres. Uncomment below only for local debugging, and
+    # never on a host reachable from outside your machine.
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d partraceflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    container_name: mes-mqtt
+    restart: unless-stopped
+    # No host port published by default — the `app` container reaches this
+    # broker over the internal Docker network. If real edge devices/PLCs on
+    # your factory network need to reach this broker directly, publish 1883
+    # explicitly AND keep deploy/mosquitto/mosquitto.conf's password_file
+    # auth enabled (see deploy/mosquitto/generate-credentials.sh) — never
+    # expose it with allow_anonymous true.
+    # ports:
+    #   - "1883:1883"
+    environment:
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+    volumes:
+      - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./deploy/mosquitto/passwordfile:/mosquitto/config/passwordfile:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -u \"$$MQTT_USERNAME\" -P \"$$MQTT_PASSWORD\" -t health -m ping || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mes-app
+    restart: unless-stopped
+    env_file:
+      - .env.production.example
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/partraceflow
+      MQTT_BROKER_URL: mqtt://mqtt:1883
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env — see .env.example}
+      CRON_SECRET: ${CRON_SECRET:?Set CRON_SECRET in .env — see .env.example}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mqtt:
+        condition: service_healthy
+    # No host port published — reached only through the nginx TLS proxy below.
+    # Uncomment for local debugging without nginx in front:
+    # ports:
+    #   - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Scheduled pg_dump service — separate from `app`, runs on its own loop
+  # (deploy/backup/entrypoint.sh), writes gzip SQL dumps to the `backups`
+  # named volume, and prunes anything older than BACKUP_RETENTION_DAYS. Uses
+  # the same postgres:16 image as the `postgres` service so pg_dump's
+  # version always matches the server. See deploy/README.md for the restore
+  # runbook.
+  backup:
+    image: postgres:16
+    container_name: mes-backup
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: partraceflow
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env — see .env.example}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
+    volumes:
+      - ./deploy/backup:/scripts:ro
+      - backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: mes-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  # Separate volume from pgdata on purpose: a scheduled dump is only useful
+  # as a recovery path if it survives whatever destroyed the primary data
+  # (an accidental DROP, a bad migration, pgdata volume corruption). Note
+  # this still lives on the same Docker host as pgdata — see deploy/README.md
+  # for why you should also copy backups off-host.
+  backups:

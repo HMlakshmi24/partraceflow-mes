@@ -5,11 +5,17 @@ import { requireSpoolAction } from '@/lib/spoolRBAC';
 import { CreateWeldSchema, validationError } from '@/lib/validation';
 import { revisionError } from '@/lib/revisionGuard';
 import { AuditService, EventType } from '@/lib/services/AuditService';
+import { requireRole } from '@/lib/api-auth';
+
+const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
 // Joint must be in one of these statuses before a weld record can be created
 const WELD_ALLOWED_JOINT_STATUSES = ['FIT_UP', 'PENDING'];
 
 export async function GET(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
@@ -48,6 +54,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = await requireRole(req, SPOOL_ROLES);
+  if (authError) return authError;
+
   try {
     const body = await req.json();
     const { action, id, ...data } = body;
@@ -63,7 +72,13 @@ export async function POST(req: NextRequest) {
     }
 
     if (id) {
-      const record = await prisma.weldRecord.update({ where: { id }, data });
+      // CRIT-3 fix: this fallback had no permission check at all; gate with
+      // the same UPDATE_WELD permission as the update_status action, and
+      // strip status/repairCount so status changes must go through that action.
+      const guard = await requireSpoolAction('UPDATE_WELD');
+      if (guard instanceof NextResponse) return guard;
+      const { status: _status, repairCount: _repairCount, ...safeData } = data;
+      const record = await prisma.weldRecord.update({ where: { id }, data: safeData });
       return NextResponse.json({ record });
     }
 

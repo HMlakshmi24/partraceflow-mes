@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { BookOpen, Plus, CheckCircle, Clock, Cpu, Package, ChevronRight, X, AlertCircle, Download, Settings, Search, Tag } from 'lucide-react';
+import { BookOpen, Plus, CheckCircle, Cpu, X, AlertCircle, Settings, Search, Tag } from 'lucide-react';
 
 interface RecipeParameter {
     id: string;
@@ -116,9 +116,14 @@ export default function RecipesPage() {
         return true;
     });
 
-    const updateParam = (i: number, key: string, val: any) => {
+    const updateParam = (i: number, key: keyof Pick<RecipeParameter, 'parameterName' | 'unit' | 'nominalValue' | 'minValue' | 'maxValue'>, val: string) => {
         setParams(prev => prev.map((p, idx) => idx === i ? { ...p, [key]: val } : p));
     };
+
+    const createFields = [
+        { label: 'Code', key: 'code' as const, placeholder: 'e.g. RCP-001' },
+        { label: 'Name', key: 'name' as const, placeholder: 'e.g. Aluminium Milling v1' },
+    ];
 
     const inputStyle = { width: '100%', padding: '0.55rem 0.75rem', borderRadius: '0.4rem', border: '1.5px solid var(--card-border)', fontSize: '0.9rem', boxSizing: 'border-box' as const, outline: 'none', background: 'var(--card-bg)', color: 'var(--foreground)' };
 
@@ -297,10 +302,10 @@ export default function RecipesPage() {
                         </div>
 
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
-                            {[['Code', 'code', 'e.g. RCP-001'], ['Name', 'name', 'e.g. Aluminium Milling v1']].map(([lbl, key, ph]) => (
+                            {createFields.map(({ label, key, placeholder }) => (
                                 <div key={key}>
-                                    <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.3rem', color: 'var(--foreground)' }}>{lbl}</label>
-                                    <input value={(form as any)[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} placeholder={ph} style={inputStyle} />
+                                    <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.3rem', color: 'var(--foreground)' }}>{label}</label>
+                                    <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} placeholder={placeholder} style={inputStyle} />
                                 </div>
                             ))}
                             <div>

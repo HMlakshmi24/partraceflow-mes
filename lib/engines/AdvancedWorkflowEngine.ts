@@ -1,5 +1,5 @@
-/**
- * 🏭 Advanced BPMN Workflow Engine
+﻿/**
+ * Advanced BPMN Workflow Engine
  * 
  * Implements:
  * - Branching & Parallel Flows
@@ -11,6 +11,10 @@
 
 import { prisma } from '@/lib/services/database';
 import { BusinessLogicError, ValidationError } from '@/lib/utils/validation';
+import { createLogger } from '@/lib/logger';
+import { RuntimeEngine, isValidMachineStatus } from '@/lib/services/RuntimeEngine';
+
+const log = createLogger('engines.advancedWorkflow');
 
 export interface WorkflowNode {
   id: string;
@@ -31,7 +35,17 @@ export interface WorkflowGraph {
 export class AdvancedWorkflowEngine {
   
   /**
-   * Process branching logic based on conditions
+   * Process branching logic based on conditions.
+   *
+   * HIGH-10 fix: this previously gated on the *gateway* node's own
+   * `condition` field, then filtered `node.next` through matchesCondition()
+   * — a stub that unconditionally returned true. That made every XOR
+   * gateway either take every outgoing path (if the gateway itself had a
+   * truthy condition) or none at all (if it didn't), regardless of what the
+   * candidate branches actually required. Real XOR semantics evaluate each
+   * *candidate branch's own* condition against the workflow context and
+   * take the one(s) that match, falling back to a single unconditional
+   * "default" branch if none do.
    */
   static async processBranching(instanceId: string, nodeId: string, context: any): Promise<string[]> {
     const node = await this.getNodeFromInstance(instanceId, nodeId);
@@ -39,22 +53,36 @@ export class AdvancedWorkflowEngine {
       return node?.next || [];
     }
 
-    const nextNodes: string[] = [];
-    
-    // Handle exclusive gateway (XOR) - choose one path
-    if (node.condition) {
-      const conditionResult = this.evaluateCondition(node.condition, context);
-      if (conditionResult && node.next) {
-        nextNodes.push(...node.next.filter(n => this.matchesCondition(n, conditionResult)));
+    // Parallel gateway (AND) — every outgoing path is taken unconditionally.
+    if (node.parallel && node.next) {
+      return [...node.next];
+    }
+
+    // Exclusive gateway (XOR) — evaluate each candidate's own condition.
+    if (!node.next || node.next.length === 0) return [];
+
+    const matched: string[] = [];
+    let defaultNodeId: string | null = null;
+
+    for (const candidateId of node.next) {
+      const candidate = await this.getNodeFromInstance(instanceId, candidateId);
+      if (!candidate) continue;
+
+      if (!candidate.condition) {
+        if (!defaultNodeId) defaultNodeId = candidateId; // first unconditional branch = default
+        continue;
+      }
+
+      if (this.evaluateCondition(candidate.condition, context) === true) {
+        matched.push(candidateId);
       }
     }
-    
-    // Handle parallel gateway (AND) - execute all paths
-    if (node.parallel && node.next) {
-      nextNodes.push(...node.next);
-    }
-    
-    return nextNodes;
+
+    if (matched.length > 0) return matched;
+    if (defaultNodeId) return [defaultNodeId];
+
+    log.warn('XOR gateway resolved no matching branch and no default branch', { instanceId, nodeId });
+    return [];
   }
 
   /**
@@ -478,15 +506,9 @@ export class AdvancedWorkflowEngine {
       if (!res) return null;
       return res.value;
     } catch (error) {
-      console.error('Condition evaluation error:', error);
+      log.error('Condition evaluation error:', { message: error instanceof Error ? error.message : String(error) });
       return null;
     }
-  }
-
-  private static matchesCondition(nodeId: string, conditionResult: any): boolean {
-    // Logic to match node ID with condition result
-    // This could be enhanced with proper BPMN condition expressions
-    return true; // Simplified for now
   }
 
   private static evaluateThresholdRule(actual: number, operator: string, value: number, rule: any): boolean {
@@ -613,10 +635,14 @@ export class AdvancedWorkflowEngine {
   private static async updateEntityStatus(config: any): Promise<void> {
     switch (config.entityType) {
       case 'Machine':
-        await prisma.machine.update({
-          where: { id: config.entityId },
-          data: { status: config.newStatus }
-        });
+        // CRIT-5 fix: config.newStatus comes from an AutomatedTrigger's JSON
+        // action config and was previously written to Machine.status with no
+        // enum validation and no MachineRuntime sync.
+        if (isValidMachineStatus(config.newStatus)) {
+          await RuntimeEngine.upsertHeartbeat(config.entityId, { status: config.newStatus });
+        } else {
+          log.warn('Rejected invalid machine status from trigger action', { entityId: config.entityId, newStatus: config.newStatus });
+        }
         break;
       case 'WorkOrder':
         await prisma.workOrder.update({
@@ -641,14 +667,82 @@ export class AdvancedWorkflowEngine {
     return graph.nodes.find(n => n.id === nodeId) || null;
   }
 
-  private static async processToken(instanceId: string, nodeId: string): Promise<void> {
-    // This would integrate with the existing WorkflowEngine.processToken
-    // For now, just log the processing
+  /**
+   * Advance the workflow past `nodeId`: consumes the active token sitting
+   * there, resolves the next node(s) (recursing through gateways
+   * automatically), and creates new ACTIVE tokens for them.
+   *
+   * HIGH-10 fix: this previously only wrote a SystemEvent claiming the token
+   * was "processed" without touching WorkflowToken/WorkflowInstance at all —
+   * a caller (e.g. mergeParallelBranches) had no way to know the workflow
+   * never actually advanced. Note one real limitation, now logged instead of
+   * hidden: this engine's JSON-graph task nodes have no corresponding
+   * WorkflowStepDef row (that model belongs to the older, non-JSON
+   * WorkflowEngine execution path — see its own file for the fully
+   * transactional task-completion flow), so a WorkflowTask can't be created
+   * here without a schema change. The token still advances correctly; only
+   * task auto-creation at that node is a known, logged gap.
+   */
+  private static async processToken(instanceId: string, nodeId: string, depth = 0): Promise<void> {
+    if (depth > 25) {
+      log.error('processToken: max recursion depth exceeded — possible cyclic graph', { instanceId, nodeId });
+      return;
+    }
+
+    const node = await this.getNodeFromInstance(instanceId, nodeId);
+    if (!node) {
+      log.warn('processToken: node not found in workflow graph', { instanceId, nodeId });
+      return;
+    }
+
+    await prisma.workflowToken.updateMany({
+      where: { instanceId, nodeId, status: 'ACTIVE' },
+      data: { status: 'CONSUMED' },
+    });
+
+    if (node.type === 'end') {
+      await prisma.workflowInstance.update({
+        where: { id: instanceId },
+        data: { status: 'COMPLETED' },
+      }).catch((e) => log.error('processToken: failed to mark instance completed', { message: e instanceof Error ? e.message : String(e), instanceId }));
+      await prisma.systemEvent.create({
+        data: { eventType: 'WORKFLOW_INSTANCE_COMPLETED', details: `Instance ${instanceId} completed at end node ${nodeId}` },
+      });
+      return;
+    }
+
+    let nextNodeIds: string[];
+    if (node.type === 'gateway') {
+      const instance = await prisma.workflowInstance.findUnique({ where: { id: instanceId }, select: { context: true } });
+      const context = instance?.context ? JSON.parse(instance.context) : {};
+      nextNodeIds = await this.processBranching(instanceId, nodeId, context);
+    } else {
+      nextNodeIds = node.next ?? [];
+    }
+
+    if (nextNodeIds.length === 0) {
+      log.warn('processToken: no outgoing path resolved', { instanceId, nodeId, nodeType: node.type });
+      return;
+    }
+
+    for (const nextId of nextNodeIds) {
+      await prisma.workflowToken.create({ data: { instanceId, nodeId: nextId, status: 'ACTIVE' } });
+
+      const nextNode = await this.getNodeFromInstance(instanceId, nextId);
+      if (nextNode?.type === 'task') {
+        log.warn('processToken: reached a task node with no WorkflowStepDef mapping — task not auto-created, token left ACTIVE for manual/external advance', { instanceId, nodeId: nextId });
+      } else {
+        // end / gateway / event nodes have no human action to wait on — keep advancing.
+        await this.processToken(instanceId, nextId, depth + 1);
+      }
+    }
+
     await prisma.systemEvent.create({
       data: {
         eventType: 'TOKEN_PROCESSED',
-        details: `Processed token for node ${nodeId} in instance ${instanceId}`
-      }
+        details: `Advanced instance ${instanceId} from ${nodeId} to [${nextNodeIds.join(', ')}]`,
+      },
     });
   }
 }
+
