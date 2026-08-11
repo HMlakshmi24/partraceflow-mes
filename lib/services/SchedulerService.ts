@@ -223,32 +223,10 @@ export class SchedulerService {
                     orderBy: { plannedStart: 'asc' },
                 });
 
-                // Bug fix (found via audit): this app has two independent
-                // scheduling subsystems — this one (ProductionSchedule) and
-                // SchedulingEngine (ScheduledJob), see CLAUDE.md's "two
-                // competing scheduling subsystems". This booking used to
-                // only look at ProductionSchedule's existing bookings for
-                // the machine, so a slot already committed via the other
-                // engine was invisible here and could be double-booked.
-                // Folding ScheduledJob's active bookings into the same
-                // slot-finding pass closes that without merging the two
-                // subsystems.
-                const existingJobs = await tx.scheduledJob.findMany({
-                    where: {
-                        machineId: selectedCap.machineId,
-                        status: { in: ['SCHEDULED', 'IN_PROGRESS', 'RESCHEDULED'] },
-                        scheduledEnd: { gte: from },
-                    },
-                    select: { scheduledStart: true, scheduledEnd: true },
-                });
-
                 const foundSlot = findEarliestSlot(
                     from,
                     durationMs,
-                    [
-                        ...existing.map(e => ({ start: e.plannedStart, end: e.plannedEnd })),
-                        ...existingJobs.map(j => ({ start: j.scheduledStart, end: j.scheduledEnd })),
-                    ],
+                    existing.map(e => ({ start: e.plannedStart, end: e.plannedEnd })),
                 );
 
                 const created = await tx.productionSchedule.create({
@@ -309,6 +287,47 @@ export class SchedulerService {
             estimatedDurationMinutes: durationMinutes,
             conflicts,
         };
+    }
+
+    /**
+     * Schedule every eligible work order in priority/due-date order — the
+     * batch-optimization capability this app used to have only in the
+     * separate, never-UI-wired SchedulingEngine/ScheduledJob subsystem (see
+     * CLAUDE.md's "two competing scheduling subsystems"). That subsystem had
+     * zero rows and zero reachable callers (confirmed: no page, button, or
+     * cron job invoked it), so rather than reconciling two live datasets,
+     * this reimplements the one thing it did that the single-order
+     * `schedule()` path above doesn't: bulk assignment across many orders at
+     * once. It's a thin loop over the existing, already-tested,
+     * capability-aware, race-safe `schedule()` — not a separate algorithm —
+     * so every order gets the more accurate capacity-rate-based duration and
+     * real conflict logging that `schedule()` already provides, and each
+     * call's booking is immediately visible to the next iteration (each is
+     * its own committed transaction), which is what makes machines fill up
+     * correctly across the batch instead of every order picking the same
+     * "first free" slot.
+     */
+    static async scheduleAll(
+        workOrderIds?: string[],
+    ): Promise<{ scheduled: (ScheduleResult & { workOrderId: string })[]; unscheduled: { workOrderId: string; reason: string }[] }> {
+        const candidates = await prisma.workOrder.findMany({
+            where: workOrderIds
+                ? { id: { in: workOrderIds } }
+                : { status: { in: ['PLANNED', 'RELEASED'] }, scheduledStart: null },
+            orderBy: [{ priority: 'desc' }, { dueDate: 'asc' }],
+            select: { id: true },
+        });
+
+        const scheduled: (ScheduleResult & { workOrderId: string })[] = [];
+        const unscheduled: { workOrderId: string; reason: string }[] = [];
+
+        for (const wo of candidates) {
+            const result = await SchedulerService.schedule(wo.id);
+            if (result.success) scheduled.push({ ...result, workOrderId: wo.id });
+            else unscheduled.push({ workOrderId: wo.id, reason: result.error ?? 'Unknown scheduling error' });
+        }
+
+        return { scheduled, unscheduled };
     }
 
     /** Total scheduled minutes for a machine in a time window. */

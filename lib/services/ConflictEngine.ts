@@ -20,13 +20,6 @@ export class ConflictEngine {
     /**
      * Check if a proposed schedule (machineId, start, end) conflicts with
      * existing ones.
-     *
-     * Bug fix (found via audit): this only ever checked ProductionSchedule.
-     * This app has a second, independent scheduling subsystem
-     * (SchedulingEngine / ScheduledJob — see CLAUDE.md's "two competing
-     * scheduling subsystems") that this check had zero visibility into, so
-     * a machine already committed via that engine could still pass this
-     * check as conflict-free. Now checks both tables.
      */
     static async detectOverlapConflict(
         machineId: string,
@@ -34,26 +27,16 @@ export class ConflictEngine {
         end:       Date,
         excludeScheduleId?: string,
     ): Promise<boolean> {
-        const [existing, existingJobs] = await Promise.all([
-            prisma.productionSchedule.findMany({
-                where: {
-                    machineId,
-                    status: { in: ['SCHEDULED', 'IN_PROGRESS'] },
-                    ...(excludeScheduleId ? { id: { not: excludeScheduleId } } : {}),
-                    plannedEnd:   { gt: start },
-                    plannedStart: { lt: end },
-                },
-            }),
-            prisma.scheduledJob.findMany({
-                where: {
-                    machineId,
-                    status: { in: ['SCHEDULED', 'IN_PROGRESS', 'RESCHEDULED'] },
-                    scheduledEnd:   { gt: start },
-                    scheduledStart: { lt: end },
-                },
-            }),
-        ]);
-        return existing.length > 0 || existingJobs.length > 0;
+        const existing = await prisma.productionSchedule.findMany({
+            where: {
+                machineId,
+                status: { in: ['SCHEDULED', 'IN_PROGRESS'] },
+                ...(excludeScheduleId ? { id: { not: excludeScheduleId } } : {}),
+                plannedEnd:   { gt: start },
+                plannedStart: { lt: end },
+            },
+        });
+        return existing.length > 0;
     }
 
     /** Check if a machine is currently DOWN or MAINTENANCE. */

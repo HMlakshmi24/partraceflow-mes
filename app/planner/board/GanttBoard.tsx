@@ -252,6 +252,7 @@ export default function GanttBoard() {
     const [toast, setToast]               = useState<string | null>(null);
     const [dragging, setDragging]         = useState<DragState | null>(null);
     const [dragOverMachine, setDragOverMachine] = useState<string | null>(null);
+    const [autoScheduling, setAutoScheduling] = useState(false);
 
     const viewEnd = useMemo(
         () => new Date(viewStart.getTime() + viewHours * 3_600_000),
@@ -282,6 +283,35 @@ export default function GanttBoard() {
             setLoading(false);
         }
     }, [viewStart, viewEnd]);
+
+    // Bulk-assigns machines to every unscheduled PLANNED/RELEASED work order,
+    // in priority/due-date order — the batch capability that used to live in
+    // a separate, never-UI-wired scheduling subsystem (see CLAUDE.md). Now
+    // backed by the same SchedulerService the rest of this board uses.
+    const handleAutoSchedule = useCallback(async () => {
+        setAutoScheduling(true);
+        try {
+            const res = await fetch('/api/schedule/optimize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) { showToast(data.error ?? 'Auto-schedule failed'); return; }
+            const scheduledCount = data.scheduled?.length ?? 0;
+            const unscheduledCount = data.unscheduled?.length ?? 0;
+            showToast(
+                unscheduledCount > 0
+                    ? `Scheduled ${scheduledCount} order${scheduledCount === 1 ? '' : 's'}, ${unscheduledCount} could not be scheduled`
+                    : `Scheduled ${scheduledCount} order${scheduledCount === 1 ? '' : 's'}`,
+            );
+            fetchBoard();
+        } catch {
+            showToast('Network error');
+        } finally {
+            setAutoScheduling(false);
+        }
+    }, [fetchBoard]);
 
     useEffect(() => { fetchBoard(); }, [fetchBoard]);
 
@@ -519,6 +549,16 @@ export default function GanttBoard() {
                 {/* Refresh */}
                 <button onClick={fetchBoard} className="px-2 py-1 text-xs bg-gray-800 hover:bg-gray-700 rounded" title="Refresh">
                     ↺
+                </button>
+
+                {/* Auto-schedule unscheduled work orders */}
+                <button
+                    onClick={handleAutoSchedule}
+                    disabled={autoScheduling}
+                    className="px-2.5 py-1 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed rounded font-medium text-white"
+                    title="Auto-assign machines to every unscheduled work order, by priority and due date"
+                >
+                    {autoScheduling ? 'Scheduling…' : '⚡ Auto-Schedule'}
                 </button>
 
                 {/* View date range label */}

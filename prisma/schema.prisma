@@ -50,7 +50,6 @@ model Machine {
   machineEvents       MachineEvent[]
   downtimeEvents      DowntimeEvent[]
   maintenanceWindows  MaintenanceWindow[]
-  scheduledJobs       ScheduledJob[]
   telemetry           MachineTelemetry[]
   workOrders          WorkOrder[]
   runtime             MachineRuntime?
@@ -134,7 +133,6 @@ model WorkOrder {
   batchId              String?
   scheduledStart       DateTime?
   scheduledEnd         DateTime?
-  scheduledJob         ScheduledJob?
   batches              Batch[]
   inspectionRecords    InspectionRecord[]
   pipeSpools           PipeSpool[]
@@ -939,35 +937,6 @@ model DocumentAssignment {
 // --------------------------------------------------------
 // SCHEDULING ENGINE
 // --------------------------------------------------------
-
-model ScheduledJob {
-  id             String                 @id @default(cuid())
-  workOrderId    String                 @unique
-  workOrder      WorkOrder              @relation(fields: [workOrderId], references: [id])
-  machineId      String?
-  machine        Machine?               @relation(fields: [machineId], references: [id])
-  operatorId     String?
-  scheduledStart DateTime
-  scheduledEnd   DateTime
-  actualStart    DateTime?
-  actualEnd      DateTime?
-  duration       Float // minutes
-  priority       Int                    @default(1)
-  status         String                 @default("SCHEDULED") // SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED, RESCHEDULED
-  constraints    SchedulingConstraint[]
-  createdAt      DateTime               @default(now())
-  optimizedAt    DateTime?
-}
-
-model SchedulingConstraint {
-  id             String       @id @default(cuid())
-  jobId          String
-  job            ScheduledJob @relation(fields: [jobId], references: [id])
-  constraintType String // MACHINE_CAPACITY, OPERATOR_AVAILABILITY, MATERIAL_AVAILABILITY, MAINTENANCE_WINDOW, DEPENDENCY
-  description    String
-  data           String // JSON constraint data
-  isSatisfied    Boolean      @default(false)
-}
 
 model MaintenanceWindow {
   id             String    @id @default(cuid())
