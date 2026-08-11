@@ -79,3 +79,48 @@ export async function GET(request: NextRequest) {
         return handleApiError('[GET /api/maintenance/predict]', error);
   }
 }
+
+export async function POST(request: NextRequest) {
+  const authError = await requireRole(request, MAINTENANCE_ROLES);
+  if (authError) return authError;
+
+  try {
+    const body = await request.json();
+    const { action, machineId } = body;
+
+    // This is the only action this route currently supports — the "Create
+    // Maintenance Work Order" button on the predictive-maintenance page,
+    // which previously called this endpoint but the route had no POST
+    // handler at all (a 405 on every single click).
+    if (action === 'create_work_order') {
+      if (!machineId) return NextResponse.json({ error: 'machineId is required' }, { status: 400 });
+
+      const machine = await prisma.machine.findUnique({ where: { id: machineId }, select: { id: true, name: true, code: true } });
+      if (!machine) return NextResponse.json({ error: 'Machine not found' }, { status: 404 });
+
+      const prediction = await PredictiveMaintenanceService.predictFailure(machineId);
+      const now = new Date();
+      const window = await prisma.maintenanceWindow.create({
+        data: {
+          machineId,
+          title: `Corrective maintenance — ${machine.name} (${machine.code})`,
+          type: 'CORRECTIVE',
+          scheduledStart: now,
+          // Predicted-imminent failures get a same-day window; otherwise a
+          // standard next-business-day window.
+          scheduledEnd: new Date(now.getTime() + (prediction.probability > 0.7 ? 4 : 24) * 3600 * 1000),
+          status: 'SCHEDULED',
+          notes: prediction.probability > 0.7
+            ? `Auto-created from a high-risk failure prediction (${Math.round(prediction.probability * 100)}% probability). Immediate attention recommended.`
+            : `Auto-created from a predictive-maintenance work order request (${Math.round(prediction.probability * 100)}% failure probability).`,
+        },
+      });
+
+      return NextResponse.json({ success: true, maintenanceWindow: window });
+    }
+
+    return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
+  } catch (error) {
+        return handleApiError('[POST /api/maintenance/predict]', error);
+  }
+}

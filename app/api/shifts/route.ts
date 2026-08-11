@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
         }
 
         // Default: list shifts + schedules
-        const [shifts, schedules] = await Promise.all([
+        const [shifts, schedules, productionLines] = await Promise.all([
             prisma.shift.findMany({ where: { plantId }, orderBy: { startTime: 'asc' } }),
             prisma.shiftSchedule.findMany({
                 where: {
@@ -46,10 +46,14 @@ export async function GET(req: NextRequest) {
                 },
                 orderBy: { date: 'desc' },
                 take: 30,
-            })
+            }),
+            // Lets the UI offer a line picker when scheduling a shift — required
+            // by create_schedule whenever more than one line exists (see the
+            // productionLineId disambiguation below).
+            prisma.productionLine.findMany({ select: { id: true, code: true, name: true }, orderBy: { code: 'asc' }, take: 50 }),
         ]);
 
-        return NextResponse.json({ shifts, schedules });
+        return NextResponse.json({ shifts, schedules, productionLines });
     } catch (error) {
                 return handleApiError('[GET /api/shifts]', error);
     }

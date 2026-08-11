@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { TrendingUp, AlertTriangle, CheckCircle, RefreshCw, Activity } from 'lucide-react';
+import { TrendingUp, AlertTriangle, CheckCircle, RefreshCw, Activity, Plus } from 'lucide-react';
 
 interface SPCPoint {
     value: number;
@@ -145,6 +145,14 @@ export default function SPCPage() {
     const [loading, setLoading] = useState(true);
     const [chartLoading, setChartLoading] = useState(false);
 
+    // Add-parameter form — the API's create_parameter action already existed
+    // and is correctly wired, but nothing in this page ever called it, so
+    // there was no way to onboard a monitored parameter through the UI at all.
+    const [showAddParam, setShowAddParam] = useState(false);
+    const [addParamSaving, setAddParamSaving] = useState(false);
+    const [addParamError, setAddParamError] = useState('');
+    const [newParam, setNewParam] = useState({ parameterName: '', unit: '', machineId: '', nominalValue: '', upperSpecLimit: '', lowerSpecLimit: '' });
+
     const load = useCallback(async () => {
         setLoading(true);
         const url = machineFilter ? `/api/spc?machineId=${machineFilter}` : '/api/spc';
@@ -172,6 +180,31 @@ export default function SPCPage() {
         load();
     };
 
+    const handleAddParam = async () => {
+        if (!newParam.parameterName.trim() || !newParam.machineId) { setAddParamError('Parameter name and machine are required.'); return; }
+        setAddParamSaving(true); setAddParamError('');
+        try {
+            const res = await fetch('/api/spc', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'create_parameter',
+                    parameterName: newParam.parameterName.trim(),
+                    unit: newParam.unit.trim() || undefined,
+                    machineId: newParam.machineId,
+                    nominalValue: newParam.nominalValue ? Number(newParam.nominalValue) : undefined,
+                    upperSpecLimit: newParam.upperSpecLimit ? Number(newParam.upperSpecLimit) : undefined,
+                    lowerSpecLimit: newParam.lowerSpecLimit ? Number(newParam.lowerSpecLimit) : undefined,
+                }),
+            });
+            const d = await res.json();
+            if (!res.ok) { setAddParamError(d.error ?? 'Failed to add parameter'); return; }
+            setShowAddParam(false);
+            setNewParam({ parameterName: '', unit: '', machineId: '', nominalValue: '', upperSpecLimit: '', lowerSpecLimit: '' });
+            load();
+        } catch { setAddParamError('Network error'); }
+        finally { setAddParamSaving(false); }
+    };
+
     const filtered = machineFilter ? parameters.filter(p => p.machine.id === machineFilter) : parameters;
     return (
         <div style={{ padding: '1.5rem', fontFamily: 'inherit', background: 'var(--background)', minHeight: '100vh' }}>
@@ -188,6 +221,9 @@ export default function SPCPage() {
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <button onClick={load} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.65rem 1.1rem', borderRadius: '0.5rem', border: '1px solid var(--card-border)', background: 'var(--card-bg)', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
                         <RefreshCw size={15} /> Refresh
+                    </button>
+                    <button onClick={() => setShowAddParam(true)} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.65rem 1.1rem', borderRadius: '0.5rem', border: 'none', background: '#6366f1', color: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
+                        <Plus size={15} /> Add Parameter
                     </button>
                 </div>
             </div>
@@ -347,14 +383,66 @@ export default function SPCPage() {
                             <p style={{ fontWeight: 600, fontSize: '1.1rem', marginBottom: '0.5rem' }}>Select a parameter to view its control chart</p>
                             <p style={{ fontSize: '0.85rem', marginBottom: '1.5rem' }}>X-bar chart with UCL/LCL, Cp/Cpk capability indices, and violation detection</p>
                             {filtered.length === 0 && (
-                                <button onClick={load} style={{ padding: '0.65rem 1.5rem', borderRadius: '0.5rem', border: 'none', background: '#6366f1', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>
-                                    Refresh SPC Data
+                                <button onClick={() => setShowAddParam(true)} style={{ padding: '0.65rem 1.5rem', borderRadius: '0.5rem', border: 'none', background: '#6366f1', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>
+                                    Add a Parameter to Monitor
                                 </button>
                             )}
                         </div>
                     )}
                 </div>
             </div>
+
+            {showAddParam && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+                    <div style={{ background: 'var(--card-bg)', borderRadius: '1rem', padding: '2rem', width: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                        <h2 style={{ margin: '0 0 1.25rem', fontSize: '1.15rem', fontWeight: 700 }}>Add SPC Parameter</h2>
+                        {addParamError && <div style={{ background: '#ef444422', color: '#ef4444', padding: '0.6rem 0.85rem', borderRadius: '0.5rem', marginBottom: '1rem', fontSize: '0.85rem' }}>{addParamError}</div>}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem' }}>
+                            <div>
+                                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: '0.35rem' }}>Parameter Name *</label>
+                                <input value={newParam.parameterName} onChange={e => setNewParam(p => ({ ...p, parameterName: e.target.value }))} placeholder="e.g. Spindle Temperature"
+                                    style={{ width: '100%', padding: '0.6rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.9rem', boxSizing: 'border-box' }} />
+                            </div>
+                            <div>
+                                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: '0.35rem' }}>Machine *</label>
+                                <select value={newParam.machineId} onChange={e => setNewParam(p => ({ ...p, machineId: e.target.value }))}
+                                    style={{ width: '100%', padding: '0.6rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.9rem' }}>
+                                    <option value="">— Select —</option>
+                                    {machines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: '0.35rem' }}>Unit</label>
+                                <input value={newParam.unit} onChange={e => setNewParam(p => ({ ...p, unit: e.target.value }))} placeholder="e.g. °C, mm, RPM"
+                                    style={{ width: '100%', padding: '0.6rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.9rem', boxSizing: 'border-box' }} />
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.6rem' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, marginBottom: '0.35rem' }}>Nominal</label>
+                                    <input type="number" value={newParam.nominalValue} onChange={e => setNewParam(p => ({ ...p, nominalValue: e.target.value }))}
+                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.85rem', boxSizing: 'border-box' }} />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, marginBottom: '0.35rem' }}>USL</label>
+                                    <input type="number" value={newParam.upperSpecLimit} onChange={e => setNewParam(p => ({ ...p, upperSpecLimit: e.target.value }))}
+                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.85rem', boxSizing: 'border-box' }} />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, marginBottom: '0.35rem' }}>LSL</label>
+                                    <input type="number" value={newParam.lowerSpecLimit} onChange={e => setNewParam(p => ({ ...p, lowerSpecLimit: e.target.value }))}
+                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.85rem', boxSizing: 'border-box' }} />
+                                </div>
+                            </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
+                            <button onClick={() => { setShowAddParam(false); setAddParamError(''); }} style={{ flex: 1, padding: '0.7rem', borderRadius: '0.5rem', border: '1px solid #e5e7eb', background: 'var(--card-bg)', cursor: 'pointer', fontWeight: 600, color: 'var(--foreground)' }}>Cancel</button>
+                            <button onClick={handleAddParam} disabled={addParamSaving} style={{ flex: 1, padding: '0.7rem', borderRadius: '0.5rem', border: 'none', background: '#6366f1', color: '#fff', cursor: addParamSaving ? 'not-allowed' : 'pointer', fontWeight: 700 }}>
+                                {addParamSaving ? 'Adding…' : 'Add Parameter'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

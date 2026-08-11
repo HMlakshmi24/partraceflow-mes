@@ -3,6 +3,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Clock, Users, Play, Square, LogIn, LogOut, Plus, TrendingUp, Calendar, ChevronRight, Settings } from 'lucide-react';
 
+interface ProductionLineOption {
+    id: string;
+    code: string;
+    name: string;
+}
+
 interface ShiftTemplate {
     id: string;
     name: string;
@@ -61,6 +67,7 @@ function validateTemplate(name: string, startTime: string, endTime: string, qty:
 export default function ShiftsPage() {
     const [schedules, setSchedules] = useState<ShiftSchedule[]>([]);
     const [templates, setTemplates] = useState<ShiftTemplate[]>([]);
+    const [productionLines, setProductionLines] = useState<ProductionLineOption[]>([]);
     const [loading, setLoading] = useState(true);
     const [selected, setSelected] = useState<ShiftSchedule | null>(null);
     const [showCreate, setShowCreate] = useState(false);
@@ -72,6 +79,7 @@ export default function ShiftsPage() {
     const [newTemplateId, setNewTemplateId] = useState('');
     const [newDate, setNewDate] = useState(new Date().toISOString().split('T')[0]);
     const [newTarget, setNewTarget] = useState('');
+    const [newProductionLineId, setNewProductionLineId] = useState('');
 
     // Create template form
     const [tplName, setTplName] = useState('');
@@ -104,6 +112,12 @@ export default function ShiftsPage() {
                 const d = await res.json();
                 setSchedules(d.schedules ?? []);
                 setSelected(curr => curr ?? d.schedules?.[0] ?? null);
+                const lines: ProductionLineOption[] = d.productionLines ?? [];
+                setProductionLines(lines);
+                // Auto-select when there's exactly one line (matches the API's
+                // own single-line fallback); with more than one, the user must
+                // pick — the picker below only renders in that case.
+                if (lines.length === 1) setNewProductionLineId(curr => curr || lines[0].id);
             }
         } catch { /* ignore */ }
         setLoading(false);
@@ -144,10 +158,11 @@ export default function ShiftsPage() {
 
     const handleCreateSchedule = async () => {
         if (!newTemplateId) { toast('Select a shift template', false); return; }
+        if (productionLines.length > 1 && !newProductionLineId) { toast('Select a production line', false); return; }
         const targetNum = newTarget.trim() ? parseInt(newTarget) : undefined;
         if (newTarget.trim() && (!targetNum || targetNum <= 0)) { toast('Target quantity must be greater than 0', false); return; }
         try {
-            await post({ action: 'create_schedule', templateId: newTemplateId, date: newDate, targetQuantity: targetNum });
+            await post({ action: 'create_schedule', templateId: newTemplateId, date: newDate, targetQuantity: targetNum, productionLineId: newProductionLineId || undefined });
             toast('Shift scheduled'); setShowCreate(false); setNewTemplateId(''); setNewTarget(''); load();
         } catch (err) { toast(getErrorMessage(err), false); }
     };
@@ -404,6 +419,21 @@ export default function ShiftsPage() {
                                     </select>
                                 )}
                             </div>
+                            {productionLines.length > 1 && (
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>Production Line</label>
+                                    <select
+                                        value={newProductionLineId}
+                                        onChange={e => setNewProductionLineId(e.target.value)}
+                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.9rem' }}
+                                    >
+                                        <option value="">— Select —</option>
+                                        {productionLines.map(l => (
+                                            <option key={l.id} value={l.id}>{l.name} ({l.code})</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
                             <div>
                                 <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>Date</label>
                                 <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} style={{ width: '100%', padding: '0.6rem', borderRadius: '0.4rem', border: '1px solid #d1d5db', fontSize: '0.9rem', boxSizing: 'border-box' }} />
