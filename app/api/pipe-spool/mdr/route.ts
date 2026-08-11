@@ -3,6 +3,7 @@ import { prisma } from '@/lib/services/database';
 import { requireSpoolAction } from '@/lib/spoolRBAC';
 import { requireRole } from '@/lib/api-auth';
 import { verifySignatureForEntity } from '@/lib/services/ElectronicSignatureService';
+import { parsePagination } from '@/lib/pagination';
 
 const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
@@ -43,12 +44,18 @@ export async function GET(req: NextRequest) {
     const where: any = {};
     if (status) where.status = status;
 
-    const mdrs = await prisma.mDR.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      include: { _count: { select: { mdrSpools: true } } },
-    });
-    return NextResponse.json({ mdrs });
+    const { take, skip } = parsePagination(searchParams);
+    const [mdrs, total] = await Promise.all([
+      prisma.mDR.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: { _count: { select: { mdrSpools: true } } },
+        take,
+        skip,
+      }),
+      prisma.mDR.count({ where }),
+    ]);
+    return NextResponse.json({ mdrs, total, limit: take, offset: skip });
   } catch {
     return NextResponse.json({ error: 'Failed to fetch MDR records' }, { status: 500 });
   }

@@ -5,6 +5,7 @@ import { ApproveSpoolSchema, validationError } from '@/lib/validation';
 import { apiError, apiSuccess } from '@/lib/apiResponse';
 import { AuditService } from '@/lib/services/AuditService';
 import { requireRole } from '@/lib/api-auth';
+import { parsePagination } from '@/lib/pagination';
 
 const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
@@ -27,11 +28,17 @@ export async function GET(req: NextRequest) {
     if (inspectionId) where.inspectionId = inspectionId;
     if (status) where.status = status;
 
-    const approvals = await prisma.spoolApproval.findMany({
-      where,
-      orderBy: { approvedAt: 'desc' },
-    });
-    return apiSuccess({ approvals });
+    const { take, skip } = parsePagination(searchParams);
+    const [approvals, total] = await Promise.all([
+      prisma.spoolApproval.findMany({
+        where,
+        orderBy: { approvedAt: 'desc' },
+        take,
+        skip,
+      }),
+      prisma.spoolApproval.count({ where }),
+    ]);
+    return apiSuccess({ approvals, total, limit: take, offset: skip });
   } catch (e) {
     return apiError('Failed to fetch approvals', 'APPROVAL_FETCH_FAILED', 500);
   }

@@ -5,6 +5,7 @@ import { canTransition, SPOOL_TRANSITIONS } from '@/lib/spoolTransitions';
 import { onPWHTComplete } from '@/lib/spoolFlow';
 import { requireRole } from '@/lib/api-auth';
 import { verifySignatureForEntity } from '@/lib/services/ElectronicSignatureService';
+import { parsePagination } from '@/lib/pagination';
 
 const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
@@ -29,12 +30,18 @@ export async function GET(req: NextRequest) {
     const where: any = {};
     if (spoolId) where.spoolId = spoolId;
 
-    const cycles = await prisma.pWHTCycle.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      include: { spool: { select: { spoolId: true } } },
-    });
-    return NextResponse.json({ cycles });
+    const { take, skip } = parsePagination(searchParams);
+    const [cycles, total] = await Promise.all([
+      prisma.pWHTCycle.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: { spool: { select: { spoolId: true } } },
+        take,
+        skip,
+      }),
+      prisma.pWHTCycle.count({ where }),
+    ]);
+    return NextResponse.json({ cycles, total, limit: take, offset: skip });
   } catch {
     return NextResponse.json({ error: 'Failed to fetch PWHT cycles' }, { status: 500 });
   }

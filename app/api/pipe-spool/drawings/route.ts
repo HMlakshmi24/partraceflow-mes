@@ -3,6 +3,7 @@ import { prisma } from '@/lib/services/database';
 import { apiError, apiSuccess } from '@/lib/apiResponse';
 import { requireRole } from '@/lib/api-auth';
 import { requireSpoolAction } from '@/lib/spoolRBAC';
+import { parsePagination } from '@/lib/pagination';
 
 const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
@@ -30,15 +31,21 @@ export async function GET(req: NextRequest) {
     if (status) where.status = status;
     
 
-    const drawings = await prisma.isometricDrawing.findMany({
-      where,
-      orderBy: [{ drawingNumber: 'asc' }],
-      include: {
-        line: { select: { lineNumber: true } },
-        spools: { select: { id: true, spoolId: true } },
-      },
-    });
-    return apiSuccess({ drawings });
+    const { take, skip } = parsePagination(searchParams);
+    const [drawings, total] = await Promise.all([
+      prisma.isometricDrawing.findMany({
+        where,
+        orderBy: [{ drawingNumber: 'asc' }],
+        include: {
+          line: { select: { lineNumber: true } },
+          spools: { select: { id: true, spoolId: true } },
+        },
+        take,
+        skip,
+      }),
+      prisma.isometricDrawing.count({ where }),
+    ]);
+    return apiSuccess({ drawings, total, limit: take, offset: skip });
   } catch (e) {
     return apiError('Failed to fetch drawings', 'DRAWING_FETCH_FAILED', 500);
   }

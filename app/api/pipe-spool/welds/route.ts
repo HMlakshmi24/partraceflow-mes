@@ -6,6 +6,7 @@ import { CreateWeldSchema, validationError } from '@/lib/validation';
 import { revisionError } from '@/lib/revisionGuard';
 import { AuditService, EventType } from '@/lib/services/AuditService';
 import { requireRole } from '@/lib/api-auth';
+import { parsePagination } from '@/lib/pagination';
 
 const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
@@ -40,14 +41,20 @@ export async function GET(req: NextRequest) {
     if (welderId) where.welderId = welderId;
     if (status) where.status = status;
 
-    const records = await prisma.weldRecord.findMany({
-      where,
-      orderBy: { weldDate: 'desc' },
-      include: {
-        joint: { select: { jointId: true, spoolId: true, jointType: true } },
-      },
-    });
-    return NextResponse.json({ records });
+    const { take, skip } = parsePagination(searchParams);
+    const [records, total] = await Promise.all([
+      prisma.weldRecord.findMany({
+        where,
+        orderBy: { weldDate: 'desc' },
+        include: {
+          joint: { select: { jointId: true, spoolId: true, jointType: true } },
+        },
+        take,
+        skip,
+      }),
+      prisma.weldRecord.count({ where }),
+    ]);
+    return NextResponse.json({ records, total, limit: take, offset: skip });
   } catch (e) {
     return NextResponse.json({ error: 'Failed to fetch weld records' }, { status: 500 });
   }
