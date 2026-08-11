@@ -6,6 +6,11 @@ import { requireRole } from '@/lib/api-auth';
 
 const MAINTENANCE_ROLES = ['ADMIN', 'SUPERVISOR', 'MAINTENANCE', 'OPERATOR'];
 
+// Auto-scheduling window for a work order created from a failure prediction.
+const HIGH_RISK_PROBABILITY_THRESHOLD = 0.7;
+const HIGH_RISK_WINDOW_HOURS = 4;
+const STANDARD_WINDOW_HOURS = 24;
+
 export async function GET(request: NextRequest) {
   const authError = await requireRole(request, MAINTENANCE_ROLES);
   if (authError) return authError;
@@ -108,9 +113,9 @@ export async function POST(request: NextRequest) {
           scheduledStart: now,
           // Predicted-imminent failures get a same-day window; otherwise a
           // standard next-business-day window.
-          scheduledEnd: new Date(now.getTime() + (prediction.probability > 0.7 ? 4 : 24) * 3600 * 1000),
+          scheduledEnd: new Date(now.getTime() + (prediction.probability > HIGH_RISK_PROBABILITY_THRESHOLD ? HIGH_RISK_WINDOW_HOURS : STANDARD_WINDOW_HOURS) * 3600 * 1000),
           status: 'SCHEDULED',
-          notes: prediction.probability > 0.7
+          notes: prediction.probability > HIGH_RISK_PROBABILITY_THRESHOLD
             ? `Auto-created from a high-risk failure prediction (${Math.round(prediction.probability * 100)}% probability). Immediate attention recommended.`
             : `Auto-created from a predictive-maintenance work order request (${Math.round(prediction.probability * 100)}% failure probability).`,
         },
