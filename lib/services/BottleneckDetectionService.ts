@@ -22,6 +22,24 @@ export interface LineAnalysis {
   estimatedCapacityLoss: number
 }
 
+// Bottleneck-score weighting: utilization dominates, queue length contributes
+// on a capped scale so one extreme outlier machine can't skew the score.
+const UTILIZATION_SCORE_WEIGHT = 0.6
+const QUEUE_LENGTH_SCORE_CAP = 20
+const QUEUE_LENGTH_SCORE_WEIGHT = 2
+const BOTTLENECK_SCORE_THRESHOLD = 70
+
+// A machine also counts as a bottleneck below the score threshold if it's
+// both highly utilized and has a real queue forming behind it.
+const HIGH_UTILIZATION_THRESHOLD = 85
+const HIGH_UTILIZATION_QUEUE_THRESHOLD = 3
+
+// Recommendation-message thresholds.
+const CRITICAL_UTILIZATION_THRESHOLD = 90
+const QUEUE_BUILDUP_THRESHOLD = 5
+
+const SCAN_PLANT_LOOKBACK_HOURS = 8
+
 export class BottleneckDetectionService {
 
   static async analyzeProductionLine(
@@ -88,14 +106,14 @@ export class BottleneckDetectionService {
       const throughputPerHour = periodHours > 0 ? completedTasks / periodHours : 0
 
       // Bottleneck score: high utilization + long queue = bottleneck
-      const bottleneckScore = (utilizationPercent * 0.6) + (Math.min(queueLength, 20) * 2)
-      const isBottleneck = bottleneckScore > 70 || (utilizationPercent > 85 && queueLength > 3)
+      const bottleneckScore = (utilizationPercent * UTILIZATION_SCORE_WEIGHT) + (Math.min(queueLength, QUEUE_LENGTH_SCORE_CAP) * QUEUE_LENGTH_SCORE_WEIGHT)
+      const isBottleneck = bottleneckScore > BOTTLENECK_SCORE_THRESHOLD || (utilizationPercent > HIGH_UTILIZATION_THRESHOLD && queueLength > HIGH_UTILIZATION_QUEUE_THRESHOLD)
 
       let recommendation = 'Machine is performing normally.'
       if (isBottleneck) {
-        if (utilizationPercent > 90) {
+        if (utilizationPercent > CRITICAL_UTILIZATION_THRESHOLD) {
           recommendation = `Critical bottleneck: ${machine.name} is at ${utilizationPercent.toFixed(0)}% utilization. Consider adding capacity or redistributing work.`
-        } else if (queueLength > 5) {
+        } else if (queueLength > QUEUE_BUILDUP_THRESHOLD) {
           recommendation = `Queue buildup on ${machine.name}: ${queueLength} jobs waiting. Review scheduling or increase throughput.`
         }
       }
@@ -119,9 +137,9 @@ export class BottleneckDetectionService {
 
     // Overall line throttle: the bottleneck limits the whole line
     const lineThrottlePercent = primaryBottleneck
-      ? Math.max(0, primaryBottleneck.utilizationPercent - 85)
+      ? Math.max(0, primaryBottleneck.utilizationPercent - HIGH_UTILIZATION_THRESHOLD)
       : 0
-    const estimatedCapacityLoss = lineThrottlePercent * 0.01 *
+    const estimatedCapacityLoss = (lineThrottlePercent / 100) *
       results.reduce((sum, r) => sum + r.throughputPerHour, 0) / results.length
 
     if (primaryBottleneck) {
@@ -157,7 +175,7 @@ export class BottleneckDetectionService {
     })
 
     const toDate = new Date()
-    const fromDate = new Date(toDate.getTime() - 8 * 3600000) // last 8 hours
+    const fromDate = new Date(toDate.getTime() - SCAN_PLANT_LOOKBACK_HOURS * 3600000)
 
     const analysis = await this.analyzeProductionLine(
       machines.map(m => m.id),
