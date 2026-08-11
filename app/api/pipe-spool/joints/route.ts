@@ -9,6 +9,7 @@ import { recordStatusChange } from '@/lib/services/StatusHistoryService';
 import { appendChain } from '@/lib/services/AuditChainService';
 import { requireRole } from '@/lib/api-auth';
 import { createLogger } from '@/lib/logger';
+import { parsePagination } from '@/lib/pagination';
 
 const log = createLogger('pipe-spool.joints');
 const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
@@ -54,15 +55,21 @@ export async function GET(req: NextRequest) {
     if (spoolId) where.spoolId = spoolId;
     if (status) where.status = status;
 
-    const joints = await prisma.spoolJoint.findMany({
-      where,
-      orderBy: { jointId: 'asc' },
-      include: {
-        spool: { select: { spoolId: true } },
-        _count: { select: { weldRecords: true, ndeRecords: true, ncrs: true } },
-      },
-    });
-    return NextResponse.json({ joints });
+    const { take, skip } = parsePagination(searchParams);
+    const [joints, total] = await Promise.all([
+      prisma.spoolJoint.findMany({
+        where,
+        orderBy: { jointId: 'asc' },
+        include: {
+          spool: { select: { spoolId: true } },
+          _count: { select: { weldRecords: true, ndeRecords: true, ncrs: true } },
+        },
+        take,
+        skip,
+      }),
+      prisma.spoolJoint.count({ where }),
+    ]);
+    return NextResponse.json({ joints, total, limit: take, offset: skip });
   } catch (e) {
     return NextResponse.json({ error: 'Failed to fetch joints' }, { status: 500 });
   }

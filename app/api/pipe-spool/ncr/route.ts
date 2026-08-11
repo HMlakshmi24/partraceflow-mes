@@ -5,6 +5,7 @@ import { CreateNCRSchema, validationError } from '@/lib/validation';
 import { apiError, apiSuccess } from '@/lib/apiResponse';
 import { AuditService } from '@/lib/services/AuditService';
 import { requireRole } from '@/lib/api-auth';
+import { parsePagination } from '@/lib/pagination';
 
 const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
@@ -40,16 +41,22 @@ export async function GET(req: NextRequest) {
     if (spoolId) where.spoolId = spoolId;
     if (jointId) where.jointId = jointId;
 
-    const ncrs = await prisma.nCRRecord.findMany({
-      where,
-      orderBy: { detectedAt: 'desc' },
-      include: {
-        spool: { select: { spoolId: true } },
-        joint: { select: { jointId: true } },
-        _count: { select: { documents: true } },
-      },
-    });
-    return apiSuccess({ ncrs });
+    const { take, skip } = parsePagination(searchParams);
+    const [ncrs, total] = await Promise.all([
+      prisma.nCRRecord.findMany({
+        where,
+        orderBy: { detectedAt: 'desc' },
+        include: {
+          spool: { select: { spoolId: true } },
+          joint: { select: { jointId: true } },
+          _count: { select: { documents: true } },
+        },
+        take,
+        skip,
+      }),
+      prisma.nCRRecord.count({ where }),
+    ]);
+    return apiSuccess({ ncrs, total, limit: take, offset: skip });
   } catch (e) {
     return apiError('Failed to fetch NCRs', 'NCR_FETCH_FAILED', 500);
   }

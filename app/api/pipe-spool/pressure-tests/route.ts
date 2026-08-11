@@ -6,6 +6,7 @@ import { CreatePressureTestSchema, validationError } from '@/lib/validation';
 import { apiError, apiSuccess } from '@/lib/apiResponse';
 import { AuditService, EventType } from '@/lib/services/AuditService';
 import { requireRole } from '@/lib/api-auth';
+import { parsePagination } from '@/lib/pagination';
 
 const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
@@ -38,12 +39,18 @@ export async function GET(req: NextRequest) {
     if (result) where.result = result;
     if (testType) where.testType = testType;
 
-    const records = await prisma.pressureTestRecord.findMany({
-      where,
-      orderBy: { testDate: 'desc' },
-      include: { spool: { select: { spoolId: true } } },
-    });
-    return apiSuccess({ records });
+    const { take, skip } = parsePagination(searchParams);
+    const [records, total] = await Promise.all([
+      prisma.pressureTestRecord.findMany({
+        where,
+        orderBy: { testDate: 'desc' },
+        include: { spool: { select: { spoolId: true } } },
+        take,
+        skip,
+      }),
+      prisma.pressureTestRecord.count({ where }),
+    ]);
+    return apiSuccess({ records, total, limit: take, offset: skip });
   } catch (e) {
     return apiError('Failed to fetch pressure test records', 'PRESSURE_TEST_FETCH_FAILED', 500);
   }

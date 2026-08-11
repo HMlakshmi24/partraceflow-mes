@@ -10,6 +10,7 @@ import { recordStatusChange } from '@/lib/services/StatusHistoryService';
 import { appendChain } from '@/lib/services/AuditChainService';
 import { requireRole } from '@/lib/api-auth';
 import { createLogger } from '@/lib/logger';
+import { parsePagination } from '@/lib/pagination';
 
 const log = createLogger('pipe-spool.spools');
 const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
@@ -71,15 +72,21 @@ export async function GET(req: NextRequest) {
     if (lineId) where.lineId = lineId;
     if (status) where.status = status;
 
-    const spools = await prisma.pipeSpool.findMany({
-      where,
-      orderBy: { spoolId: 'asc' },
-      include: {
-        line: { select: { lineNumber: true, area: true } },
-        _count: { select: { joints: true, ncrs: true } },
-      },
-    });
-    return apiSuccess({ spools });
+    const { take, skip } = parsePagination(searchParams);
+    const [spools, total] = await Promise.all([
+      prisma.pipeSpool.findMany({
+        where,
+        orderBy: { spoolId: 'asc' },
+        include: {
+          line: { select: { lineNumber: true, area: true } },
+          _count: { select: { joints: true, ncrs: true } },
+        },
+        take,
+        skip,
+      }),
+      prisma.pipeSpool.count({ where }),
+    ]);
+    return apiSuccess({ spools, total, limit: take, offset: skip });
   } catch (e) {
     return apiError('Failed to fetch spools', 'SPOOL_FETCH_FAILED', 500);
   }

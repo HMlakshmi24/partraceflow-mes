@@ -5,6 +5,7 @@ import { requireSpoolAction } from '@/lib/spoolRBAC';
 import { AuditService, EventType } from '@/lib/services/AuditService';
 import { requireRole } from '@/lib/api-auth';
 import { verifySignatureForEntity } from '@/lib/services/ElectronicSignatureService';
+import { parsePagination } from '@/lib/pagination';
 
 const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
@@ -43,17 +44,23 @@ export async function GET(req: NextRequest) {
     if (jointId) where.jointId = jointId;
     if (result) where.result = result;
 
-    const inspections = await prisma.spoolInspection.findMany({
-      where,
-      orderBy: { inspectedAt: 'desc' },
-      include: {
-        spool: { select: { spoolId: true } },
-        joint: { select: { jointId: true } },
-        itp: { select: { name: true } },
-        itpStep: { select: { description: true, checkType: true, sequence: true } },
-      },
-    });
-    return NextResponse.json({ inspections });
+    const { take, skip } = parsePagination(searchParams);
+    const [inspections, total] = await Promise.all([
+      prisma.spoolInspection.findMany({
+        where,
+        orderBy: { inspectedAt: 'desc' },
+        include: {
+          spool: { select: { spoolId: true } },
+          joint: { select: { jointId: true } },
+          itp: { select: { name: true } },
+          itpStep: { select: { description: true, checkType: true, sequence: true } },
+        },
+        take,
+        skip,
+      }),
+      prisma.spoolInspection.count({ where }),
+    ]);
+    return NextResponse.json({ inspections, total, limit: take, offset: skip });
   } catch (e) {
     return NextResponse.json({ error: 'Failed to fetch inspections' }, { status: 500 });
   }

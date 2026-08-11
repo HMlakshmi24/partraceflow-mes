@@ -6,6 +6,7 @@ import { CreateNDESchema, validationError } from '@/lib/validation';
 import { apiError, apiSuccess } from '@/lib/apiResponse';
 import { AuditService, EventType } from '@/lib/services/AuditService';
 import { requireRole } from '@/lib/api-auth';
+import { parsePagination } from '@/lib/pagination';
 
 const SPOOL_ROLES = ['ADMIN', 'SUPERVISOR', 'QUALITY', 'OPERATOR'];
 
@@ -59,12 +60,18 @@ export async function GET(req: NextRequest) {
     if (ndeType) where.ndeType = ndeType;
     if (holdOnly) where.holdFlag = true;
 
-    const records = await prisma.nDERecord.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      include: { joint: { select: { jointId: true, spoolId: true } } },
-    });
-    return apiSuccess({ records });
+    const { take, skip } = parsePagination(searchParams);
+    const [records, total] = await Promise.all([
+      prisma.nDERecord.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: { joint: { select: { jointId: true, spoolId: true } } },
+        take,
+        skip,
+      }),
+      prisma.nDERecord.count({ where }),
+    ]);
+    return apiSuccess({ records, total, limit: take, offset: skip });
   } catch {
     return apiError('Failed to fetch NDE records', 'NDE_FETCH_FAILED', 500);
   }
