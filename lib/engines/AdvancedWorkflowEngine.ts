@@ -13,6 +13,7 @@ import { prisma } from '@/lib/services/database';
 import { BusinessLogicError, ValidationError } from '@/lib/utils/validation';
 import { createLogger } from '@/lib/logger';
 import { RuntimeEngine, isValidMachineStatus } from '@/lib/services/RuntimeEngine';
+import { evaluateThresholdRule } from '@/lib/qualityThreshold';
 
 const log = createLogger('engines.advancedWorkflow');
 
@@ -175,7 +176,7 @@ export class AdvancedWorkflowEngine {
 
       if (qualityCheck) {
         const actualValue = parseFloat(qualityCheck.actual);
-        const passed = this.evaluateThresholdRule(actualValue, rule.operator, rule.value, gateRule);
+        const passed = evaluateThresholdRule(actualValue, rule.operator, rule.value, gateRule.thresholdMin ?? undefined, gateRule.thresholdMax ?? undefined);
         
         if (!passed) {
           issues.push(`Quality check failed: ${rule.field} ${rule.operator} ${rule.value} (actual: ${actualValue})`);
@@ -508,25 +509,6 @@ export class AdvancedWorkflowEngine {
     } catch (error) {
       log.error('Condition evaluation error:', { message: error instanceof Error ? error.message : String(error) });
       return null;
-    }
-  }
-
-  private static evaluateThresholdRule(actual: number, operator: string, value: number, rule: any): boolean {
-    switch (operator) {
-      case '>':
-        return actual > value;
-      case '<':
-        return actual < value;
-      case '>=':
-        return actual >= value;
-      case '<=':
-        return actual <= value;
-      case '==':
-        return actual === value;
-      case 'between':
-        return actual >= rule.thresholdMin && actual <= rule.thresholdMax;
-      default:
-        return true;
     }
   }
 

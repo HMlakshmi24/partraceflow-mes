@@ -8,6 +8,7 @@
 import { prisma } from '@/lib/services/database';
 import { BusinessLogicError, ValidationError } from '@/lib/utils/validation';
 import { createLogger } from '@/lib/logger';
+import { evaluateThresholdRule } from '@/lib/qualityThreshold';
 
 const log = createLogger('services.qualityGate');
 
@@ -176,7 +177,7 @@ export class QualityGateService {
         }
         
         // Evaluate threshold rule
-        const passed = this.evaluateThresholdRule(
+        const passed = evaluateThresholdRule(
           measurement,
           rule.operator,
           rule.value,
@@ -428,34 +429,6 @@ export class QualityGateService {
   }
   
   // Helper methods
-  
-  private static evaluateThresholdRule(
-    actual: number,
-    operator: string,
-    value: number,
-    thresholdMin?: number,
-    thresholdMax?: number
-  ): boolean {
-    switch (operator) {
-      case '>':
-        return actual > value;
-      case '<':
-        return actual < value;
-      case '>=':
-        return actual >= value;
-      case '<=':
-        return actual <= value;
-      case '==':
-        return actual === value;
-      case 'between':
-        if (thresholdMin !== undefined && thresholdMax !== undefined) {
-          return actual >= thresholdMin && actual <= thresholdMax;
-        }
-        return false;
-      default:
-        return true;
-    }
-  }
   
   private static getExpectedDescription(rule: QualityRule['logic'], gateRule: any): string {
     switch (rule.operator) {

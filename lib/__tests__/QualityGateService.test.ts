@@ -28,15 +28,16 @@ vi.mock('@/lib/services/database', () => ({
 }));
 
 import { QualityGateService } from '@/lib/services/QualityGateService';
-
-const evaluateThresholdRule = (QualityGateService as any).evaluateThresholdRule.bind(QualityGateService);
+import { evaluateThresholdRule } from '@/lib/qualityThreshold';
 
 beforeEach(() => {
     vi.clearAllMocks();
     mockEvent.create.mockResolvedValue({});
 });
 
-// ── evaluateThresholdRule (private, tested via cast — see note above) ───────
+// ── evaluateThresholdRule ────────────────────────────────────────────────────
+// Extracted to lib/qualityThreshold.ts — also used by AdvancedWorkflowEngine,
+// which previously carried a near-identical copy-pasted implementation.
 
 describe('evaluateThresholdRule', () => {
     it('>: passes when actual is strictly greater', () => {
