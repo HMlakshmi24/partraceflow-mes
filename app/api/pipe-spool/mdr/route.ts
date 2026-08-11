@@ -124,8 +124,8 @@ export async function POST(req: NextRequest) {
 
       const updateData: any = { status: nextStatus };
       if (nextStatus === 'REVIEW') updateData.preparedAt = new Date();
-      if (nextStatus === 'APPROVED') { updateData.reviewedAt = new Date(); updateData.reviewedBy = guard.username; }
-      if (nextStatus === 'SUBMITTED') { updateData.approvedAt = new Date(); updateData.approvedBy = guard.username; updateData.submittedAt = new Date(); }
+      if (nextStatus === 'APPROVED') { updateData.reviewedAt = new Date(); updateData.reviewedBy = guard.username; updateData.reviewedByUserId = guard.userId; }
+      if (nextStatus === 'SUBMITTED') { updateData.approvedAt = new Date(); updateData.approvedBy = guard.username; updateData.approvedByUserId = guard.userId; updateData.submittedAt = new Date(); }
 
       const updated = await prisma.mDR.update({ where: { id }, data: updateData });
       return NextResponse.json({ mdr: updated });
@@ -146,8 +146,14 @@ export async function POST(req: NextRequest) {
 
     if (!data.mdrNumber) return NextResponse.json({ error: 'mdrNumber is required' }, { status: 400 });
 
+    // Bug fix (found via audit): preparedBy previously accepted a
+    // client-supplied value (`data.preparedBy ?? guard.username`) — the same
+    // compliance-attribution-spoofing class of bug already fixed elsewhere
+    // (see recipes/route.ts). Attribution for a compliance record must always
+    // come from the verified session, never client-supplied request text.
+    const { preparedBy: _clientPreparedBy, ...safeCreateData } = data;
     const mdr = await prisma.mDR.create({
-      data: { ...data, preparedBy: data.preparedBy ?? guard.username },
+      data: { ...safeCreateData, preparedBy: guard.username, preparedByUserId: guard.userId },
     });
 
     if (Array.isArray(spoolIds) && spoolIds.length > 0) {

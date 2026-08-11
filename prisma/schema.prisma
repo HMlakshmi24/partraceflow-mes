@@ -65,41 +65,55 @@ model Machine {
 }
 
 model User {
-  id                   String                @id @default(cuid())
-  username             String                @unique
-  passwordHash         String? // scrypt hash; null = demo mode (any password)
-  mustChangePassword   Boolean               @default(false)
-  role                 String // OPERATOR, SUPERVISOR, ADMIN, PLANNER, QUALITY, MAINTENANCE
-  plantId              String?
-  employeeId           String?
-  email                String?
-  displayName          String?
-  isActive             Boolean               @default(true)
-  sessionVersion       Int                   @default(0)
-  lastLoginAt          DateTime?
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
+  id                       String                    @id @default(cuid())
+  username                 String                    @unique
+  passwordHash             String? // scrypt hash; null = demo mode (any password)
+  mustChangePassword       Boolean                   @default(false)
+  role                     String // OPERATOR, SUPERVISOR, ADMIN, PLANNER, QUALITY, MAINTENANCE
+  plantId                  String?
+  employeeId               String?
+  email                    String?
+  displayName              String?
+  isActive                 Boolean                   @default(true)
+  sessionVersion           Int                       @default(0)
+  lastLoginAt              DateTime?
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
   // Industry-readiness: MFA (TOTP, RFC 6238). mfaSecret holds the AES-256-GCM
   // encrypted secret (encrypted, not hashed — the server must be able to
   // recover it to compute the current code). While mfaEnabled=false it holds
   // an unconfirmed, in-progress enrollment secret; /api/auth/mfa/verify flips
   // mfaEnabled=true once the user proves possession. mfaBackupCodes holds
   // scrypt-hashed (like passwordHash) one-time recovery codes as a JSON array.
-  mfaSecret            String?
-  mfaEnabled           Boolean               @default(false)
-  mfaEnrolledAt        DateTime?
-  mfaBackupCodes       String?
-  tasks                WorkflowTask[]
-  events               SystemEvent[]
-  qualityApprovals     QualityApproval[]
-  taskApprovals        TaskApproval[]        @relation("TaskApprovals")
-  operatorShifts       OperatorShift[]
-  skills               OperatorSkill[]
-  certifications       Certification[]
-  trainingRecords      TrainingRecord[]
-  workOrders           WorkOrder[]           @relation("WorkOrderOperator")
-  inspections          SpoolInspection[]     @relation("InspectionInspector")
-  welderQualifications WelderQualification[]
+  mfaSecret                String?
+  mfaEnabled               Boolean                   @default(false)
+  mfaEnrolledAt            DateTime?
+  mfaBackupCodes           String?
+  tasks                    WorkflowTask[]
+  events                   SystemEvent[]
+  qualityApprovals         QualityApproval[]
+  taskApprovals            TaskApproval[]            @relation("TaskApprovals")
+  operatorShifts           OperatorShift[]
+  skills                   OperatorSkill[]
+  certifications           Certification[]
+  trainingRecords          TrainingRecord[]
+  workOrders               WorkOrder[]               @relation("WorkOrderOperator")
+  inspections              SpoolInspection[]         @relation("InspectionInspector")
+  welderQualifications     WelderQualification[]
+  // Real FKs added alongside existing free-text attribution fields (see
+  // §4.10) — only for fields confirmed to be unconditionally session-derived
+  // (compliance sign-offs by an authenticated MES user), never for fields
+  // that can legitimately hold an external party (client witnesses, welder
+  // stamp codes, etc.), which stay free text on purpose.
+  pwhtApprovals            PWHTCycle[]               @relation("PWHTApprovedBy")
+  mdrsPrepared             MDR[]                     @relation("MDRPreparedBy")
+  mdrsReviewed             MDR[]                     @relation("MDRReviewedBy")
+  mdrsApproved             MDR[]                     @relation("MDRApprovedBy")
+  recipesApproved          Recipe[]                  @relation("RecipeApprovedBy")
+  recipesCreated           Recipe[]                  @relation("RecipeCreatedBy")
+  recipeVersionsChanged    RecipeVersion[]           @relation("RecipeVersionChangedBy")
+  machineRecipeAssignments MachineRecipeAssignment[] @relation("MachineRecipeAssignedBy")
+  spoolApprovals           SpoolApproval[]           @relation("SpoolApprovalApprover")
 }
 
 // --------------------------------------------------------
@@ -393,7 +407,6 @@ model TriggerAction {
   executedAt   DateTime?
   status       String           @default("PENDING") // PENDING, EXECUTED, FAILED
 }
-
 
 // --------------------------------------------------------
 // MACHINE CONNECTIVITY LAYER
@@ -1040,20 +1053,24 @@ model ControlLimit {
 // --------------------------------------------------------
 
 model Recipe {
-  id          String                    @id @default(cuid())
-  code        String                    @unique
-  name        String
-  productId   String
-  version     Int                       @default(1)
-  status      String                    @default("DRAFT") // DRAFT, APPROVED, ACTIVE, OBSOLETE
-  description String?
-  approvedBy  String?
-  approvedAt  DateTime?
-  parameters  RecipeParameter[]
-  versions    RecipeVersion[]
-  assignments MachineRecipeAssignment[]
-  createdAt   DateTime                  @default(now())
-  createdBy   String
+  id               String                    @id @default(cuid())
+  code             String                    @unique
+  name             String
+  productId        String
+  version          Int                       @default(1)
+  status           String                    @default("DRAFT") // DRAFT, APPROVED, ACTIVE, OBSOLETE
+  description      String?
+  approvedBy       String?
+  approvedByUserId String?
+  approvedByUser   User?                     @relation("RecipeApprovedBy", fields: [approvedByUserId], references: [id])
+  approvedAt       DateTime?
+  parameters       RecipeParameter[]
+  versions         RecipeVersion[]
+  assignments      MachineRecipeAssignment[]
+  createdAt        DateTime                  @default(now())
+  createdBy        String
+  createdByUserId  String?
+  createdByUser    User?                     @relation("RecipeCreatedBy", fields: [createdByUserId], references: [id])
 }
 
 model RecipeParameter {
@@ -1072,25 +1089,29 @@ model RecipeParameter {
 }
 
 model RecipeVersion {
-  id         String   @id @default(cuid())
-  recipeId   String
-  recipe     Recipe   @relation(fields: [recipeId], references: [id])
-  version    Int
-  parameters String // JSON snapshot of parameters at this version
-  changedBy  String
-  changeNote String?
-  createdAt  DateTime @default(now())
+  id              String   @id @default(cuid())
+  recipeId        String
+  recipe          Recipe   @relation(fields: [recipeId], references: [id])
+  version         Int
+  parameters      String // JSON snapshot of parameters at this version
+  changedBy       String
+  changedByUserId String?
+  changedByUser   User?    @relation("RecipeVersionChangedBy", fields: [changedByUserId], references: [id])
+  changeNote      String?
+  createdAt       DateTime @default(now())
 }
 
 model MachineRecipeAssignment {
-  id          String   @id @default(cuid())
-  machineId   String
-  recipeId    String
-  recipe      Recipe   @relation(fields: [recipeId], references: [id])
-  assignedAt  DateTime @default(now())
-  assignedBy  String
-  status      String   @default("PENDING") // PENDING, DOWNLOADED, ACTIVE, COMPLETED
-  workOrderId String?
+  id               String   @id @default(cuid())
+  machineId        String
+  recipeId         String
+  recipe           Recipe   @relation(fields: [recipeId], references: [id])
+  assignedAt       DateTime @default(now())
+  assignedBy       String
+  assignedByUserId String?
+  assignedByUser   User?    @relation("MachineRecipeAssignedBy", fields: [assignedByUserId], references: [id])
+  status           String   @default("PENDING") // PENDING, DOWNLOADED, ACTIVE, COMPLETED
+  workOrderId      String?
 }
 
 // --------------------------------------------------------
@@ -1576,6 +1597,8 @@ model SpoolApproval {
   ncr            NCRRecord?          @relation(fields: [ncrId], references: [id])
   approverRole   String
   approverName   String
+  approverUserId String?
+  approverUser   User?               @relation("SpoolApprovalApprover", fields: [approverUserId], references: [id])
   status         String
   comments       String?
   signature      String?
@@ -1761,28 +1784,34 @@ model FillerBatch {
 }
 
 model PWHTCycle {
-  id             String    @id @default(cuid())
-  cycleNumber    String?
-  spoolId        String
-  spool          PipeSpool @relation(fields: [spoolId], references: [id])
-  furnaceId      String?
-  chargeNumber   String?
-  heatingRate    Float?
-  soakTemp       Float?
-  soakDuration   Int?
-  coolingRate    Float?
-  startAt        DateTime?
-  endAt          DateTime?
-  operator       String?
-  hardnessBefore Float?
-  hardnessAfter  Float?
-  chartsPath     String?
-  result         String    @default("PENDING")
-  approved       Boolean   @default(false)
-  approvedBy     String?
-  approvedAt     DateTime?
-  notes          String?
-  createdAt      DateTime  @default(now())
+  id               String    @id @default(cuid())
+  cycleNumber      String?
+  spoolId          String
+  spool            PipeSpool @relation(fields: [spoolId], references: [id])
+  furnaceId        String?
+  chargeNumber     String?
+  heatingRate      Float?
+  soakTemp         Float?
+  soakDuration     Int?
+  coolingRate      Float?
+  startAt          DateTime?
+  endAt            DateTime?
+  operator         String?
+  hardnessBefore   Float?
+  hardnessAfter    Float?
+  chartsPath       String?
+  result           String    @default("PENDING")
+  approved         Boolean   @default(false)
+  approvedBy       String?
+  // Real FK alongside the display-name string above (kept for historical/
+  // external-approver compatibility) — approvedBy on this model is always
+  // session-derived (see app/api/pipe-spool/pwht/route.ts), so a real
+  // relation is safe and enables actual "what did this user approve" joins.
+  approvedByUserId String?
+  approvedByUser   User?     @relation("PWHTApprovedBy", fields: [approvedByUserId], references: [id])
+  approvedAt       DateTime?
+  notes            String?
+  createdAt        DateTime  @default(now())
 
   // MEDIUM fix: same missing-uniqueness gap as WeldRecord.weldNumber above.
   @@unique([spoolId, cycleNumber])
@@ -1814,24 +1843,30 @@ model PressureTestLoop {
 }
 
 model MDR {
-  id          String     @id @default(cuid())
-  mdrNumber   String     @unique
-  title       String?
-  revision    String?
-  projectRef  String?
-  status      String     @default("DRAFT")
-  preparedBy  String?
-  reviewedBy  String?
-  approvedBy  String?
-  preparedAt  DateTime?
-  reviewedAt  DateTime?
-  approvedAt  DateTime?
-  submittedAt DateTime?
-  filePath    String?
-  notes       String?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  mdrSpools   MDRSpool[]
+  id               String     @id @default(cuid())
+  mdrNumber        String     @unique
+  title            String?
+  revision         String?
+  projectRef       String?
+  status           String     @default("DRAFT")
+  preparedBy       String?
+  preparedByUserId String?
+  preparedByUser   User?      @relation("MDRPreparedBy", fields: [preparedByUserId], references: [id])
+  reviewedBy       String?
+  reviewedByUserId String?
+  reviewedByUser   User?      @relation("MDRReviewedBy", fields: [reviewedByUserId], references: [id])
+  approvedBy       String?
+  approvedByUserId String?
+  approvedByUser   User?      @relation("MDRApprovedBy", fields: [approvedByUserId], references: [id])
+  preparedAt       DateTime?
+  reviewedAt       DateTime?
+  approvedAt       DateTime?
+  submittedAt      DateTime?
+  filePath         String?
+  notes            String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  mdrSpools        MDRSpool[]
 }
 
 model MDRSpool {

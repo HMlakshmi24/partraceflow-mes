@@ -8,6 +8,7 @@ export class RecipeService {
     productId: string
     description?: string
     createdBy: string
+    createdByUserId?: string
     parameters: {
       parameterName: string
       unit?: string
@@ -28,6 +29,7 @@ export class RecipeService {
           productId: data.productId,
           description: data.description,
           createdBy: data.createdBy,
+          createdByUserId: data.createdByUserId,
           status: 'DRAFT'
         }
       })
@@ -55,6 +57,7 @@ export class RecipeService {
           version: 1,
           parameters: JSON.stringify(params),
           changedBy: data.createdBy,
+          changedByUserId: data.createdByUserId,
           changeNote: 'Initial version'
         }
       })
@@ -63,10 +66,10 @@ export class RecipeService {
     })
   }
 
-  static async approveRecipe(recipeId: string, approvedBy: string) {
+  static async approveRecipe(recipeId: string, approvedBy: string, approvedByUserId?: string) {
     return prisma.recipe.update({
       where: { id: recipeId },
-      data: { status: 'APPROVED', approvedBy, approvedAt: new Date() }
+      data: { status: 'APPROVED', approvedBy, approvedByUserId, approvedAt: new Date() }
     })
   }
 
@@ -74,6 +77,7 @@ export class RecipeService {
     machineId: string
     recipeId: string
     assignedBy: string
+    assignedByUserId?: string
     workOrderId?: string
   }) {
     // Mark previous assignment as completed
@@ -87,6 +91,7 @@ export class RecipeService {
         machineId: data.machineId,
         recipeId: data.recipeId,
         assignedBy: data.assignedBy,
+        assignedByUserId: data.assignedByUserId,
         workOrderId: data.workOrderId,
         status: 'PENDING',
         assignedAt: new Date()

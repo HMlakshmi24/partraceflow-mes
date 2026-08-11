@@ -86,6 +86,7 @@ export async function POST(req: NextRequest) {
           result: 'PASS',
           approved: true,
           approvedBy: guard.username ?? 'operator',
+          approvedByUserId: guard.userId,
           approvedAt: new Date(),
         },
       });

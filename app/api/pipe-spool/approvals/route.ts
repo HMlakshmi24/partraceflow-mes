@@ -65,6 +65,7 @@ export async function POST(req: NextRequest) {
               approvedAt: new Date(),
               comments: remarks,
               approverName,
+              approverUserId: guard.userId,
             },
           })
         : await prisma.spoolApproval.create({
@@ -73,6 +74,7 @@ export async function POST(req: NextRequest) {
               spoolId,
               approverRole,
               approverName,
+              approverUserId: guard.userId,
               status,
               comments: remarks,
             },
@@ -109,6 +111,7 @@ export async function POST(req: NextRequest) {
           signature: data.signature,
           comments: data.comments,
           approverName: guard.username ?? guard.role,
+          approverUserId: guard.userId,
         },
       });
       await AuditService.logChange({
@@ -134,6 +137,7 @@ export async function POST(req: NextRequest) {
           approvedAt: new Date(),
           comments: data.comments,
           approverName: guard.username ?? guard.role,
+          approverUserId: guard.userId,
         },
       });
       await AuditService.logChange({
@@ -161,7 +165,14 @@ export async function POST(req: NextRequest) {
 
     const guard = await requireSpoolAction('APPROVE_SPOOL');
     if (guard instanceof NextResponse) return guard;
-    const approval = await prisma.spoolApproval.create({ data });
+    // Bug fix (found via audit): approverName/approverRole here came straight
+    // from the client body, unlike every other create/update path in this
+    // route — the same attribution-spoofing class of bug already fixed
+    // elsewhere (recipes/route.ts, mdr/route.ts). Force it from the session.
+    const { approverName: _clientApproverName, approverRole: _clientApproverRole, approverUserId: _clientApproverUserId, ...safeData } = data;
+    const approval = await prisma.spoolApproval.create({
+      data: { ...safeData, approverName: guard.username ?? guard.role, approverRole: guard.role, approverUserId: guard.userId },
+    });
     return apiSuccess({ approval });
   } catch (e: any) {
     if (e?.name === 'ZodError') return validationError(e);

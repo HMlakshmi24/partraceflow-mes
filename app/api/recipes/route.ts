@@ -103,6 +103,7 @@ export async function POST(req: NextRequest) {
     // from the verified session.
     const session = getRequestSession(req);
     const actorName = session?.username ?? 'SYSTEM';
+    const actorUserId = session?.userId;
 
     try {
         const body = await req.json();
@@ -116,6 +117,7 @@ export async function POST(req: NextRequest) {
             const recipe = await RecipeService.createRecipe({
                 code, name, productId, description,
                 createdBy: actorName,
+                createdByUserId: actorUserId,
                 parameters: parameters ?? []
             });
             return NextResponse.json({ success: true, recipe });
@@ -124,7 +126,7 @@ export async function POST(req: NextRequest) {
         if (action === 'approve') {
             const { recipeId } = body;
             if (!recipeId) return NextResponse.json({ error: 'recipeId required' }, { status: 400 });
-            const recipe = await RecipeService.approveRecipe(recipeId, actorName);
+            const recipe = await RecipeService.approveRecipe(recipeId, actorName, actorUserId);
             return NextResponse.json({ success: true, recipe });
         }
 
@@ -134,6 +136,7 @@ export async function POST(req: NextRequest) {
             const assignment = await RecipeService.assignToMachine({
                 machineId, recipeId,
                 assignedBy: actorName,
+                assignedByUserId: actorUserId,
                 workOrderId: body.workOrderId
             });
             return NextResponse.json({ success: true, assignment });
