@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { OrderLifecycleService } from '@/lib/services/OrderLifecycleService';
+import { DeviceHealthMonitor } from '@/lib/services/DeviceHealthMonitor';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('api.cron');
@@ -29,7 +30,20 @@ export async function GET(req: NextRequest) {
 
     try {
         await OrderLifecycleService.flagOverdueOrders();
-        return NextResponse.json({ ok: true, ran: ['flagOverdueOrders'], at: new Date().toISOString() });
+        // Edge-device offline detection: DeviceHealthMonitor.checkAll() marks
+        // ONLINE devices whose lastSeen has gone stale as OFFLINE and opens an
+        // alarm — previously wired nowhere, so a device that stopped sending
+        // heartbeats stayed stuck showing ONLINE forever. Runs at this route's
+        // cadence (daily via vercel.json by default); a deployment that needs
+        // faster offline detection than that should point a more frequent
+        // external scheduler at this same route instead.
+        const deviceHealth = await DeviceHealthMonitor.checkAll();
+        return NextResponse.json({
+            ok: true,
+            ran: ['flagOverdueOrders', 'deviceHealth.checkAll'],
+            deviceHealth: { offlineCount: deviceHealth.offlineCount },
+            at: new Date().toISOString(),
+        });
     } catch (e: unknown) {
         // HIGH-11 fix: don't leak raw internal error text (Prisma messages
         // routinely include table/column names) to the response body.

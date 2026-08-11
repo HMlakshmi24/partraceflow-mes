@@ -83,6 +83,10 @@ export default function ConnectorsPage() {
                 </div>
             </div>
 
+            <div style={{ padding: '0.85rem 1rem', background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.25)', borderRadius: 10, color: 'var(--foreground)', fontSize: '0.83rem', lineHeight: 1.5, marginBottom: '1rem' }}>
+                <strong>How device status works here:</strong> registering a device below only records it — it does not, by itself, open any connection. Status turns <strong>ONLINE</strong> only when the device&apos;s own gateway software calls this app&apos;s heartbeat endpoint (<code>POST /api/edge-devices/&#123;id&#125;/heartbeat</code>) and flips back to <strong>OFFLINE</strong> automatically if those heartbeats stop arriving. Actual machine telemetry (status/cycle/alarm data) flows in separately over MQTT once <code>MQTT_BROKER_URL</code> is configured — that pipeline is live and tested. <strong>OPC-UA and Modbus are not yet implemented</strong> as native polling clients in this app; those protocol choices exist for inventory/planning today. If your SCADA/PLC gateway can publish MQTT or call the heartbeat endpoint, it works now — if it only speaks OPC-UA/Modbus directly, a gateway that bridges to MQTT (many SCADA platforms, e.g. Ignition&apos;s MQTT module, support this) is the fastest path today.
+            </div>
+
             {error && (
                 <div style={{ padding: '0.75rem 1rem', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 10, color: '#ef4444', fontSize: '0.88rem', fontWeight: 600, marginBottom: '1rem' }}>
                     {error}
