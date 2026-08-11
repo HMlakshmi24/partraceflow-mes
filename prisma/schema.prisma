@@ -25,7 +25,6 @@ model Product {
   updatedAt        DateTime @updatedAt
 
   workOrders           WorkOrder[]
-  cadDocuments         CADDocument[]
   lots                 Lot[]
   serialNumbers        SerialNumber[]
   boms                 BillOfMaterial[]
@@ -93,7 +92,6 @@ model User {
   tasks                WorkflowTask[]
   events               SystemEvent[]
   qualityApprovals     QualityApproval[]
-  cadApprovals         CADDocumentApproval[]
   taskApprovals        TaskApproval[]        @relation("TaskApprovals")
   operatorShifts       OperatorShift[]
   skills               OperatorSkill[]
@@ -396,34 +394,6 @@ model TriggerAction {
   status       String           @default("PENDING") // PENDING, EXECUTED, FAILED
 }
 
-// CAD Integration
-model CADDocument {
-  id         String                @id @default(cuid())
-  productId  String
-  product    Product               @relation(fields: [productId], references: [id])
-  fileName   String
-  fileType   String // PDF, DWG, STEP, etc.
-  version    Int                   @default(1)
-  revision   String                @default("A")
-  filePath   String
-  fileSize   Int
-  uploadedBy String
-  uploadedAt DateTime              @default(now())
-  isActive   Boolean               @default(true)
-  checksum   String // MD5 for integrity
-  approvals  CADDocumentApproval[]
-}
-
-model CADDocumentApproval {
-  id         String      @id @default(cuid())
-  documentId String
-  document   CADDocument @relation(fields: [documentId], references: [id])
-  userId     String
-  user       User        @relation(fields: [userId], references: [id])
-  status     String // APPROVED, REJECTED
-  comments   String?
-  approvedAt DateTime    @default(now())
-}
 
 // --------------------------------------------------------
 // MACHINE CONNECTIVITY LAYER
@@ -884,54 +854,6 @@ model TrainingRecord {
   passed        Boolean  @default(false)
   trainerName   String?
   notes         String?
-}
-
-// --------------------------------------------------------
-// DOCUMENT MANAGEMENT
-// --------------------------------------------------------
-
-model Document {
-  id               String               @id @default(cuid())
-  documentNumber   String               @unique
-  title            String
-  type             String // SOP, WORK_INSTRUCTION, DRAWING, SPECIFICATION, CERTIFICATE
-  category         String?
-  currentVersionId String?
-  status           String               @default("DRAFT") // DRAFT, REVIEW, APPROVED, OBSOLETE
-  versions         DocumentVersion[]
-  assignments      DocumentAssignment[]
-  createdAt        DateTime             @default(now())
-  createdBy        String
-}
-
-model DocumentVersion {
-  id                String    @id @default(cuid())
-  documentId        String
-  document          Document  @relation(fields: [documentId], references: [id])
-  versionNumber     Int
-  revision          String // A, B, C or 1.0, 1.1, 2.0
-  filePath          String
-  fileType          String // PDF, DOCX, DWG
-  fileSize          Int
-  checksum          String
-  changeDescription String?
-  approvedBy        String?
-  approvedAt        DateTime?
-  createdAt         DateTime  @default(now())
-  createdBy         String
-}
-
-model DocumentAssignment {
-  id               String    @id @default(cuid())
-  documentId       String
-  document         Document  @relation(fields: [documentId], references: [id])
-  assignmentType   String // TASK, MACHINE, PRODUCT, WORKFLOW, WORK_CENTER
-  referenceId      String // ID of the assigned entity
-  mandatory        Boolean   @default(false)
-  readAcknowledged Boolean   @default(false)
-  acknowledgedBy   String?
-  acknowledgedAt   DateTime?
-  assignedAt       DateTime  @default(now())
 }
 
 // --------------------------------------------------------
